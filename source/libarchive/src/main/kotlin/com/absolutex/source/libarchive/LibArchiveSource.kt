@@ -7,7 +7,6 @@ import com.absolutex.source.ComicInfoLoader
 import com.absolutex.source.ComicSource
 import com.absolutex.source.EntryFilter
 import com.absolutex.source.NaturalOrder
-import com.absolutex.source.PageReadability
 import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.io.InputStream
@@ -34,9 +33,6 @@ class LibArchiveSource private constructor(
     /** Archive ordinal of each page, parallel to [pages]. Sorting reorders pages, not ordinals. */
     private val ordinals: IntArray,
     override val comicInfo: ComicInfo?,
-    override val pageReadability: PageReadability?,
-    val isEncrypted: Boolean,
-    private val passphrase: ArchivePassphrase,
 ) : ComicSource {
 
     override fun openPage(index: Int): InputStream {
@@ -44,49 +40,22 @@ class LibArchiveSource private constructor(
             ?: throw IndexOutOfBoundsException("page $index of ${pages.size}")
         // By ordinal, never by name: two entries can share a name, and names do not survive a
         // JNI round trip byte-for-byte (see nativeList in archive_jni.c).
-        val bytes = passphrase.useBytes { password ->
-            openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinals[index], password) }
-        } ?: throw IOException("unreadable entry: ${page.entryName}")
+        val bytes = openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinals[index]) }
+            ?: throw IOException("unreadable entry: ${page.entryName}")
         return ByteArrayInputStream(bytes)
     }
 
-    /** Owns no descriptor; clear the session password and reject subsequent reads. */
-    override fun close() = passphrase.close()
+    /** Owns no descriptor — each read opens and closes its own. */
+    override fun close() = Unit
 
     companion object {
         /**
          * @param openFd must return a NEW, independent descriptor on every call.
          * @throws IOException if the container cannot be read at all. A container that reads
-         * partially retains discovered slots and reports readable payloads separately.
+         * partially yields the pages that are readable — §2 requires degrading, never crashing.
          */
-        fun open(openFd: () -> ParcelFileDescriptor): LibArchiveSource = open(null, openFd)
-
-        /**
-         * Copies [passphrase]; the caller owns and should clear its CharArray after this call.
-         * Only a successful encrypted source retains its copy, until [close]. UTF-8 passwords
-         * must be nonempty and contain no NUL (libarchive's C-string contract).
-         * TODO(lead): catch ArchivePasswordException at the reader open boundary, prompt/retry
-         * for required/rejected passwords, and show unsupported encryption without retrying.
-         */
-        fun open(passphrase: CharArray?, openFd: () -> ParcelFileDescriptor): LibArchiveSource {
-            val owned = ArchivePassphrase(passphrase)
-            var transferred = false
-            return try {
-                owned.useBytes { password -> openWithPassword(openFd, owned, password) }
-                    .also { transferred = true }
-            } finally {
-                if (!transferred) owned.close()
-            }
-        }
-
-        private fun openWithPassword(
-            openFd: () -> ParcelFileDescriptor,
-            owned: ArchivePassphrase,
-            password: ByteArray?,
-        ): LibArchiveSource {
-            val complete = BooleanArray(1)
-            val encrypted = BooleanArray(1)
-            val raw = openFd().use { LibArchive.nativeList(it.fd, complete, encrypted, password) }
+        fun open(openFd: () -> ParcelFileDescriptor): LibArchiveSource {
+            val raw = openFd().use { LibArchive.nativeList(it.fd) }
                 ?: throw IOException("not a readable archive")
             // String(bytes, UTF_8) substitutes U+FFFD for malformed input instead of throwing, so
             // a Shift-JIS name from an old Japanese scan degrades to mojibake, not to a crash.
@@ -100,6 +69,10 @@ class LibArchiveSource private constructor(
             val ordinals = IntArray(kept.size) { kept[it].first }
             // Locate against the RAW entry list (ordinals must match nativeExtract), parse once;
             // a missing, unreadable or malformed ComicInfo costs the metadata, not the open.
+<<<<<<< HEAD
+            val info = ComicInfoLoader.from(raw.map { String(it, Charsets.UTF_8) }) { ordinal ->
+                openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinal) }?.let { ordinal to it }
+=======
             val info = try {
                 ComicInfoLoader.from(raw.map { String(it, Charsets.UTF_8) }) { ordinal ->
                     val bytes = openFd().use { pfd ->
@@ -109,37 +82,9 @@ class LibArchiveSource private constructor(
                 }
             } catch (e: Exception) {
                 null
+>>>>>>> 9c4468c (Formats M3 #38: sidecar catch and cap (catch exception -> null ComicInfo, cap native sidecar extract at 1024*1024 bytes))
             }
-            // Only recovery pays for payload validation. A single password probe verifies
-            // the session passphrase before any page is read; readability is counted in
-            // a single pass over the discovered ordinals.
-            val recovery = !complete[0] || (info?.pageCount ?: 0) > pages.size
-            val readability = if (recovery || encrypted[0]) {
-                // Single descriptor reused for both probe and readability to avoid many
-                // independent archive scans before the first page.
-                openFd().use { probeFd ->
-                    val probePassword = password?.copyOf() ?: password
-                    // Single password probe: read the first discovered page. A wrong/rejected
-                    // password fails closed here, never mid-session.
-                    if (encrypted[0]) {
-                        val firstOrdinal = ordinals.getOrNull(0) ?: -1
-                        if (firstOrdinal >= 0) {
-                            val probeBytes = LibArchive.nativeExtract(probeFd.fd, firstOrdinal, probePassword)
-                            if (probeBytes == null) {
-                                throw IOException("Archive password rejected or entry unreadable")
-                            }
-                        }
-                    }
-                    // Single-pass readability count: one descriptor scans all page ordinals.
-                    PageReadability.inspect(ordinals.toList(), info?.pageCount) { ordinal ->
-                        LibArchive.nativeExtract(probeFd.fd, ordinal, password)?.isNotEmpty() == true
-                    }
-                }
-            } else {
-                null
-            }
-            if (!encrypted[0]) owned.forget()
-            return LibArchiveSource(openFd, pages, ordinals, info, readability, encrypted[0], owned)
+            return LibArchiveSource(openFd, pages, ordinals, info)
         }
     }
 }
