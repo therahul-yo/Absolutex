@@ -165,13 +165,16 @@ def main(argv: list[str] | None = None) -> int:
 
     if report["total_bytes"] > limit:
         over = report["total_bytes"] - limit
-        print("\nFAIL: APK is %s over the ceiling (%s vs %s allowed)."
-              % (human(over), human(report["total_bytes"]), human(limit)), file=sys.stderr)
+        # Exact bytes as well as the human size: near the ceiling both round to the same
+        # string, and "2.2 MiB vs 2.2 MiB allowed" tells a reader nothing.
+        print("\nFAIL: APK is %s over the ceiling — %d bytes, ceiling %d (baseline %d)."
+              % (human(over), report["total_bytes"], limit, base_bytes), file=sys.stderr)
         print("If the growth is intended, re-arm with --update and explain it in the PR.",
               file=sys.stderr)
         return 1
 
-    print("\nOK: %s, within the %s ceiling." % (human(report["total_bytes"]), human(limit)))
+    print("\nOK: %s (%d bytes), within the %d byte ceiling."
+          % (human(report["total_bytes"]), report["total_bytes"], limit))
     return 0
 
 

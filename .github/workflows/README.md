@@ -75,18 +75,39 @@ assets) into the job summary on every run, and compares the total against
 **2 % or 64 KiB, whichever is larger** — the absolute floor keeps trivial churn from tripping
 the gate.
 
-> **The gate ships disarmed.** `total_bytes` is `null`, so the step reports but never fails.
-> Nobody has built a release APK on trusted hardware yet, and inventing a baseline number
-> would make the gate lie. Arm it with:
->
-> ```sh
-> ./gradlew :app:assembleRelease
-> python3 tools/check-apk-size.py \
->   --apk app/build/outputs/apk/release/app-release-unsigned.apk --update
-> ```
->
-> then commit `.github/apk-size-baseline.json`. After that, raising the baseline is a
-> reviewable diff with someone on the hook to explain it.
+**The gate is armed** at **2,208,905 bytes**, taken from
+[run 34868113646](https://github.com/therahul-yo/Absolutex/actions/runs/34868113646) — the
+first fully green run (detekt, lint, unit tests and `:app:assembleRelease` all passing).
+The effective ceiling is therefore **2,274,441 bytes** (the 64 KiB floor wins over 2 % at
+this size).
+
+For reference, what that APK is made of:
+
+| Category | Compressed | Entries |
+|---|---:|---:|
+| `dex` | 1.6 MiB | 1 |
+| `native` | 359.1 KiB | 3 |
+| `resources` | 70.4 KiB | 1 |
+| `signing` | 30.0 KiB | 96 |
+| `other` | 12.9 KiB | 9 |
+| `assets` | 5.3 KiB | 2 |
+| `manifest` | 1.9 KiB | 1 |
+
+To raise it deliberately:
+
+```sh
+./gradlew :app:assembleRelease
+python3 tools/check-apk-size.py \
+  --apk app/build/outputs/apk/release/app-release-unsigned.apk --update
+```
+
+then commit `.github/apk-size-baseline.json`. The new number shows up as a reviewable diff
+with whoever raised it on the hook to say why. The report also prints exact bytes every run,
+so a CI log on its own is enough to re-arm without a local build.
+
+> **If ~3 % proves too tight during active feature work**, widen it with `--tolerance-pct`
+> or `--tolerance-bytes` in `ci.yml` rather than switching the gate off. A gate that is
+> never armed is not a gate.
 
 ## What CI does *not* run
 
