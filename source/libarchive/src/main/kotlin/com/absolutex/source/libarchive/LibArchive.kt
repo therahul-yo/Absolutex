@@ -4,6 +4,9 @@ package com.absolutex.source.libarchive
 internal object LibArchive {
     init { System.loadLibrary("absolutex_archive") }
 
-    @JvmStatic external fun nativeList(fd: Int): Array<String>?
-    @JvmStatic external fun nativeExtract(fd: Int, name: String): ByteArray?
+    /** Raw name bytes of every regular-file entry, in archive order. Index = ordinal. */
+    @JvmStatic external fun nativeList(fd: Int): Array<ByteArray>?
+
+    /** Data of the regular-file entry at [ordinal], as numbered by [nativeList]. */
+    @JvmStatic external fun nativeExtract(fd: Int, ordinal: Int): ByteArray?
 }

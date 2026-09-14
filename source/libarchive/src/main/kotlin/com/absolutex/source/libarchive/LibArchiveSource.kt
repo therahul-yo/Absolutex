@@ -28,12 +28,16 @@ import java.io.InputStream
 class LibArchiveSource private constructor(
     private val openFd: () -> ParcelFileDescriptor,
     override val pages: List<Page>,
+    /** Archive ordinal of each page, parallel to [pages]. Sorting reorders pages, not ordinals. */
+    private val ordinals: IntArray,
 ) : ComicSource {
 
     override fun openPage(index: Int): InputStream {
         val page = pages.getOrNull(index)
             ?: throw IndexOutOfBoundsException("page $index of ${pages.size}")
-        val bytes = openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, page.entryName) }
+        // By ordinal, never by name: two entries can share a name, and names do not survive a
+        // JNI round trip byte-for-byte (see nativeList in archive_jni.c).
+        val bytes = openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinals[index]) }
             ?: throw IOException("unreadable entry: ${page.entryName}")
         return ByteArrayInputStream(bytes)
     }
@@ -48,13 +52,19 @@ class LibArchiveSource private constructor(
          * partially yields the pages that are readable — §2 requires degrading, never crashing.
          */
         fun open(openFd: () -> ParcelFileDescriptor): LibArchiveSource {
-            val names = openFd().use { LibArchive.nativeList(it.fd) }
+            val raw = openFd().use { LibArchive.nativeList(it.fd) }
                 ?: throw IOException("not a readable archive")
-            val pages = names
-                .filter { EntryFilter.isPage(it) }
-                .sortedWith(NaturalOrder)
-                .mapIndexed { i, name -> Page(index = i, entryName = name) }
-            return LibArchiveSource(openFd, pages)
+            // String(bytes, UTF_8) substitutes U+FFFD for malformed input instead of throwing, so
+            // a Shift-JIS name from an old Japanese scan degrades to mojibake, not to a crash.
+            // TODO(phase6): charset detection for legacy non-UTF-8 names.
+            val kept = raw
+                .mapIndexed { ordinal, bytes -> ordinal to String(bytes, Charsets.UTF_8) }
+                .filter { (_, name) -> EntryFilter.isPage(name) }
+                // Stable sort: entries with identical names keep their archive order.
+                .sortedWith(compareBy(NaturalOrder) { it.second })
+            val pages = kept.mapIndexed { i, (_, name) -> Page(index = i, entryName = name) }
+            val ordinals = IntArray(kept.size) { kept[it].first }
+            return LibArchiveSource(openFd, pages, ordinals)
         }
     }
 }
