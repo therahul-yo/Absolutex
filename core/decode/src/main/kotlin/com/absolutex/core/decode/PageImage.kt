@@ -1,0 +1,85 @@
+package com.absolutex.core.decode
+
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
+import android.graphics.ImageDecoder
+import java.io.Closeable
+import java.nio.ByteBuffer
+
+/**
+ * One page's compressed bytes plus the two decoders the reader needs.
+ *
+ * The compressed bytes stay resident (about 1 MB for a real scan) because both the base layer
+ * and every tile decode from them. Re-extracting from the archive per tile would put archive
+ * I/O inside the zoom interaction, which the §3 budget cannot absorb.
+ */
+class PageImage private constructor(
+    private val bytes: ByteArray,
+    val width: Int,
+    val height: Int,
+    private val regionDecoder: BitmapRegionDecoder?,
+) : Closeable {
+
+    /**
+     * Whole page at display size. `setTargetSize` decodes straight to the size we need —
+     * decoding full-res and downscaling would cost ~24 MB and a copy per page (§3).
+     */
+    fun decodeBase(targetWidth: Int, targetHeight: Int): Bitmap {
+        val src = ImageDecoder.createSource(ByteBuffer.wrap(bytes))
+        return ImageDecoder.decodeBitmap(src) { decoder, info, _ ->
+            val (w, h) = fitInside(info.size.width, info.size.height, targetWidth, targetHeight)
+            decoder.setTargetSize(w, h)
+            // Hardware bitmaps are the default allocation path (§1). They are immutable and
+            // cannot be read back, which is exactly why colour correction is an AGSL shader at
+            // draw time rather than a pixel edit.
+            decoder.allocator = ImageDecoder.ALLOCATOR_HARDWARE
+            decoder.isMutableRequired = false
+        }
+    }
+
+    /** One tile at its own subsample. Returns null if the region decoder is unavailable. */
+    fun decodeTile(tile: Tile): Bitmap? {
+        val rd = regionDecoder ?: return null
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = tile.sampleSize
+            inPreferredConfig = Bitmap.Config.HARDWARE
+        }
+        val rect = android.graphics.Rect(tile.left, tile.top, tile.right, tile.bottom)
+        return runCatching { rd.decodeRegion(rect, opts) }.getOrElse {
+            // Some encoders reject HARDWARE for region decode. Fall back to ARGB_8888 —
+            // never RGB_565, which the brief forbids outright.
+            runCatching {
+                rd.decodeRegion(rect, BitmapFactory.Options().apply {
+                    inSampleSize = tile.sampleSize
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                })
+            }.getOrNull()
+        }
+    }
+
+    override fun close() {
+        regionDecoder?.recycle()
+    }
+
+    companion object {
+        /** Scales (w,h) to fit inside the target box, preserving aspect ratio. */
+        fun fitInside(w: Int, h: Int, boxW: Int, boxH: Int): Pair<Int, Int> {
+            if (w <= 0 || h <= 0 || boxW <= 0 || boxH <= 0) return w to h
+            val scale = minOf(boxW.toFloat() / w, boxH.toFloat() / h)
+            // Never upscale at decode time: enlarging is the GPU's job (§4), and decoding
+            // above source resolution burns memory for no additional detail.
+            if (scale >= 1f) return w to h
+            return maxOf(1, (w * scale).toInt()) to maxOf(1, (h * scale).toInt())
+        }
+
+        fun from(bytes: ByteArray): PageImage {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            val rd = runCatching {
+                BitmapRegionDecoder.newInstance(bytes, 0, bytes.size)
+            }.getOrNull()
+            return PageImage(bytes, bounds.outWidth, bounds.outHeight, rd)
+        }
+    }
+}

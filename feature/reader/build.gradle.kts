@@ -20,6 +20,7 @@ dependencies {
     implementation(project(":core:data"))
     implementation(project(":core:decode"))
     implementation(project(":source:api"))
+    implementation(project(":source:libarchive"))
     implementation(platform(libs.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)

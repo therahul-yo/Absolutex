@@ -14,6 +14,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <android/log.h>
 #include <archive.h>
 #include <archive_entry.h>
@@ -41,7 +42,14 @@ static int private_fd(int fd) {
     char path[64];
     snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
     int p = open(path, O_RDONLY | O_CLOEXEC);
-    return p >= 0 ? p : dup(fd);
+    if (p >= 0) return p;
+    /* Falling back to dup() means this descriptor shares its offset and is NOT safe for
+       concurrent use. SAF descriptors land here: the app has no path access, so re-opening
+       via /proc re-checks permission on the real path and fails. Callers must hand us an
+       independent fd per read in that case (see LibArchiveSource). */
+    LOGE("private_fd: /proc reopen failed (%s) - falling back to dup(), NOT concurrency-safe",
+         strerror(errno));
+    return dup(fd);
 }
 
 static struct archive *open_fd(int fd, int *dup_out) {
