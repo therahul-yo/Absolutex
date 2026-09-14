@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The only XML layout/theme in the project, per §6. Everything else is Compose. -->
+    <style name="Theme.Absolutex.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@android:color/black</item>
+        <item name="postSplashScreenTheme">@style/Theme.Absolutex</item>
+    </style>
+    <style name="Theme.Absolutex" parent="android:Theme.Material.NoActionBar" />
+</resources>

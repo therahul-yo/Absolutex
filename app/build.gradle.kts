@@ -1,0 +1,57 @@
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.hilt)
+}
+android {
+    namespace = "com.absolutex"
+    compileSdk = libs.versions.compileSdk.get().toInt()
+    defaultConfig {
+        applicationId = "com.absolutex"
+        minSdk = libs.versions.minSdk.get().toInt()
+        targetSdk = libs.versions.targetSdk.get().toInt()
+        versionCode = 1
+        versionName = "0.1.0"
+        ndk { abiFilters += "arm64-v8a" }
+    }
+    buildTypes {
+        release {
+            isMinifyEnabled = true       // R8 full mode is the AGP default
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+        create("benchmark") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+            isDebuggable = false
+        }
+    }
+    buildFeatures { compose = true }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+    kotlin { jvmToolchain(21) }
+}
+dependencies {
+    implementation(project(":core:model"))
+    implementation(project(":core:ui"))
+    implementation(project(":core:data"))
+    implementation(project(":core:decode"))
+    implementation(project(":source:api"))
+    implementation(project(":source:libarchive"))
+    implementation(project(":feature:reader"))
+
+    implementation(platform(libs.compose.bom))
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.core.splashscreen)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.hilt.navigation.compose)
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
+    implementation(libs.androidx.profileinstaller)   // §3: baseline profiles are mandatory
+}
