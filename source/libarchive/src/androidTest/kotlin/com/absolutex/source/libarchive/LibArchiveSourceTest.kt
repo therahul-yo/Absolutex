@@ -33,9 +33,9 @@ class LibArchiveSourceTest {
     private fun open(name: String): LibArchiveSource {
         val f = File(corpusDir, name)
         assumeTrue("corpus file missing: $f", f.exists())
-        return LibArchiveSource.open(
+        return LibArchiveSource.open {
             ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY)
-        )
+        }
     }
 
     @Test fun opens_rar4_cbr_and_finds_every_page() {
@@ -121,9 +121,9 @@ class LibArchiveTimingTest {
         InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null)!!
     }
 
-    private fun pfd(name: String) = ParcelFileDescriptor.open(
-        File(dir, name), ParcelFileDescriptor.MODE_READ_ONLY,
-    )
+    private fun pfd(name: String): () -> ParcelFileDescriptor = {
+        ParcelFileDescriptor.open(File(dir, name), ParcelFileDescriptor.MODE_READ_ONLY)
+    }
 
     @Test fun cold_open_and_first_page_cost() {
         val f = File(dir, "absolute-batman-001.cbr")

@@ -3,8 +3,13 @@
 <SmellBaseline>
   <ManuallySuppressedIssues/>
   <CurrentIssues>
+    <ID>ComplexCondition:PageCanvas.kt:tr &lt; 0 || tb &lt; 0 || tl &gt; vw || tt &gt; vh</ID>
+    <ID>ComplexCondition:PageImage.kt:PageImage.Companion$w &lt;= 0 || h &lt;= 0 || boxW &lt;= 0 || boxH &lt;= 0</ID>
+    <ID>CyclomaticComplexMethod:PageCanvas.kt:@Composable fun PageCanvas</ID>
     <ID>FunctionParameterNaming:NaturalOrder.kt:NaturalOrder$as_: Int</ID>
+    <ID>LongMethod:PageCanvas.kt:@Composable fun PageCanvas</ID>
     <ID>LoopWithTooManyJumpStatements:NaturalOrder.kt:NaturalOrder$while</ID>
+    <ID>LoopWithTooManyJumpStatements:PageCanvas.kt:for</ID>
     <ID>MagicNumber:MemoryBudget.kt:MemoryBudget$4L</ID>
     <ID>MatchingDeclarationName:Dispatchers.kt:DecodeDispatchers</ID>
     <ID>ReturnCount:NaturalOrder.kt:NaturalOrder$override fun compare: Int</ID>

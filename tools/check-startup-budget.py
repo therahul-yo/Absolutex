@@ -6,8 +6,20 @@ Macrobenchmark has no assertion API — ``measureRepeated`` records numbers and 
 So the budget lives here: run the benchmark, then run this, and a regression fails a
 command instead of sitting in a report nobody opens.
 
+    tools/run-benchmark.sh com.absolutex.benchmark.StartupBenchmark
+    adb pull /sdcard/Android/data/com.absolutex.benchmark/files/test_data ./bench-out
+    python3 tools/check-startup-budget.py --budget-ms 300 --results ./bench-out
+
+`tools/run-benchmark.sh` drives `am instrument` directly rather than going through Gradle's
+connectedAndroidTest, which uninstalls the target APK between runs — that path measures the
+first-run (picker) startup, not the returning-user (resumed book) one. Both are valid; they
+are different numbers. Gradle's path also works and needs no --results:
+
     ./gradlew :benchmark:connectedBenchmarkAndroidTest
     python3 tools/check-startup-budget.py --budget-ms 300
+
+Note the `benchmark` build type currently has minification off (app/build.gradle.kts,
+TODO(phase9)), so these numbers cannot sign off the §3 budget yet.
 
 By default this gates ``startupBaselineProfile`` only. CompilationMode.Partial is what
 ships (§3 makes baseline profiles mandatory), so it is the number that has to hold.
@@ -109,6 +121,8 @@ def main(argv: list[str] | None = None) -> int:
     paths = find_results(args.results, args.root)
     if not paths:
         print("No Macrobenchmark JSON found. Run the benchmark on a device first:\n"
+              "  tools/run-benchmark.sh com.absolutex.benchmark.StartupBenchmark\n"
+              "then adb pull the results and pass --results, or use Gradle:\n"
               "  ./gradlew :benchmark:connectedBenchmarkAndroidTest", file=sys.stderr)
         return 2
 

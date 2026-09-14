@@ -1,5 +1,12 @@
 # `tools/`
 
+| Script | What it does |
+|---|---|
+| `make-corpus.py` | Generates the §8 hostile test corpus. Below. |
+| `check-apk-size.py` | Breaks the release APK down by category and fails on a size regression. Run by CI; see `.github/workflows/README.md`. |
+| `check-startup-budget.py` | Enforces the §3 300 ms P90 cold-start budget against Macrobenchmark JSON. Macrobenchmark has no assertion API, so the gate lives here. |
+| `run-benchmark.sh` | Drives the Macrobenchmarks through `am instrument`, keeping the app installed so the staged corpus survives between runs. |
+
 ## `make-corpus.py` — the hostile test corpus (spec §8)
 
 Generates every §8 malformation into a directory of your choosing. Nothing is committed as

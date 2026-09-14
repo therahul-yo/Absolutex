@@ -12,11 +12,12 @@ android {
     buildTypes {
         create("benchmark") {
             isDebuggable = false
-            // The test APK still has to install. Without a signing config a non-debug build
-            // type produces an unsigned APK and the install fails before anything runs.
+            // A custom build type inherits no signing config, so the APK ships unsigned and
+            // install fails with INSTALL_PARSE_FAILED_NO_CERTIFICATES.
             signingConfig = signingConfigs.getByName("debug")
-            // :app's benchmark type is initWith(release); this keeps variant matching on the
-            // release side for any dependency that has no benchmark variant of its own.
+            // :benchmark pulls :app's whole transitive graph, and the library modules only
+            // publish debug/release. Without this fallback Gradle looks for a 'benchmark'
+            // variant of every library and fails to resolve any of them.
             matchingFallbacks += listOf("release")
         }
     }

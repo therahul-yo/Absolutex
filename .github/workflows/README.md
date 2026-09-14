@@ -78,14 +78,22 @@ Both need the reference device (OnePlus 11R, SM8475, Android 16) and are run by 
 
 - **Instrumented tests** — `:source:libarchive`'s `connectedAndroidTest`. These open real
   archives through JNI; an x86_64 emulator cannot run an `arm64-v8a`-only build.
-- **The startup Macrobenchmark** — `:benchmark`. Timing numbers from a shared cloud runner
-  are noise, and the §3 budget is defined against that specific device.
+- **The Macrobenchmarks** — `:benchmark` (`StartupBenchmark`, `ReaderBenchmark`). Timing
+  numbers from a shared cloud runner are noise, and the §3 budgets are defined against that
+  specific device.
 
 ```sh
 ./gradlew :source:libarchive:connectedAndroidTest
-./gradlew :benchmark:connectedBenchmarkAndroidTest
-python3 tools/check-startup-budget.py --budget-ms 300
+
+# Benchmarks go through the project runner, which keeps the app installed — Gradle's
+# connectedAndroidTest uninstalls between runs and takes the staged corpus with it.
+tools/run-benchmark.sh com.absolutex.benchmark.StartupBenchmark
+tools/run-benchmark.sh com.absolutex.benchmark.ReaderBenchmark
+python3 tools/check-startup-budget.py --budget-ms 300 --results <pulled-json-dir>
 ```
+
+The `benchmark` build type currently has minification off (`app/build.gradle.kts`,
+`TODO(phase9)`), so startup numbers from it are not production-representative yet.
 
 ## Action versions
 

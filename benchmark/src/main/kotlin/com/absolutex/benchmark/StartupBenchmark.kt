@@ -12,23 +12,43 @@ import org.junit.runner.RunWith
 /**
  * Cold-start timing for the app's launcher activity.
  *
- * Budget (§3): **cold start to interactive < 300 ms at P90**, measured on the reference
- * device (OnePlus 11R, SM8475, Android 16). The budget applies to [startupBaselineProfile]
- * — [CompilationMode.Partial] is what ships, because §3 makes baseline profiles mandatory.
- * The other two runs bracket it: [startupNoCompilation] is the worst case a user sees on
- * first launch before the profile is applied, and [startupFullCompilation] is the floor
- * that AOT can reach, so a Partial number close to Full means the profile is doing its job.
+ * Budget (§3): **cold start to interactive < 300 ms at P90** on the reference device
+ * (OnePlus 11R, SM8475, Android 16). The budget applies to [startupBaselineProfile] —
+ * [CompilationMode.Partial] is the shipping configuration, because §3 makes baseline
+ * profiles mandatory. [startupNoCompilation] and [startupFullCompilation] bracket it: a
+ * Partial number close to Full means the profile is doing its job.
+ *
+ * **These numbers cannot sign off the §3 budget yet.** The `benchmark` build type sets
+ * `isMinifyEnabled = false` (see app/build.gradle.kts, `TODO(phase9)`), so the APK measured
+ * here is not the one that ships. Re-baseline once R8 keep rules land.
+ *
+ * **What "cold start" reaches depends on persisted state.** MainActivity resumes the last
+ * book (§5.2) via a DataStore read plus a persisted-Uri check, and renders nothing until
+ * that resolves. So:
+ *  - after a clean install (what Gradle's `connectedAndroidTest` forces, since it
+ *    uninstalls between runs) there is no saved book and startup lands on the picker —
+ *    this is the first-run path;
+ *  - with the app left installed and a book remembered, startup lands in the reader —
+ *    the returning-user path, and the slower of the two.
+ * They are different numbers. Say which one you are quoting.
  *
  * Macrobenchmark has no assertion API, so nothing here fails on a regression. The gate is
- * host-side: `tools/check-startup-budget.py` parses the emitted JSON and enforces the 300 ms
- * P90. Run it after the benchmark.
+ * host-side: `tools/check-startup-budget.py` parses the emitted JSON and enforces the P90.
  *
  * This measures `timeToInitialDisplayMs` — first frame. "Interactive" really means
- * `timeToFullDisplayMs`, which only exists once the app calls `reportFullyDrawn()`.
- * TODO(reader): have the reader call reportFullyDrawn() when the first page is on screen,
- * then re-point the budget at TTFD — the checker already prefers it when present.
+ * `timeToFullDisplayMs`, which only exists once the app calls `reportFullyDrawn()`. That
+ * gap is wider here than usual, because the first frame can be an empty one while the
+ * DataStore read is still in flight.
+ * TODO(reader): call reportFullyDrawn() when the first page is on screen, then re-point the
+ * budget at TTFD — the checker already prefers it when present.
  *
- * Requires a physical device; an emulator's numbers are not comparable. Run with:
+ * Requires a physical device; an emulator's numbers are not comparable. Prefer the project's
+ * runner, which keeps the app installed (the returning-user path):
+ *
+ *     tools/run-benchmark.sh com.absolutex.benchmark.StartupBenchmark
+ *     python3 tools/check-startup-budget.py --budget-ms 300 --results <pulled-json-dir>
+ *
+ * Or via Gradle, which reinstalls and so measures the first-run path:
  *
  *     ./gradlew :benchmark:connectedBenchmarkAndroidTest
  *     python3 tools/check-startup-budget.py --budget-ms 300
