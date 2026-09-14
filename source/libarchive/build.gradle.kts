@@ -7,9 +7,23 @@ android {
     defaultConfig {
         minSdk = libs.versions.minSdk.get().toInt()
         ndk { abiFilters += "arm64-v8a" }
+        externalNativeBuild {
+            cmake {
+                // Size over micro-optimisation: page decode dwarfs archive extract cost.
+                // JNIEXPORT marks the entry points default-visible, so -fvisibility=hidden
+                // strips libarchive's internals without hiding the bridge.
+                arguments += listOf("-DANDROID_STL=none", "-DCMAKE_BUILD_TYPE=Release")
+                cFlags += listOf("-Os", "-fvisibility=hidden")
+            }
+        }
     }
-    // TODO(phase2): externalNativeBuild + CMakeLists wiring libarchive. Not yet present — see gate report.
     ndkVersion = libs.versions.ndk.get()
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "4.1.2"
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
