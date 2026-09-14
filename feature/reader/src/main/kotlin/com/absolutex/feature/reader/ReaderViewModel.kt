@@ -2,6 +2,7 @@ package com.absolutex.feature.reader
 
 import android.content.Context
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.absolutex.core.data.ProgressDao
@@ -53,10 +54,7 @@ class ReaderViewModel @Inject constructor(
             runCatching {
                 withContext(DecodeDispatchers.extract) {
                     // A fresh descriptor per read — a shared SAF fd corrupts parallel reads.
-                    LibArchiveSource.open {
-                        context.contentResolver.openFileDescriptor(uri, "r")
-                            ?: error("could not open document")
-                    }
+                    LibArchiveSource.open { openDescriptor(uri) }
                 }
             }.onSuccess { opened ->
                 source = opened
@@ -72,6 +70,22 @@ class ReaderViewModel @Inject constructor(
                 _ui.value = ReaderUiState(loading = false, error = t.message ?: "failed to open")
             }
         }
+    }
+
+    /**
+     * Opens a descriptor for either a SAF document or a plain file path.
+     *
+     * §5.1 needs device-storage locations, which are real paths, not content Uris — and a
+     * file path also avoids SAF entirely where the app already has access, which is both
+     * faster and what makes the reader drivable from an instrumented benchmark.
+     */
+    private fun openDescriptor(uri: Uri): ParcelFileDescriptor = when (uri.scheme) {
+        "file", null -> ParcelFileDescriptor.open(
+            java.io.File(requireNotNull(uri.path) { "file uri has no path: $uri" }),
+            ParcelFileDescriptor.MODE_READ_ONLY,
+        )
+        else -> context.contentResolver.openFileDescriptor(uri, "r")
+            ?: error("could not open document: $uri")
     }
 
     /** Decoded page, cached. Called off the main thread by the reader. */

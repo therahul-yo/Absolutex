@@ -33,7 +33,10 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { AbsolutexTheme { Root() } }
+        // A Uri on the launch intent opens that book directly (VIEW from a file manager,
+        // a device-storage location in §5.1, or an instrumented benchmark driving the reader).
+        val direct = intent?.data
+        setContent { AbsolutexTheme { Root(directUri = direct) } }
     }
 }
 
@@ -42,14 +45,15 @@ class MainActivity : ComponentActivity() {
  * TODO(phase4): replaced by the library home (Locations, Series, Folders, Unread...).
  */
 @Composable
-private fun Root(vm: ShellViewModel = hiltViewModel()) {
-    var uri by remember { mutableStateOf<Uri?>(null) }
+private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
+    var uri by remember { mutableStateOf(directUri) }
     var restored by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
 
     // Resume the last book on launch (§5.2). The persisted grant is what makes this survive
     // process death; without takePersistableUriPermission the saved Uri would be dead on relaunch.
     LaunchedEffect(Unit) {
+        if (directUri != null) { restored = true; return@LaunchedEffect }
         val saved = vm.lastBook()
         if (saved != null) {
             val held = context.contentResolver.persistedUriPermissions.any { it.uri.toString() == saved }
