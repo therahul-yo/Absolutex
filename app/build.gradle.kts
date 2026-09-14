@@ -26,6 +26,12 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
             isDebuggable = false
+            // Minification off for now: frame timing is unaffected by R8, and keeping it on
+            // would need a full keep-rule pass for Hilt/Room/Compose before any number could
+            // be trusted. TODO(phase9): turn on once R8 rules land, then re-baseline startup —
+            // startup numbers from this variant are NOT production-representative.
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
     buildFeatures { compose = true }

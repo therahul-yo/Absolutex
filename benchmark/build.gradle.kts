@@ -9,7 +9,18 @@ android {
         targetSdk = libs.versions.targetSdk.get().toInt()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
-    buildTypes { create("benchmark") { isDebuggable = false } }
+    buildTypes {
+        create("benchmark") {
+            isDebuggable = false
+            // A custom build type inherits no signing config, so the APK ships unsigned and
+            // install fails with INSTALL_PARSE_FAILED_NO_CERTIFICATES.
+            signingConfig = signingConfigs.getByName("debug")
+            // :benchmark pulls :app's whole transitive graph, and the library modules only
+            // publish debug/release. Without this fallback Gradle looks for a 'benchmark'
+            // variant of every library and fails to resolve any of them.
+            matchingFallbacks += listOf("release")
+        }
+    }
     targetProjectPath = ":app"
     experimentalProperties["android.experimental.self-instrumenting"] = true
     compileOptions {
