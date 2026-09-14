@@ -1,0 +1,37 @@
+# Deltas only — the root build sets buildUponDefaultConfig = true, so everything not
+# named here keeps detekt's default. Each override is here because the default rule is
+# wrong for this codebase, not because the code is wrong.
+#
+# Regenerate the full default for reference with: ./gradlew detektGenerateConfig
+
+naming:
+  FunctionNaming:
+    # @Composable functions are PascalCase by Compose convention. Without this every
+    # composable in the app is a finding.
+    ignoreAnnotated: ['Composable']
+
+style:
+  ReturnCount:
+    # Guard clauses are the house style for the hot predicates (EntryFilter.isJunk,
+    # CpuTopology.detectFrom): collapsing them to a single exit point costs readability
+    # and buys nothing. This exempts guard clauses specifically rather than raising the
+    # limit, so a genuinely sprawling function is still caught — NaturalOrder.compare
+    # still trips it and sits in the baseline.
+    excludeGuardClauses: true
+
+  MagicNumber:
+    # detekt's default excludes cover **/test/** and **/androidTest/**, but :benchmark is a
+    # com.android.test module — its test code lives in src/main, so the defaults miss it
+    # entirely. Timeouts, iteration counts and pinch factors are the substance of a
+    # benchmark; naming each one buys nothing. Everything detekt ships with is kept.
+    excludes:
+      - '**/test/**'
+      - '**/androidTest/**'
+      - '**/commonTest/**'
+      - '**/jvmTest/**'
+      - '**/androidUnitTest/**'
+      - '**/androidInstrumentedTest/**'
+      - '**/jsTest/**'
+      - '**/iosTest/**'
+      - '**/*.kts'
+      - '**/benchmark/src/**'

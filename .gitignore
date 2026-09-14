@@ -11,3 +11,7 @@
 */*/.cxx/
 /captures
 .externalNativeBuild
+
+# tools/ are plain scripts; nothing here should be byte-compiled into the tree
+__pycache__/
+*.pyc
