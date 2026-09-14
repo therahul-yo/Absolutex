@@ -51,6 +51,7 @@ the migration to genuinely adaptive layouts happens deliberately before that dat
 :core:decode            dispatchers, tile geometry, tile cache, page decoding
 :source:api             ComicSource, natural sort, entry filtering              (JVM)
 :source:libarchive      libarchive over JNI — cbz / cbr / cb7 / cbt
+:source:pdf             PDFium over JNI — per-tile render, page size, outline
 :feature:reader         the reader surface
 :benchmark              Macrobenchmark
 ```
@@ -89,6 +90,14 @@ release tag **and** its SHA256. Nothing is vendored into the tree. The build is 
 static, `-Os -fvisibility=hidden`; the resulting `.so` is about 350 KB with libarchive inside
 and only the two JNI entry points exported.
 
+`:source:pdf` is the one exception to "nothing is vendored, everything is built from source",
+and it is not by choice: PDFium ships no release tarball and no standalone CMake build, only a
+`gclient` solution that pulls Chromium's build tree and builds with GN. It is therefore a
+**prebuilt shared library**, pinned by URL and SHA256 exactly like libarchive's source tarball,
+and it is the only dependency whose bytes we do not compile ourselves. `tools/refresh-pdfium.sh`
+re-resolves the hash, the licence texts and a copyleft scan together, so a version bump cannot
+quietly change any of them.
+
 ## Licensing
 
 No dependency is GPL or AGPL. No ads, no analytics, no crash reporting.
@@ -96,6 +105,7 @@ No dependency is GPL or AGPL. No ads, no analytics, no crash reporting.
 | Component | Licence | Note |
 |---|---|---|
 | **libarchive 3.8.9** | New BSD | RAR4/RAR5 readers are clean-room |
+| **PDFium 155.0.8044.0** | BSD-3-Clause | Bundled deps all permissive; see [`source/pdf/LICENSES.md`](source/pdf/LICENSES.md) |
 | AGP, Gradle, Kotlin, Compose, Hilt, Room, DataStore | Apache-2.0 | |
 
 ### On RAR
@@ -125,6 +135,12 @@ falling back to `dup()` and the same corruption.
 
 The rule: anything reading an archive concurrently must obtain a **fresh descriptor per read**.
 `LibArchiveSource` therefore takes a factory, not a descriptor.
+
+`:source:pdf` is deliberately *not* written that way, and should not be "fixed" to match. It
+holds one descriptor for the life of the document because every read there is a `pread()`,
+which takes its offset as an argument and never consults the shared one. Opening per read would
+re-parse the PDF xref table and rebuild its object map on every tile. If you ever add a plain
+`read()` to that file, make it a `pread()` — do not re-open the document.
 
 ### Frame-budget rules in the reader
 
