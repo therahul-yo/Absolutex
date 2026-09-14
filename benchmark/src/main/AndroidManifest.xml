@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Package visibility. From API 30 an instrumentation APK cannot see, launch or kill an
+      arbitrary package unless it declares it here. minSdk is 33, so this is not optional:
+      without it MacrobenchmarkScope.startActivityAndWait() cannot resolve the target.
+    -->
+    <queries>
+        <package android:name="com.absolutex" />
+    </queries>
+
+</manifest>

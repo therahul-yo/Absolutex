@@ -1,0 +1,15 @@
+{
+  "01_basic_ltr.cbz": "567028620df97d75e40eec548cfba5d6ea5edd944cfd5c994c4358959e1b1ad0",
+  "02_no_comicinfo.cbz": "66db8de7f757e6b8552266bf0605ac9e07a431dcccf2d9f7d24aa15229509b44",
+  "03_upper.CBZ": "5fce63e78d91a580cc13d183d783452ebbf791cdcfa759b9ab9bb538bd8bb63d",
+  "04_mixed.CbZ": "5fce63e78d91a580cc13d183d783452ebbf791cdcfa759b9ab9bb538bd8bb63d",
+  "05_upper.CB7": "5fce63e78d91a580cc13d183d783452ebbf791cdcfa759b9ab9bb538bd8bb63d",
+  "06_zip_named_cbr.cbr": "50a4f892643af670856400a4bb8f4f83e86c18c4972686d3f7d9f6cf5c59ada3",
+  "07_deep_nesting.cbz": "781c907e071280ae5350db81a755fcb21905402723ce7cd66e5396758a84e828",
+  "08_nonascii_rtl.cbz": "0c6ab81f2faeaf017513e9ca1aaf1c68d0cb639e6d2bde79e33ce4cc1f2bd825",
+  "09_two_pages.cbz": "198724bf84301643b7b618f7730321025bc56a957318838ca55e8a16f3391a5b",
+  "10_junk_entries.cbz": "ef4e365c65e622523313d69ef0cb085066b01f39ce5e91a5c7f9a99a7e38199b",
+  "11_truncated.cbz": "3c7690cfeb1900b8ca5d3fdd8156a78add0d531bdda49fb68ca022a43d4b6168",
+  "12_giant_page.cbz": "1f9ca49662a63ccff2ab5dd1d2c5ea740dd5085f5a39d2ab8deed01426cec911",
+  "13_outline.pdf": "81bc238aced6f16a983819be8e890a2a2267f6caf4220140e95ceffbf61320f4"
+}

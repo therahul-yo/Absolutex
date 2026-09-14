@@ -1,0 +1,13 @@
+<?xml version="1.0" ?>
+<!-- Frozen pre-existing findings. Policy + regeneration: config/detekt/README.md -->
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>FunctionParameterNaming:NaturalOrder.kt:NaturalOrder$as_: Int</ID>
+    <ID>LoopWithTooManyJumpStatements:NaturalOrder.kt:NaturalOrder$while</ID>
+    <ID>MagicNumber:MemoryBudget.kt:MemoryBudget$4L</ID>
+    <ID>MatchingDeclarationName:Dispatchers.kt:DecodeDispatchers</ID>
+    <ID>ReturnCount:NaturalOrder.kt:NaturalOrder$override fun compare: Int</ID>
+    <ID>ReturnCount:NaturalOrder.kt:NaturalOrder$private fun compareDigitRuns: Int</ID>
+  </CurrentIssues>
+</SmellBaseline>

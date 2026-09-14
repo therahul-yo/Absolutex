@@ -1,0 +1,154 @@
+# Absolutex CI.
+#
+# Device-free by construction: everything here runs on a GitHub-hosted x86_64 Linux runner
+# with no emulator and no attached hardware. The instrumented tests (:source:libarchive) and
+# the startup Macrobenchmark are NOT run here — they need the reference device and are run
+# by hand. See .github/workflows/README.md.
+#
+# Action versions were resolved against the live repositories on 2026-09-14, not from memory.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Pinned in gradle/libs.versions.toml; duplicated here because sdkmanager runs before
+  # Gradle can tell us. Keep in sync with the `ndk` and cmake entries there.
+  NDK_VERSION: "28.2.13676358"
+  CMAKE_VERSION: "4.1.2"
+  COMPILE_SDK: "37"
+
+jobs:
+  # Pure Python, no SDK, no Gradle. Runs in seconds and is the fastest signal that a
+  # refactor changed the hostile corpus (spec §8).
+  corpus:
+    name: Test corpus is reproducible
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.11'
+
+      # --include-huge is deliberately omitted: the 2.25 GiB case would dominate the job
+      # for no signal, and it is excluded from the pinned digests anyway.
+      - name: Generate and verify
+        run: python3 tools/make-corpus.py --out "$RUNNER_TEMP/corpus" --check
+
+      - name: Corpus manifest
+        if: always()
+        run: |
+          {
+            echo '### Corpus manifest'
+            echo '```json'
+            cat "$RUNNER_TEMP/corpus/corpus-manifest.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  android:
+    name: Build, analyse and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      # Needed only by the SARIF upload. Pull requests from forks do not get it, which is
+      # why that step is continue-on-error rather than a gate.
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          # JDK 21 everywhere. Every module sets jvmToolchain(21); introducing a second JDK
+          # here only creates a way for CI and local builds to disagree.
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v6.3.0
+
+      # The runner ships an Android SDK but not necessarily this compileSdk, and never this
+      # exact NDK/CMake pair. :source:libarchive pins both, so install them explicitly rather
+      # than hoping AGP's auto-download picks the right ones.
+      - name: Install SDK components
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" \
+            "platforms;android-${COMPILE_SDK}" \
+            "ndk;${NDK_VERSION}" \
+            "cmake;${CMAKE_VERSION}"
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      # --continue so one failing check does not hide the others: a reviewer gets the whole
+      # picture from a single run instead of peeling them off one at a time.
+      - name: detekt
+        run: ./gradlew --continue detekt
+
+      - name: Android Lint
+        if: success() || failure()
+        run: ./gradlew --continue lintRelease
+
+      # Both task names on purpose. :core:model and :source:api are kotlin-jvm modules whose
+      # unit tests live under `test`; the Android modules use `testDebugUnitTest`. Running
+      # only the latter would silently skip NaturalOrderTest and friends.
+      - name: Unit tests
+        if: success() || failure()
+        run: ./gradlew --continue test testDebugUnitTest
+
+      - name: Assemble release
+        if: success() || failure()
+        run: ./gradlew :app:assembleRelease
+
+      - name: APK size report
+        if: success() || failure()
+        run: |
+          python3 tools/check-apk-size.py \
+            --apk app/build/outputs/apk/release \
+            --baseline .github/apk-size-baseline.json \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+      # detekt emits SARIF specifically so findings land on the PR diff as annotations
+      # rather than only in a log nobody opens.
+      - name: Upload detekt SARIF
+        if: success() || failure()
+        uses: github/codeql-action/upload-sarif@v4.38.0
+        continue-on-error: true
+        with:
+          sarif_file: build/reports/detekt/detekt.sarif
+          category: detekt
+
+      - name: Upload reports
+        if: success() || failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: reports
+          if-no-files-found: ignore
+          path: |
+            build/reports/detekt/**
+            **/build/reports/lint-results-*.html
+            **/build/reports/tests/**
+            **/build/test-results/**/*.xml
+
+      - name: Upload release APK and mapping
+        if: success() || failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-apk
+          if-no-files-found: ignore
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/mapping/release/mapping.txt

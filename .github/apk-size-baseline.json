@@ -1,0 +1,6 @@
+{
+  "_comment": "Compressed on-disk size of the release APK, in bytes. total_bytes is null, so the size gate in .github/workflows/ci.yml reports but does not fail. Arm it from a build you trust: python3 tools/check-apk-size.py --apk app/build/outputs/apk/release/app-release-unsigned.apk --update, then commit this file. Raising it later shows up as a reviewable diff.",
+  "apk": null,
+  "categories": {},
+  "total_bytes": null
+}

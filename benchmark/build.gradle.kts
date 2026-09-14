@@ -9,7 +9,17 @@ android {
         targetSdk = libs.versions.targetSdk.get().toInt()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
-    buildTypes { create("benchmark") { isDebuggable = false } }
+    buildTypes {
+        create("benchmark") {
+            isDebuggable = false
+            // The test APK still has to install. Without a signing config a non-debug build
+            // type produces an unsigned APK and the install fails before anything runs.
+            signingConfig = signingConfigs.getByName("debug")
+            // :app's benchmark type is initWith(release); this keeps variant matching on the
+            // release side for any dependency that has no benchmark variant of its own.
+            matchingFallbacks += listOf("release")
+        }
+    }
     targetProjectPath = ":app"
     experimentalProperties["android.experimental.self-instrumenting"] = true
     compileOptions {
