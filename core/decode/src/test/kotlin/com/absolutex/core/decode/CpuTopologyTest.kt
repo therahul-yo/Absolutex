@@ -5,10 +5,11 @@ import org.junit.Test
 
 class CpuTopologyTest {
 
-    // Snapdragon 8+ Gen 1 — the reference device. 4x A510 little, 3x A710, 1x X2.
+    // Snapdragon 8+ Gen 1 (SM8475). These are the exact cpuinfo_max_freq values read off the
+    // reference OnePlus 11R over adb, not spec-sheet numbers: 4x A510, 3x A710, 1x X2.
     @Test fun `sd8plusgen1 reports four big cores`() {
         val freqs = listOf(1_804_800L, 1_804_800L, 1_804_800L, 1_804_800L,
-                           2_496_000L, 2_496_000L, 2_496_000L, 3_187_200L)
+                           2_496_000L, 2_496_000L, 2_496_000L, 2_995_200L)
         assertEquals(4, CpuTopology.detectFrom(freqs, 8))
     }
 

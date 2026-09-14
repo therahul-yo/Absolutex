@@ -7,6 +7,7 @@ android {
     defaultConfig {
         minSdk = libs.versions.minSdk.get().toInt()
         ndk { abiFilters += "arm64-v8a" }
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {
                 // Size over micro-optimisation: page decode dwarfs archive extract cost.
@@ -33,4 +34,7 @@ android {
 dependencies {
     implementation(project(":core:model"))
     implementation(project(":source:api"))
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.junit)
 }

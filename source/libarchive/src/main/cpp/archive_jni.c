@@ -9,9 +9,11 @@
 // budget, cache (name -> header offset) on first open and seek instead.
 
 #include <jni.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <android/log.h>
 #include <archive.h>
 #include <archive_entry.h>
@@ -21,8 +23,29 @@
 
 #define BLOCK_SIZE 65536
 
+/*
+ * Returns a PRIVATE descriptor for the same file.
+ *
+ * dup() is wrong here: the copy shares its file offset with the original, so two threads
+ * reading pages at once move each other's position and both get short/garbage reads. That is
+ * not theoretical — the concurrency test caught exactly this, with libarchive reporting
+ * entries as unreadable under an 8-thread fan-out.
+ *
+ * Re-opening /proc/self/fd/N creates an independent open file description with its own
+ * offset, which is what lets the decode pool fan pages across the big cores (§3) with no
+ * locking. dup() remains as a fallback for descriptors that cannot be re-opened this way
+ * (pipes, sockets); those are single-reader only, which is safe because such a source has no
+ * random access to parallelise in the first place.
+ */
+static int private_fd(int fd) {
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+    int p = open(path, O_RDONLY | O_CLOEXEC);
+    return p >= 0 ? p : dup(fd);
+}
+
 static struct archive *open_fd(int fd, int *dup_out) {
-    int dfd = dup(fd);
+    int dfd = private_fd(fd);
     if (dfd < 0) return NULL;
     if (lseek(dfd, 0, SEEK_SET) < 0) { close(dfd); return NULL; }
 
