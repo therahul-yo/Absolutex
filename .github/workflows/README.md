@@ -36,20 +36,36 @@ directly. That step is `continue-on-error` because pull requests from forks are 
 
 ## SDK components
 
-The runner ships an Android SDK, but not `compileSdk 37`, and never the exact NDK/CMake pair
-`:source:libarchive` pins. The workflow installs them explicitly with `sdkmanager` rather
-than relying on AGP's auto-download to guess right:
+The workflow pre-warms these with `sdkmanager`, **best effort, one package at a time**:
 
 ```
 platforms;android-37   ndk;28.2.13676358   cmake;4.1.2
 ```
 
-These are duplicated into `env:` at the top of `ci.yml` because `sdkmanager` runs before
-Gradle can be asked. **Keep them in sync with `gradle/libs.versions.toml`** (`ndk`,
+It is best effort for a reason. `platforms;android-37` is not in the public SDK repository
+yet, so `sdkmanager` exits 1 on it. The first version of this step installed all three in one
+call under `set -e`, which meant that single missing package failed the step — and, because
+the `detekt` step had no `if:` guard, silently skipped detekt as well.
+
+It is also not load-bearing. Run
+[34867170061](https://github.com/therahul-yo/Absolutex/actions/runs/34867170061) built
+libarchive for `arm64-v8a`, resolved `compileSdk 37` and produced a 2.1 MiB release APK with
+this step having installed **nothing at all** — AGP downloads what it needs on its own. So
+the step reports what the public repo has and lets Gradle be the judge; a genuinely missing
+component surfaces as a Gradle error naming it, which beats `Failed to find package`.
+
+The versions are duplicated into `env:` at the top of `ci.yml` because `sdkmanager` runs
+before Gradle can be asked. **Keep them in sync with `gradle/libs.versions.toml`** (`ndk`,
 `compileSdk`) and `source/libarchive/build.gradle.kts` (`cmake.version`).
 
 No third-party SDK-setup action is used — one less supply-chain surface, and `sdkmanager` is
 already on the runner.
+
+### Every Gradle step carries `if: success() || failure()`
+
+Including the first one. Without it a failing setup step skips that step silently, and a
+skipped `detekt` emits no output at all — the only trace is a missing SARIF file three steps
+later.
 
 ## The APK size gate
 

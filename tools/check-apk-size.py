@@ -80,13 +80,15 @@ def render(report: dict, baseline: dict | None, limit: int | None) -> str:
                      % (label, human(c["compressed"]), human(c["uncompressed"]), c["entries"]))
     total = report["total_bytes"]
     lines.append("| **APK total** | **%s** | | |" % human(total))
+    lines.append("| | `%d bytes` | | |" % total)   # exact, so a CI log alone can arm the gate
     lines.append("")
 
     base_bytes = (baseline or {}).get("total_bytes")
     if base_bytes is None:
         lines.append("> **Size gate is not armed.** `.github/apk-size-baseline.json` has no "
                      "baseline yet. Run `python3 tools/check-apk-size.py --apk <path> --update` "
-                     "on a build you trust and commit the result.")
+                     "on a build you trust and commit the result — or, to arm it from this run, "
+                     "set `total_bytes` to `%d`." % total)
     else:
         delta = total - base_bytes
         pct = (delta / base_bytes * 100.0) if base_bytes else 0.0

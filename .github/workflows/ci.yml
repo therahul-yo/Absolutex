@@ -79,23 +79,39 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6.3.0
 
-      # The runner ships an Android SDK but not necessarily this compileSdk, and never this
-      # exact NDK/CMake pair. :source:libarchive pins both, so install them explicitly rather
-      # than hoping AGP's auto-download picks the right ones.
+      # Best effort, one package at a time.
+      #
+      # This step used to install all three in one sdkmanager call under `set -e`. That is
+      # wrong twice over: `platforms;android-37` is not in the public SDK repository yet, so
+      # sdkmanager exits 1 and took the whole step — and with it the first Gradle step — down
+      # with it. And it was never load-bearing: run 34867170061 built libarchive for
+      # arm64-v8a, resolved compileSdk 37 and produced a release APK with this step having
+      # installed nothing at all, because AGP downloads what it needs on its own.
+      #
+      # So: pre-warm what the public repo has, report what it does not, and let Gradle be the
+      # judge. A component that is genuinely missing surfaces as a Gradle error naming it,
+      # which is far more useful than sdkmanager's "Failed to find package".
       - name: Install SDK components
         run: |
-          set -euo pipefail
+          set -uo pipefail
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-          "$SDKMANAGER" \
-            "platforms;android-${COMPILE_SDK}" \
-            "ndk;${NDK_VERSION}" \
-            "cmake;${CMAKE_VERSION}"
+          yes 2>/dev/null | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          for pkg in "platforms;android-${COMPILE_SDK}" "ndk;${NDK_VERSION}" "cmake;${CMAKE_VERSION}"; do
+            if "$SDKMANAGER" "$pkg" > /dev/null 2>&1; then
+              echo "installed    $pkg"
+            else
+              echo "unavailable  $pkg - continuing; AGP resolves it if the build needs it"
+            fi
+          done
           echo "sdk.dir=$ANDROID_HOME" > local.properties
 
       # --continue so one failing check does not hide the others: a reviewer gets the whole
       # picture from a single run instead of peeling them off one at a time.
+      # `if:` matters here as much as on the steps below. Without it a failing setup step
+      # skips detekt silently, and a skipped detekt emits nothing — the only trace is a
+      # missing SARIF file three steps later. That is exactly how run 34867170061 hid it.
       - name: detekt
+        if: success() || failure()
         run: ./gradlew --continue detekt
 
       - name: Android Lint
@@ -124,7 +140,7 @@ jobs:
       # detekt emits SARIF specifically so findings land on the PR diff as annotations
       # rather than only in a log nobody opens.
       - name: Upload detekt SARIF
-        if: success() || failure()
+        if: (success() || failure()) && hashFiles('build/reports/detekt/detekt.sarif') != ''
         uses: github/codeql-action/upload-sarif@v4.38.0
         continue-on-error: true
         with:
