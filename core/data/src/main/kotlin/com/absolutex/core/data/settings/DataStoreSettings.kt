@@ -36,8 +36,10 @@ private val Context.settingsStore by preferencesDataStore(
  * store into a [MapPrefBag] and back. MapPrefBag already resolves a wrongly typed entry to null,
  * which is the one thing DataStore's own `Preferences[key]` gets wrong (it throws).
  *
- * ponytail: Preferences DataStore for reader prefs too, not Proto as §6 suggests. Two enums do not
- * need a schema or the protobuf plugin; switch if the reader prefs grow nested structure.
+ * Decision: Preferences DataStore for reader prefs too, not Proto as §6 suggests. Two enums do
+ * not need a schema or the protobuf plugin, and one store keeps app/reader writes in a single
+ * transaction; the snapshot-through-[MapPrefBag] shape survives a later Proto move unchanged.
+ * TODO(settings-datastore): revisit Proto if reader prefs grow nested structure needing migration.
  */
 @Singleton
 class DataStoreSettings internal constructor(
