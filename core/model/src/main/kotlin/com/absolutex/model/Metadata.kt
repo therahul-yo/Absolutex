@@ -82,7 +82,10 @@ data class ParsedName(
                     if (isNotEmpty()) append(' ')
                     // Render the scanner's own spelling minus its padding: "001" shows as "#1",
                     // but "10.5" and "1A" keep the form that distinguishes them.
-                    append('#').append(issue.raw.trimStart('0').ifEmpty { "0" })
+                    // Strip padding zeros ("001" -> "1") without eating the leading zero of a
+                    // fraction: trimming "0.5" alone leaves ".5".
+                    val shown = issue.raw.trimStart('0').ifEmpty { "0" }
+                    append('#').append(if (shown.startsWith('.')) "0$shown" else shown)
                 }
                 if (title != null && title != series) {
                     if (isNotEmpty()) append(" - ")

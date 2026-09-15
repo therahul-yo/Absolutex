@@ -5,6 +5,8 @@ import com.absolutex.model.ComicInfoPage
 import com.absolutex.model.IssueNumber
 import com.absolutex.model.PageType
 import com.absolutex.model.ReadingFlow
+import java.io.FilterInputStream
+import java.io.IOException
 import java.io.InputStream
 import java.io.StringReader
 import javax.xml.XMLConstants
@@ -29,14 +31,55 @@ object ComicInfoParser {
     /** ComicRack writes -1 into numeric fields it has no value for; that is "absent", not a number. */
     private const val COMICRACK_UNSET = -1
 
-    fun parse(xml: String): ComicInfo? =
+    /**
+     * Largest ComicInfo.xml this will parse. Real ones are a few KB.
+     *
+     * The cap exists because the XML arrives from inside an untrusted archive, and it arrives
+     * compressed: a ~1 MB deflate entry can inflate into a gigabyte of repeated <Page/> elements,
+     * or one enormous text node. The DOM builder would allocate until OutOfMemoryError — an Error,
+     * not an Exception, so it escapes the "never throw, return null" contract and takes the
+     * library scan down with it. Refusing oversized input is cheaper than catching OOM, which is
+     * not reliably recoverable anyway.
+     */
+    const val MAX_BYTES: Long = 1L * 1024 * 1024
+
+    /** Plausible publication years. Anything outside is a typo or a different field entirely. */
+    private val PLAUSIBLE_YEARS = 1900..2199
+
+    /** Fails the parse past [MAX_BYTES] instead of letting the DOM grow without bound. */
+    private class BoundedInputStream(delegate: InputStream, private val limit: Long) :
+        FilterInputStream(delegate) {
+        private var count = 0L
+
+        override fun read(): Int = `in`.read().also { if (it >= 0) bump(1) }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int =
+            `in`.read(b, off, len).also { if (it > 0) bump(it.toLong()) }
+
+        private fun bump(n: Long) {
+            count += n
+            if (count > limit) throw IOException("ComicInfo.xml exceeds $limit bytes")
+        }
+    }
+
+    fun parse(xml: String): ComicInfo? {
+        // One char is at least one byte of source, so this rejects anything that could not have
+        // fitted in the byte budget. Checked before parsing, not during.
+        if (xml.length.toLong() > MAX_BYTES) return null
         // Reading from a Reader makes the parser ignore the document's own encoding declaration,
         // which is right once the bytes are already decoded. The InputStream overload keeps it, so
         // ComicRack's windows-1252 files still come out with their accents intact.
-        parse(InputSource(StringReader(xml)))
+        return parse(InputSource(StringReader(xml)))
+    }
 
-    fun parse(input: InputStream): ComicInfo? = parse(InputSource(input))
+    fun parse(input: InputStream): ComicInfo? =
+        parse(InputSource(BoundedInputStream(input, MAX_BYTES)))
 
+    // Both catches are the "never throw, return null" contract itself: this parses attacker-
+    // controlled XML from inside an archive, and any failure means "no metadata", not a crash.
+    // The exception is deliberately not logged here — :source:api is a pure Kotlin module with
+    // no logger, and a corrupt archive would spam whatever it had.
+    @Suppress("SwallowedException", "TooGenericExceptionCaught")
     private fun parse(source: InputSource): ComicInfo? = try {
         val builder = newFactory().newDocumentBuilder().apply {
             // Silence the default handler: a corrupt archive must not spray SAX warnings at stderr.
@@ -103,7 +146,7 @@ object ComicInfoParser {
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
                 .distinct(),
-            year = number("year")?.takeIf { it in 1900..2199 },
+            year = number("year")?.takeIf { it in PLAUSIBLE_YEARS },
             pageCount = number("pagecount"),
             pages = children.lastOrNull { it.localTagName() == "pages" }?.toPages().orEmpty(),
             readingFlow = when (text("manga")?.lowercase()) {

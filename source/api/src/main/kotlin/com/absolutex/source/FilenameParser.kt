@@ -18,6 +18,10 @@ import com.absolutex.model.TitlePolicy
  */
 object FilenameParser {
 
+    /** Plausible publication years; outside this a four-digit number is not a year. */
+    private val PLAUSIBLE_YEARS = 1900..2199
+    private const val YEAR_DIGITS = 4
+
     private val CONTAINER_EXTENSIONS = setOf(
         "cbz", "cbr", "cb7", "cbt", "cba", "zip", "rar", "7z", "tar", "pdf", "epub",
     )
@@ -43,7 +47,8 @@ object FilenameParser {
      * fire inside "Classic"; "#" does not, because "Batman#5" is a real spelling.
      */
     private val PREFIXED_ISSUE = Regex(
-        """(?iu)(?:#|(?<![\p{L}\d])(?:chapter|chap|ch|c|issue|part|pt|tome|t))\.?\s*(\d{1,5}(?:\.\d{1,3})?)(?![\p{L}\d])"""
+        """(?iu)(?:#|(?<![\p{L}\d])(?:chapter|chap|ch|c|issue|part|pt|tome|t))""" +
+            """\.?\s*(\d{1,5}(?:\.\d{1,3})?)(?![\p{L}\d])"""
     )
 
     /**
@@ -54,6 +59,16 @@ object FilenameParser {
      * "2000 AD".
      */
     private val LEADING_ISSUE = Regex("""^(\d{1,5}(?:\.\d{1,3})?)\s*(?:[-–—.:]|$)""")
+
+    /**
+     * A zero-padded leading number, as in "001 To You, 2000 Years From Now.cbz". The padding is
+     * what distinguishes it from a series that merely opens with a number: "2000 AD 1234.cbz" is
+     * issue 1234 of "2000 AD", not issue 2000. §5.1 expects the series to come from the folder.
+     */
+    private val PADDED_LEADING_ISSUE = Regex("""^(0\d{1,4}(?:\.\d{1,3})?)(?![\d])""")
+
+    /** "001-012", "1-12" — a collected run. The first number identifies it. */
+    private val ISSUE_RANGE = Regex("""(?u)(?<![\p{L}\d])(\d{1,5})\s*[-–—]\s*(\d{1,5})(?![\p{L}\d])""")
 
     /** Any standalone number, used as the issue of last resort. */
     private val STANDALONE_NUMBER = Regex("""(?u)(?<![\p{L}\d])(\d{1,5}(?:\.\d{1,3})?)(?![\p{L}\d])""")
@@ -103,14 +118,15 @@ object FilenameParser {
             val ancestor = parseCore(segments[i])
             volume = volume ?: ancestor.volume
             year = year ?: ancestor.year
-            if (!ancestor.series.isNullOrBlank()) {
+            val ancestorSeries = folderSeries(segments[i])
+            if (!ancestorSeries.isNullOrBlank()) {
                 return core.copy(
-                    series = ancestor.series,
+                    series = ancestorSeries,
                     volume = volume,
                     year = year,
                     // "001 Chapter Name.cbz" leaves "Chapter Name" over; that is the title, not a
                     // second copy of the series.
-                    title = core.title?.takeIf { it != ancestor.series },
+                    title = core.title?.takeIf { it != ancestorSeries },
                 ).toParsedName(filename, seriesFromFolder = true)
             }
         }
@@ -135,6 +151,24 @@ object FilenameParser {
         )
     }
 
+    /**
+     * A folder name IS the series. Unlike a filename it carries no issue number, so no number is
+     * taken out of it — parsing it as a filename turned "Spider-Man 2099" into "Spider-Man" and
+     * "Kaiju No. 8" into "Kaiju No", quietly merging distinct shelves.
+     *
+     * A "v01" folder still yields nothing, so the walk continues to the real series above it.
+     */
+    private fun folderSeries(text: String): String? {
+        val detagged = DANGLING_TAG.replace(TAG.replace(text, " "), " ")
+        val normalised = normaliseSeparators(detagged)
+        val volumeMatch = VOLUME.find(normalised)
+        return clean(volumeMatch?.let { blank(normalised, it.range) } ?: normalised)
+    }
+
+    private fun looksLikeYear(digits: String): Boolean =
+        digits.length == YEAR_DIGITS && '.' !in digits &&
+            (digits.toIntOrNull() ?: 0) in PLAUSIBLE_YEARS
+
     private fun parseCore(text: String): Core {
         val year = TAG.findAll(text)
             .mapNotNull { YEAR_TAG.find(it.value.trim('(', ')', '[', ']', '{', '}').trim())?.groupValues?.get(1) }
@@ -147,13 +181,32 @@ object FilenameParser {
         val volumeMatch = VOLUME.findAll(normalised).lastOrNull()
         // Blank the volume token before hunting for the issue, so "Batman v02" cannot report
         // volume 2 and issue 2 off the same digits.
-        val masked = volumeMatch?.let { blank(normalised, it.range) } ?: normalised
+        val volumeMasked = volumeMatch?.let { blank(normalised, it.range) } ?: normalised
 
-        val issueMatch = LEADING_ISSUE.find(masked)
+        // An unbracketed year ("Absolute.Batman.001.2024.Webrip") is a year, not an issue. Three
+        // guards keep that from eating numbers that are not years:
+        //  - some other number must be available to be the issue, so "Batman 1234" keeps its issue;
+        //  - it cannot be the FIRST number, because a series may open with one ("2000 AD 1234");
+        //  - a name of the form "<padded issue> <title>" is not mined at all, since a year inside
+        //    a title is part of the title ("001 To You, 2000 Years From Now").
+        val standalone = STANDALONE_NUMBER.findAll(volumeMasked).toList()
+        val titleCarriesTheRest = PADDED_LEADING_ISSUE.containsMatchIn(volumeMasked)
+        val yearToken = standalone.drop(1)
+            .lastOrNull { looksLikeYear(it.groupValues[1]) }
+            ?.takeIf { !titleCarriesTheRest }
+        val masked = yearToken?.let { blank(volumeMasked, it.range) } ?: volumeMasked
+        val resolvedYear = year ?: yearToken?.groupValues?.get(1)?.toIntOrNull()
+
+        val issueMatch = PADDED_LEADING_ISSUE.find(masked)
+            ?: LEADING_ISSUE.find(masked)
             ?: PREFIXED_ISSUE.findAll(masked).lastOrNull()
-            ?: STANDALONE_NUMBER.findAll(masked).lastOrNull()
+            ?: ISSUE_RANGE.findAll(masked).lastOrNull()
+            // With a volume marker present the book is identified by its volume, so a bare number
+            // left over belongs to the series: "Kaiju No. 8 v01" is volume 1, not issue 8.
+            ?: masked.takeIf { volumeMatch == null }
+                ?.let { STANDALONE_NUMBER.findAll(it).lastOrNull() }
 
-        val spans = listOfNotNull(volumeMatch?.range, issueMatch?.range)
+        val spans = listOfNotNull(volumeMatch?.range, issueMatch?.range, yearToken?.range)
         val series: String?
         val title: String?
         if (spans.isEmpty()) {
@@ -168,7 +221,7 @@ object FilenameParser {
             series = series,
             issue = issueMatch?.let { IssueNumber.parse(it.groupValues[1]) },
             volume = volumeMatch?.groupValues?.get(1)?.toIntOrNull(),
-            year = year,
+            year = resolvedYear,
             title = title,
         )
     }
