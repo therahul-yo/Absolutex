@@ -33,6 +33,12 @@ import java.io.File
 @RunWith(AndroidJUnit4::class)
 class ReaderBenchmark {
 
+    private companion object {
+        /** Each direction, per iteration. Well inside a 45-page book in either direction. */
+        const val PAGE_TURNS = 5
+    }
+
+
     @get:Rule val rule = MacrobenchmarkRule()
 
     private val pkg = "com.absolutex"
@@ -49,6 +55,52 @@ class ReaderBenchmark {
         checkNotNull(device.wait(Until.findObject(By.pkg(pkg)), 5_000)) { "reader not on screen" }
             .apply { setGestureMargin(device.displayWidth / 8) }
 
+    /**
+     * Refuses to measure anything but a loaded book. Runs in setupBlock, so none of it is timed.
+     *
+     * Every one of these guards exists because its absence produced a plausible, wrong number:
+     * the picker showing, a notification shade covering the reader, and — for every run until it
+     * was caught — the reader's own "Couldn't open this book" screen, which is the same package,
+     * passes the other two checks, and reported one frame per iteration.
+     *
+     * The load is asynchronous, so the error screen is waited for rather than looked for once: an
+     * immediate check passes while the page is still loading and the failure lands afterwards.
+     */
+    private fun androidx.benchmark.macro.MacrobenchmarkScope.assertReaderShowsABook() {
+        check(device.wait(Until.gone(By.text("Open a comic")), 5_000) != false) {
+            "app showed the picker - the book path was not honoured"
+        }
+        check(device.currentPackageName == pkg) {
+            "reader is not in the foreground (found ${device.currentPackageName}) - nothing to measure"
+        }
+        // A real page loads in ~20 ms on the reference device; 3 s is generous.
+        check(!device.wait(Until.hasObject(By.text("Retry")), 3_000)) {
+            "the reader is showing its error screen - no book loaded, nothing to measure"
+        }
+        assertGesturesReachTheApp()
+    }
+
+    /**
+     * OxygenOS/ColorOS silently drop injected input unless "Disable permission monitoring" is on
+     * in Developer options. The swipes then do nothing, the reader draws no frames, and the run
+     * dies at the end with "0 found for frameDurationCpuMs" — which reads like a tracing fault.
+     * One nudge and a frame count says what is actually wrong, before any iteration is spent.
+     */
+    private fun androidx.benchmark.macro.MacrobenchmarkScope.assertGesturesReachTheApp() {
+        device.executeShellCommand("dumpsys gfxinfo $pkg reset")
+        val y = device.displayHeight / 2
+        device.swipe(device.displayWidth * 85 / 100, y, device.displayWidth * 15 / 100, y, 8)
+        device.waitForIdle()
+        device.swipe(device.displayWidth * 15 / 100, y, device.displayWidth * 85 / 100, y, 8)
+        device.waitForIdle()
+        val frames = Regex("""Total frames rendered: (\d+)""")
+            .find(device.executeShellCommand("dumpsys gfxinfo $pkg"))?.groupValues?.get(1)?.toInt() ?: 0
+        check(frames > 0) {
+            "a swipe drew no frames - injected input is being dropped. On OnePlus/OPPO enable " +
+                "Developer options > Disable permission monitoring, then rerun"
+        }
+    }
+
     @Test fun pageTurn() = rule.measureRepeated(
         packageName = pkg,
         metrics = listOf(FrameTimingMetric()),
@@ -57,25 +109,26 @@ class ReaderBenchmark {
         setupBlock = {
             pressHome()
             startActivityAndWait(viewIntent())
+            // A personal phone gets notifications. With the shade down the reader is covered,
+            // the gestures land on the shade, and Perfetto reports "no renderthread slices" —
+            // which is exactly how one run on the reference device failed.
+            device.executeShellCommand("cmd statusbar collapse")
+            assertReaderShowsABook()
         },
     ) {
-        // Must be in the reader, not the picker — otherwise we would be measuring a blank
-        // screen and reporting it as a flawless score.
-        check(device.wait(Until.gone(By.text("Open a comic")), 5_000) != false) {
-            "app showed the picker - the book path was not honoured"
+        // Forward five, back five: net zero. Ten forward per iteration over five iterations is 50
+        // turns, and the reference book has 45 pages — later iterations would pin at the last page,
+        // turn nothing, and report a flawless score for an idle screen.
+        val y = device.displayHeight / 2
+        val right = device.displayWidth * 85 / 100
+        val left = device.displayWidth * 15 / 100
+        repeat(PAGE_TURNS) {
+            // 8 steps is ~40 ms of travel: fast enough to register as a fling rather than a drag.
+            device.swipe(right, y, left, y, 8)
+            device.waitForIdle()
         }
-        device.waitForIdle()
-
-        repeat(10) {
-            // LEFT advances. Direction.RIGHT scrolls content rightward, i.e. to the PREVIOUS
-            // page — from a resumed mid-book position that walks back to page 0 and then
-            // measures an idle screen, which reads as a perfect score for doing nothing.
-            // Coordinates, not a UiObject2. A handle to the reader goes stale across a page
-            // turn (StaleObjectException), and re-resolving it mid-turn can momentarily find
-            // no node at all (NullPointerException). Both aborted real runs on the device.
-            // 8 steps is ~40 ms of travel: fast enough to fling rather than drag.
-            val y = device.displayHeight / 2
-            device.swipe(device.displayWidth * 85 / 100, y, device.displayWidth * 15 / 100, y, 8)
+        repeat(PAGE_TURNS) {
+            device.swipe(left, y, right, y, 8)
             device.waitForIdle()
         }
     }
@@ -88,6 +141,11 @@ class ReaderBenchmark {
         setupBlock = {
             pressHome()
             startActivityAndWait(viewIntent())
+            // A personal phone gets notifications. With the shade down the reader is covered,
+            // the gestures land on the shade, and Perfetto reports "no renderthread slices" —
+            // which is exactly how one run on the reference device failed.
+            device.executeShellCommand("cmd statusbar collapse")
+            assertReaderShowsABook()
         },
     ) {
         device.waitForIdle()
@@ -118,6 +176,19 @@ class ReaderBenchmark {
         check(device.wait(Until.gone(By.text("Open a comic")), 5_000) != false) {
             "app showed the picker - the book path was not honoured"
         }
+        // "Picker is gone" passes vacuously when something else covers the app, so assert the
+        // reader is actually the foreground package before measuring anything. Without this the
+        // run measured a notification shade and failed with a misleading Perfetto error.
+        check(device.currentPackageName == pkg) {
+            "reader is not in the foreground (found ${device.currentPackageName}) - nothing to measure"
+        }
+        // The reader's failure state is the same package and would pass every check above. It
+        // has only a label and a Retry button, so Retry being present means no page loaded. This
+        // is not paranoia: the corpus directory was unreadable (EACCES), and every run until then
+        // timed "Couldn't open this book" and reported one frame per iteration as a result.
+        check(device.findObject(By.text("Retry")) == null) {
+            "the reader is showing its error screen - no book loaded, nothing to measure"
+        }
     }
 
     /**
@@ -135,6 +206,11 @@ class ReaderBenchmark {
         setupBlock = {
             pressHome()
             startActivityAndWait(viewIntent())
+            // A personal phone gets notifications. With the shade down the reader is covered,
+            // the gestures land on the shade, and Perfetto reports "no renderthread slices" —
+            // which is exactly how one run on the reference device failed.
+            device.executeShellCommand("cmd statusbar collapse")
+            device.waitForIdle()
         },
     ) {
         device.waitForIdle()
