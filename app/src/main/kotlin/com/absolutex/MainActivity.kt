@@ -1,6 +1,8 @@
 package com.absolutex
 
+import android.content.ComponentCallbacks2
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -8,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Button
@@ -25,18 +28,38 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.absolutex.core.ui.AbsolutexTheme
 import com.absolutex.feature.reader.ReaderScreen
+import com.absolutex.feature.reader.ReaderViewModel
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    private val readerViewModel: ReaderViewModel by viewModels()
+
+    private val trimCallback = object : ComponentCallbacks2 {
+        override fun onTrimMemory(level: Int) {
+            readerViewModel.onTrimMemory(level)
+        }
+
+        override fun onConfigurationChanged(newConfig: Configuration) = Unit
+        override fun onLowMemory() {
+            readerViewModel.onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        registerComponentCallbacks(trimCallback)
         // A Uri on the launch intent opens that book directly (VIEW from a file manager,
         // a device-storage location in §5.1, or an instrumented benchmark driving the reader).
         val direct = intent?.data
         setContent { AbsolutexTheme { Root(directUri = direct) } }
+    }
+
+    override fun onDestroy() {
+        unregisterComponentCallbacks(trimCallback)
+        super.onDestroy()
     }
 }
 

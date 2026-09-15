@@ -18,17 +18,24 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.layout.onSizeChanged
 import com.absolutex.core.decode.DecodeDispatchers
 import com.absolutex.core.decode.PageImage
 import com.absolutex.core.decode.TileCache
 import com.absolutex.core.decode.TileGrid
 import com.absolutex.core.decode.TileKey
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.min
@@ -37,6 +44,13 @@ private const val MAX_SCALE = 8f
 private const val MIN_SCALE = 1f
 /** Below this, the base layer already exceeds display density and tiles would add nothing. */
 private const val TILE_THRESHOLD = 1.2f
+/** Zoom callbacks only fire on crossings of this scale, to avoid per-frame recompose. */
+private const val ZOOM_REPORT_THRESHOLD = 1.02f
+/** Hysteresis is handled in ReaderScreen (1.05f); this is just the reporting gate. */
+private fun crossesZoomBoundary(old: Float, new: Float): Boolean =
+    (old <= ZOOM_REPORT_THRESHOLD) != (new <= ZOOM_REPORT_THRESHOLD)
+
+private fun floorDiv(a: Int, b: Int): Int = if (a >= 0) a / b else -(((-a) + b - 1) / b)
 
 /**
  * Draws one page: a resident low-res base layer with high-res tiles streamed over the viewport.
@@ -69,10 +83,18 @@ fun PageCanvas(
     var tileGeneration by remember(pageIndex) { mutableIntStateOf(0) }
     var base by remember(pageIndex) { mutableStateOf<Bitmap?>(null) }
     var viewport by remember(pageIndex) { mutableStateOf(0 to 0) }
+    var lastReportedZoom by remember(pageIndex) { mutableFloatStateOf(1f) }
 
     val src = remember { Rect() }
     val dst = remember { Rect() }
     val paint = remember { Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG) }
+
+    fun maybeReportZoom(newScale: Float) {
+        if (crossesZoomBoundary(lastReportedZoom, newScale)) {
+            lastReportedZoom = newScale
+            onZoomChanged(newScale)
+        }
+    }
 
     // Base layer: decoded once at viewport size, kept resident for the whole page.
     LaunchedEffect(pageIndex, viewport) {
@@ -83,43 +105,84 @@ fun PageCanvas(
         }
     }
 
-    // Tile streaming. Keyed on the quantised transform so a steady pinch does not respawn this
-    // on every frame; the redraw itself is driven by tileGeneration, not by recomposition.
-    val zoomBucket = (scale * 4).toInt()
-    val panBucketX = (offsetX / TileGrid.TILE_SIZE).toInt()
-    val panBucketY = (offsetY / TileGrid.TILE_SIZE).toInt()
-    LaunchedEffect(pageIndex, zoomBucket, panBucketX, panBucketY, viewport) {
-        val (vw, vh) = viewport
-        if (vw <= 0 || vh <= 0 || scale < TILE_THRESHOLD) return@LaunchedEffect
+    // Tile streaming. Transform is observed via snapshotFlow so the composable body never
+    // reads scale/offsetX/offsetY (which would recompose per gesture frame). Buckets are
+    // computed in SOURCE space (offset/effective, not offset/TILE_SIZE) so a fixed source
+    // region maps to a fixed bucket at any zoom; distinctUntilChangedBy keeps a steady
+    // pinch from respawning the fetch on every frame.
+    LaunchedEffect(pageIndex, viewport) {
+        val (vw0, vh0) = viewport
+        if (vw0 <= 0 || vh0 <= 0) return@LaunchedEffect
         if (page.width <= 0 || page.height <= 0) return@LaunchedEffect
+        snapshotFlow { Triple(scale, offsetX, offsetY) }
+            .distinctUntilChangedBy { (s, ox, oy) ->
+                if (s < TILE_THRESHOLD) return@distinctUntilChangedBy Triple(0, 0, 0)
+                val fit = min(vw0.toFloat() / page.width, vh0.toFloat() / page.height)
+                val eff = fit * s
+                if (eff <= 0f) return@distinctUntilChangedBy Triple(0, 0, 0)
+                Triple(
+                    (s * 4).toInt(),
+                    (ox / eff / TileGrid.TILE_SIZE).toInt(),
+                    (oy / eff / TileGrid.TILE_SIZE).toInt(),
+                )
+            }
+            .collect { (s, ox, oy) ->
+                ensureActive()
+                if (s < TILE_THRESHOLD) return@collect
 
-        val fit = min(vw.toFloat() / page.width, vh.toFloat() / page.height)
-        val effective = fit * scale
-        if (effective <= 0f) return@LaunchedEffect
+                val fit = min(vw0.toFloat() / page.width, vh0.toFloat() / page.height)
+                val effective = fit * s
+                if (effective <= 0f) return@collect
 
-        // Viewport corners transformed back into source pixel space.
-        val left = ((-offsetX) / effective).toInt()
-        val top = ((-offsetY) / effective).toInt()
-        val right = left + (vw / effective).toInt()
-        val bottom = top + (vh / effective).toInt()
+                // Inverse of the draw transform: draw uses
+                // originX=(vw-drawW)/2+ox, so source left=((−ox)−(vw−drawW)/2)/effective.
+                val drawW = page.width * effective
+                val drawH = page.height * effective
+                val left = (((-ox) - (vw0 - drawW) / 2f) / effective).toInt()
+                val top = (((-oy) - (vh0 - drawH) / 2f) / effective).toInt()
+                // +1 covers truncation of vw/effective (TileGrid API unchanged).
+                val right = left + (vw0 / effective).toInt() + 1
+                val bottom = top + (vh0 / effective).toInt() + 1
 
-        val tiles = TileGrid.visibleTiles(
-            page.width, page.height, left, top, right, bottom, effective,
-        )
-        var landed = false
-        for (t in tiles) {
-            val key = TileKey(pageIndex, t.col, t.row, t.sampleSize)
-            if (cache[key] != null) continue
-            val bmp = withContext(DecodeDispatchers.decode) { page.decodeTile(t) } ?: continue
-            cache.put(key, bmp)
-            landed = true
-        }
-        if (landed) tileGeneration++
+                val tiles = TileGrid.visibleTiles(
+                    page.width, page.height, left, top, right, bottom, effective,
+                )
+                if (tiles.isEmpty()) return@collect
+                // Nearest-to-viewport-center first, so the pixels under the eye land first.
+                val cx = (left + right) / 2f
+                val cy = (top + bottom) / 2f
+                val ordered = tiles.sortedBy { t ->
+                    val tcx = (t.left + t.right) / 2f
+                    val tcy = (t.top + t.bottom) / 2f
+                    (tcx - cx) * (tcx - cx) + (tcy - cy) * (tcy - cy)
+                }
+                var landed = false
+                for (chunk in ordered.chunked(4)) {
+                    ensureActive()
+                    val decoded = coroutineScope {
+                        chunk.map { t ->
+                            async(DecodeDispatchers.decode) {
+                                ensureActive()
+                                val key = TileKey(pageIndex, t.col, t.row, t.sampleSize)
+                                if (cache[key] != null) return@async null
+                                val bmp = page.decodeTile(t) ?: return@async null
+                                t to bmp
+                            }
+                        }.awaitAll()
+                    }.filterNotNull()
+                    for ((t, bmp) in decoded) {
+                        cache.put(TileKey(pageIndex, t.col, t.row, t.sampleSize), bmp)
+                        landed = true
+                    }
+                }
+                if (landed) tileGeneration++
+            }
     }
 
     Canvas(
         modifier = modifier
             .fillMaxSize()
+            .onSizeChanged { viewport = it.width to it.height }
             .pointerInput(pageIndex) {
                 // Hand-rolled instead of detectTransformGestures, which consumes EVERY drag
                 // once past touch slop — that swallowed the horizontal swipe and the pager
@@ -137,17 +200,41 @@ fun PageCanvas(
                         if (pressed >= 2) {
                             // Pinch always belongs to us, at any scale.
                             val zoom = event.calculateZoom()
+                            val old = scale
                             scale = (scale * zoom).coerceIn(MIN_SCALE, MAX_SCALE)
                             if (scale <= MIN_SCALE) {
                                 offsetX = 0f; offsetY = 0f
                             } else {
                                 offsetX += pan.x; offsetY += pan.y
+                                // Clamp so the image edge stays within the viewport.
+                                val vw = size.width
+                                val vh = size.height
+                                if (vw > 0 && vh > 0 && page.width > 0 && page.height > 0) {
+                                    val fit = min(vw.toFloat() / page.width, vh.toFloat() / page.height)
+                                    val dw = page.width * fit * scale
+                                    val dh = page.height * fit * scale
+                                    val maxX = if (dw <= vw) 0f else (dw - vw) / 2f
+                                    val maxY = if (dh <= vh) 0f else (dh - vh) / 2f
+                                    offsetX = offsetX.coerceIn(-maxX, maxX)
+                                    offsetY = offsetY.coerceIn(-maxY, maxY)
+                                }
                             }
                             event.changes.forEach { if (it.positionChanged()) it.consume() }
-                            onZoomChanged(scale)
+                            if (old != scale) maybeReportZoom(scale)
                         } else if (scale > MIN_SCALE && pan != Offset.Zero) {
                             offsetX += pan.x
                             offsetY += pan.y
+                            val vw = size.width
+                            val vh = size.height
+                            if (vw > 0 && vh > 0 && page.width > 0 && page.height > 0) {
+                                val fit = min(vw.toFloat() / page.width, vh.toFloat() / page.height)
+                                val dw = page.width * fit * scale
+                                val dh = page.height * fit * scale
+                                val maxX = if (dw <= vw) 0f else (dw - vw) / 2f
+                                val maxY = if (dh <= vh) 0f else (dh - vh) / 2f
+                                offsetX = offsetX.coerceIn(-maxX, maxX)
+                                offsetY = offsetY.coerceIn(-maxY, maxY)
+                            }
                             event.changes.forEach { if (it.positionChanged()) it.consume() }
                         }
                     } while (event.changes.any { it.pressed })
@@ -162,7 +249,7 @@ fun PageCanvas(
                         } else {
                             scale = 2.5f
                         }
-                        onZoomChanged(scale)
+                        maybeReportZoom(scale)
                     },
                     onTap = { onTapCenter() },
                 )
@@ -170,7 +257,6 @@ fun PageCanvas(
     ) {
         val vw = size.width.toInt()
         val vh = size.height.toInt()
-        if (vw != viewport.first || vh != viewport.second) viewport = vw to vh
 
         // Draw-phase reads. Touching these here is what keeps gestures off the composition path.
         val s = scale
@@ -205,8 +291,22 @@ fun PageCanvas(
             val sample = TileGrid.sampleSizeFor(effective)
             val cols = TileGrid.columns(page.width)
             val rows = TileGrid.rows(page.height)
-            for (row in 0 until rows) {
-                for (col in 0 until cols) {
+            if (cols <= 0 || rows <= 0) return@drawIntoCanvas
+            // Visible col/row range from the same inverse transform as the fetch path
+            // (TileGrid math, overscan 0): look up only on-screen keys instead of scanning
+            // the whole columns×rows grid.
+            val srcLeft = (((-ox) - (vw - drawW) / 2f) / effective).toInt()
+            val srcTop = (((-oy) - (vh - drawH) / 2f) / effective).toInt()
+            val srcRight = srcLeft + (vw / effective).toInt() + 1
+            val srcBottom = srcTop + (vh / effective).toInt() + 1
+            if (srcRight <= srcLeft || srcBottom <= srcTop) return@drawIntoCanvas
+            val c0 = floorDiv(srcLeft, TileGrid.TILE_SIZE).coerceIn(0, cols - 1)
+            val c1 = floorDiv(srcRight - 1, TileGrid.TILE_SIZE).coerceIn(0, cols - 1)
+            val r0 = floorDiv(srcTop, TileGrid.TILE_SIZE).coerceIn(0, rows - 1)
+            val r1 = floorDiv(srcBottom - 1, TileGrid.TILE_SIZE).coerceIn(0, rows - 1)
+            if (c1 < c0 || r1 < r0) return@drawIntoCanvas
+            for (row in r0..r1) {
+                for (col in c0..c1) {
                     val tile = cache[TileKey(pageIndex, col, row, sample)] ?: continue
                     val tl = originX + col * TileGrid.TILE_SIZE * effective
                     val tt = originY + row * TileGrid.TILE_SIZE * effective

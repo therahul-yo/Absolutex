@@ -12,6 +12,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -53,7 +54,9 @@ fun ReaderScreen(
 @Composable
 private fun Pages(pageCount: Int, startPage: Int, vm: ReaderViewModel) {
     val pagerState = rememberPagerState(initialPage = startPage) { pageCount }
-    var zoom by remember { mutableStateOf(1f) }
+    // Per-page zoom: a single var would let page N's zoom leak into page N+1's
+    // userScrollEnabled. Hysteresis (1.05f) keeps the pager from flickering at the boundary.
+    val zooms = remember(pageCount) { mutableStateMapOf<Int, Float>() }
 
     // Persist progress as the reader moves. snapshotFlow keeps this off the composition path.
     LaunchedEffect(pagerState) {
@@ -64,7 +67,7 @@ private fun Pages(pageCount: Int, startPage: Int, vm: ReaderViewModel) {
         state = pagerState,
         modifier = Modifier.fillMaxSize(),
         // A zoomed page owns its drags; re-enabled the moment it returns to fit scale.
-        userScrollEnabled = zoom <= 1f,
+        userScrollEnabled = (zooms[pagerState.currentPage] ?: 1f) <= 1.05f,
         // TODO(phase3): beyondViewportPageCount should follow scroll velocity and the
         // prefetch depth setting (§3). Fixed at 1 for the Phase 2 slice.
         beyondViewportPageCount = 1,
@@ -82,7 +85,14 @@ private fun Pages(pageCount: Int, startPage: Int, vm: ReaderViewModel) {
                 page = img,
                 pageIndex = index,
                 cache = vm.tileCache,
-                onZoomChanged = { zoom = it },
+                onZoomChanged = { scale ->
+                    // Only 1f-boundary crossings update the map (old vs new across 1.02f),
+                    // so per-frame pinch callbacks never recompose the pager.
+                    val old = zooms[index] ?: 1f
+                    if ((old <= 1.02f) != (scale <= 1.02f)) {
+                        zooms[index] = scale
+                    }
+                },
             )
         }
     }

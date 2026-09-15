@@ -45,6 +45,9 @@ class TileCache(maxBytes: Long) {
     fun sizeBytes(): Int = lru.size()
     fun maxBytes(): Int = lru.maxSize()
 
+    /** Shrinks the budget under memory pressure (see ReaderViewModel.onTrimMemory). */
+    fun trimToSize(size: Int) = lru.trimToSize(size)
+
     /** Drops everything. Used when the reader closes a book, not between pages. */
     fun clear() = lru.evictAll()
 }

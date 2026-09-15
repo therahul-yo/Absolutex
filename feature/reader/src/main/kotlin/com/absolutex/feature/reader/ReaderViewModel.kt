@@ -1,5 +1,6 @@
 package com.absolutex.feature.reader
 
+import android.content.ComponentCallbacks2
 import android.content.Context
 import android.net.Uri
 import android.os.ParcelFileDescriptor
@@ -92,11 +93,21 @@ class ReaderViewModel @Inject constructor(
     suspend fun pageImage(index: Int): PageImage? {
         val src = source ?: return null
         pageImages[index]?.let { return it }
-        return withContext(DecodeDispatchers.decode) {
-            runCatching {
-                val bytes = src.openPage(index).readBytes()
+        // Staged: archive I/O on extract, pixel decode on decode. The book stays open on
+        // extract (open() above); only the byte[] crosses to the decode pool.
+        val bytes = try {
+            withContext(DecodeDispatchers.extract) {
+                src.openPage(index).readBytes()
+            }
+        } catch (_: Exception) {
+            return null
+        }
+        return try {
+            withContext(DecodeDispatchers.decode) {
                 PageImage.from(bytes)
-            }.getOrNull()?.also { pageImages[index] = it }
+            }.also { pageImages[index] = it }
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -124,5 +135,12 @@ class ReaderViewModel @Inject constructor(
         tileCache.clear()
         runCatching { source?.close() }
         super.onCleared()
+    }
+
+    /** Halves the tile budget on memory pressure; called from MainActivity's callbacks. */
+    fun onTrimMemory(level: Int) {
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            tileCache.trimToSize(tileCache.maxBytes() / 2)
+        }
     }
 }

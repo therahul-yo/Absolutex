@@ -54,6 +54,13 @@ object TileGrid {
      * @param viewport visible region in SOURCE pixel space (already un-transformed by pan/zoom)
      * @param overscan extra rings of tiles to fetch beyond the viewport, hiding pop-in when
      *   panning. 1 ring is the right default: 0 pops visibly, 2 doubles decode work.
+     *
+     * Note (phase 2): gesture buckets that key tile fetches must also be computed in SOURCE
+     * space — i.e. (offset / effective / TILE_SIZE), not (offset / TILE_SIZE). Screen-space
+     * bucketing re-fetches the same source tiles at every zoom step; source-space bucketing
+     * keeps a fixed source region on a fixed bucket at any scale. Callers converting a
+     * viewport width to source pixels should add +1 after (vw / effective).toInt() to cover
+     * truncation (done in PageCanvas; the API here stays in source ints).
      */
     fun visibleTiles(
         imageWidth: Int,
