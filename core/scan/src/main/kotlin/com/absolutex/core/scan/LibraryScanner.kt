@@ -96,7 +96,7 @@ class LibraryScanner(
      */
     private suspend fun walk(dir: File, out: Channel<Candidate>, seenDirs: HashSet<String>) {
         if (!seenDirs.add(canonicalOf(dir))) return
-        val children = dir.listFiles()?.filterNot { skip(it) } ?: return
+        val children = dir.listFiles()?.filterNot { shouldSkip(it, includeHidden) } ?: return
         val (subdirs, files) = children.partition { it.isDirectory }
 
         for (file in files) {
@@ -114,25 +114,26 @@ class LibraryScanner(
         for (sub in subdirs) walk(sub, out, seenDirs)
     }
 
-    /**
-     * Everything a scan never looks at, in one place.
-     *
-     * Junk directories matter as much as junk files: filtering only names lets
-     * "__MACOSX/001.cbz" through, because that filename is perfectly innocent.
-     */
-    private fun skip(file: File): Boolean {
-        if (!includeHidden && file.name.startsWith(".")) return true
-        return if (file.isDirectory) {
-            EntryFilter.isJunkDirectory(file.name)
-        } else {
-            EntryFilter.isJunk(file.name)
-        }
-    }
-
     private fun canonicalOf(file: File): String =
         runCatching { file.canonicalPath }.getOrElse { file.absolutePath }
 
     companion object {
+        /**
+         * Everything a scan never looks at, in one place.
+         *
+         * Junk directories matter as much as junk files: filtering only names lets
+         * "__MACOSX/001.cbz" through, because that filename is perfectly innocent.
+         *
+         * Shared with [LibraryWatcher] so watch and scan never disagree on what to ignore.
+         */
+        fun shouldSkip(file: File, includeHidden: Boolean): Boolean {
+            if (!includeHidden && file.name.startsWith(".")) return true
+            return if (file.isDirectory) {
+                EntryFilter.isJunkDirectory(file.name)
+            } else {
+                EntryFilter.isJunk(file.name)
+            }
+        }
         /**
          * Containers worth opening (§2). Kept here rather than in FilenameParser: the parser
          * strips extensions it recognises, this decides what is a book in the first place.
