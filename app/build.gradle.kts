@@ -26,12 +26,12 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
             isDebuggable = false
-            // Minification off for now: frame timing is unaffected by R8, and keeping it on
-            // would need a full keep-rule pass for Hilt/Room/Compose before any number could
-            // be trusted. TODO(phase9): turn on once R8 rules land, then re-baseline startup —
-            // startup numbers from this variant are NOT production-representative.
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // R8 and resource shrinking are inherited from release, on purpose. With them off,
+            // cold start measured the unshrunk dex: opening it alone was 38 ms of bindApplication,
+            // so every startup number overstated what ships. It also means the minified app —
+            // the thing users get — actually runs on a device on every benchmark, which is the
+            // only place a missing keep rule shows up. The benchmark APK drives the app through
+            // UiAutomator by package and text only, so shrinking cannot break the harness.
         }
     }
     buildFeatures { compose = true }

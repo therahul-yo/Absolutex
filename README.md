@@ -166,7 +166,7 @@ OnePlus 11R (Snapdragon 8+ Gen 1, Android 16), display confirmed at 120 Hz, benc
 |---|---|---|
 | Page turn < 8.3 ms | CPU frame time P50 2.8 · P90 3.8 · P95 4.2 · P99 5.2 ms (5 iterations, 93–166 frames each) | **met** |
 | Zero dropped frames | 88 turns, 1,387 frames: **2 missed deadlines (0.14%)**, 0 missed vsync, 0 slow UI-thread frames | **not met** |
-| Cold start < 300 ms (P90) | Time to initial display, baseline profile: median 333.9 · min 287.5 · max 414.3 ms (no compilation: median 368.4; full AOT: median 363.0) | **not met** |
+| Cold start < 300 ms | Time to initial display, baseline profile: median 286.9 · min 256.8 · max 340.4 ms (no compilation: median 299.9; full AOT: median 302.4) | **met at the median**, not at the tail |
 | Tap → first page, 400% pinch, steady memory | — | not yet measured |
 
 What the two dropped frames are, from a Perfetto trace: not the app's drawing (RenderThread
@@ -175,6 +175,10 @@ waiting for SurfaceFlinger to release a buffer, and framestats show GPU completi
 exactly those frames. The reader layer composites as `DEVICE` even in Display P3, so wide-gamut
 colour mode is not forcing GPU composition. Leading suspect: GPU frequency dropping during the
 pauses between swipes. Open.
+
+The first cold-start numbers (median 333.9 ms) were measured with R8 off in the benchmark variant: opening the
+unshrunk dex alone cost 38 ms of `bindApplication`. The variant now inherits release's shrinking, which also
+means the minified app — the one users get — runs on a device every time a benchmark runs.
 
 Two traps that made every earlier number wrong, both now guarded in the benchmark:
 `adb`-created `Android/data` directories are `2770 shell:ext_data_rw` (the app gets EACCES and
