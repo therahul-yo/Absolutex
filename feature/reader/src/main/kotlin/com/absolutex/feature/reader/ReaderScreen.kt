@@ -1,5 +1,17 @@
 package com.absolutex.feature.reader
 
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.Flow
+import com.absolutex.core.data.settings.ReaderPrefs
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.foundation.focusable
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import android.app.Activity
 import android.os.Trace
 import android.net.Uri
@@ -93,12 +105,16 @@ fun ReaderScreen(
                 stringResource(R.string.reader_no_pages),
                 color = Color.White,
             )
-            else -> Pages(ui.pageCount, ui.currentPage, ui.bookId, prefs.readingFlow, prefs.fitMode, vm)
+            else -> Pages(ui.pageCount, ui.currentPage, ui.bookId, prefs, vm)
         }
     }
 }
 
 private const val CHROME_ALPHA = 0.9f
+
+/** One + or − press scales by a quarter; eight presses cross the whole zoom range. */
+private const val KEY_ZOOM_STEP = 1.25f
+private const val ZOOM_STEP_BUFFER = 4
 
 /** Grid columns that turn pages; the centre column is chrome. */
 private const val FIRST_COLUMN = 0
@@ -109,16 +125,16 @@ private fun Pages(
     pageCount: Int,
     startPage: Int,
     bookId: String,
-    flow: ReadingFlow,
-    fitMode: FitMode,
+    prefs: ReaderPrefs,
     vm: ReaderViewModel,
 ) {
+    val flow = prefs.readingFlow
+    val fitMode = prefs.fitMode
     val pagerState = rememberPagerState(initialPage = startPage) { pageCount }
     // Per page, not one flag: page N's zoom or overflow must not lock the pager on page N+1.
     val locks = remember(pageCount) { mutableStateMapOf<Int, Boolean>() }
     val scope = rememberCoroutineScope()
-    // Edge swipes arrive in screen terms (finger left or up). A right-to-left book is laid out
-    // mirrored, so there the finger moving left brings the previous page in, not the next.
+    // Edge swipes arrive in screen terms; in a mirrored right-to-left book left brings the previous page.
     val goTo: (Int) -> Unit = { step ->
         scope.launch {
             pagerState.animateScrollToPage((pagerState.currentPage + step).coerceIn(0, pageCount - 1))
@@ -138,6 +154,14 @@ private fun Pages(
     }
     ImmersiveWhile(hidden = !chrome)
 
+    // §5.3: keyboard and gamepad alone must be enough. Zoom goes only to the page being looked at.
+    val zoomSteps = remember { MutableSharedFlow<Float>(extraBufferCapacity = ZOOM_STEP_BUFFER) }
+    val jump: (Int) -> Unit = { to -> scope.launch { pagerState.scrollToPage(to.coerceIn(0, pageCount - 1)) } }
+    val rtl = flow == ReadingFlow.RTL
+    val keys = readerKeys(rtl, prefs.volumeKeysTurnPages, goTo, jump, pageCount - 1, zoomSteps::tryEmit) {
+        chrome = !chrome
+    }
+
     // Persist progress as the reader moves. snapshotFlow keeps this off the composition path.
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.settledPage }.collect { vm.onPageChanged(it) }
@@ -152,10 +176,7 @@ private fun Pages(
     val page: @Composable PagerScope.(Int) -> Unit = { index ->
         PageSlot(
             onBaseReady = { if (index == pagerState.currentPage) firstPageDrawn = true },
-            // A neighbour waits until the page being looked at is up. beyondViewportPageCount
-            // composes both neighbours immediately, and on the reference phone their decodes ran
-            // alongside the current page's: three 6 MP JPEGs at once, and the one the reader is
-            // waiting for came last (295 ms against 179 and 185).
+            // Neighbours wait for the page on screen: decoded together, it finished last (see PageSlot).
             decodeNow = index == pagerState.currentPage || firstPageDrawn,
             index = index,
             bookId = bookId,
@@ -166,20 +187,65 @@ private fun Pages(
             onPagerLockChanged = { locks[index] = it },
             onEdgeSwipe = turn,
             onTapZone = tap,
+            zoomSteps = if (index == pagerState.currentPage) zoomSteps else null,
         )
     }
     // A zoomed or overflowing page owns its drags and turns itself at the edge (see PageCanvas).
     val scrollable = locks[pagerState.currentPage] != true
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().then(keys)) {
         ReaderPager(flow, pagerState, scrollable, page)
         ReaderChrome(
             visible = chrome,
             page = pagerState.currentPage,
             pageCount = pageCount,
-            onSeek = { target -> scope.launch { pagerState.scrollToPage(target.coerceIn(0, pageCount - 1)) } },
+            onSeek = jump,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
+}
+
+/**
+ * Focus plus key handling for the reader surface. Focus is requested on entry: without it no key
+ * reaches the reader and a keyboard or gamepad user cannot even start. Key-down only, so a held key
+ * repeats through the system's own key repeat rather than firing twice per press.
+ */
+@Composable
+@Suppress("LongParameterList")
+private fun readerKeys(
+    rightToLeft: Boolean,
+    volumeKeys: Boolean,
+    onStep: (Int) -> Unit,
+    onJump: (Int) -> Unit,
+    lastPage: Int,
+    onZoom: (Float) -> Boolean,
+    onToggleChrome: () -> Unit,
+): Modifier {
+    val focus = remember { FocusRequester() }
+    val back = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+    val dispatch by rememberUpdatedState { action: ReaderKeyAction ->
+        when (action) {
+            ReaderKeyAction.NEXT_PAGE -> onStep(1)
+            ReaderKeyAction.PREVIOUS_PAGE -> onStep(-1)
+            ReaderKeyAction.FIRST_PAGE -> onJump(0)
+            ReaderKeyAction.LAST_PAGE -> onJump(lastPage)
+            ReaderKeyAction.ZOOM_IN -> onZoom(KEY_ZOOM_STEP)
+            ReaderKeyAction.ZOOM_OUT -> onZoom(1f / KEY_ZOOM_STEP)
+            ReaderKeyAction.TOGGLE_CHROME -> onToggleChrome()
+            ReaderKeyAction.BACK -> back?.onBackPressed()
+        }
+    }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    return Modifier
+        .focusRequester(focus)
+        .focusable()
+        .onPreviewKeyEvent { event ->
+            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+            val action = ReaderKeys.actionFor(
+                event.nativeKeyEvent.keyCode, event.isShiftPressed, rightToLeft, volumeKeys,
+            ) ?: return@onPreviewKeyEvent false
+            dispatch(action)
+            true
+        }
 }
 
 /** The pager itself: same page slot either way, only the axis and direction change. */
@@ -293,7 +359,13 @@ private fun PageSlot(
     onEdgeSwipe: (Boolean) -> Unit,
     onTapZone: (TapZone) -> Unit,
     onBaseReady: () -> Unit,
+    /**
+     * False until this page may start decoding. beyondViewportPageCount composes both neighbours
+     * immediately, and on the reference phone their decodes ran alongside the current page's: three
+     * 6 MP JPEGs at once, and the one the reader was waiting for came last (295 ms against 179, 185).
+     */
     decodeNow: Boolean,
+    zoomSteps: Flow<Float>?,
 ) {
     var image by remember(index) { mutableStateOf<PageImage?>(null) }
     var attempts by remember(index) { mutableIntStateOf(0) }
@@ -323,6 +395,7 @@ private fun PageSlot(
             onTapZone = onTapZone,
             onBaseReady = onBaseReady,
             baseLayer = { w, h -> vm.baseLayer(index, img, w, h) },
+            zoomSteps = zoomSteps,
         )
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()

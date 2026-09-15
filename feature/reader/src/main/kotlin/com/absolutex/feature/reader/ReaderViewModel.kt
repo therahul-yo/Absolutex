@@ -86,6 +86,8 @@ class ReaderViewModel @Inject constructor(
     private var bookId: String = ""
     /** The Uri currently open, for the same-book check. Distinct from [bookId], the book's identity. */
     private var openedUri: String = ""
+    /** The Uri an open is in flight for, so a repeat request for it joins rather than restarts. */
+    private var openingUri: String = ""
     // Thread-safe for get-on-Main + put-on-decode-pool; bounded to a sliding window
     // around the current page (see evictFarPages). ConcurrentHashMap needs the manual
     // bound because it has no access-order eviction of its own. A plain HashMap here was
@@ -131,6 +133,11 @@ class ReaderViewModel @Inject constructor(
     @Suppress("TooGenericExceptionCaught")
     fun open(uri: Uri) {
         if (openedUri == uri.toString() && source != null) return
+        // The activity starts opening a launch Uri in onCreate, before the reader composes, and the
+        // reader then asks for the same Uri. That second call must join the open in flight, not
+        // cancel and restart it — a restart would throw away the head start it exists to give.
+        if (openingUri == uri.toString() && openJob?.isActive == true) return
+        openingUri = uri.toString()
         // Cancel any in-flight open so a rapid book switch cannot land stale state.
         openJob?.cancel()
         val generation = openGeneration.incrementAndGet()

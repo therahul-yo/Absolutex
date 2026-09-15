@@ -40,6 +40,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -105,6 +106,8 @@ fun PageCanvas(
      * Supplies the base layer at a size. The reader passes one that shares a decode per page and
      * size; the default decodes directly, for previews and tests.
      */
+    /** Zoom factors from the keyboard or gamepad (§5.3), applied about the screen centre. */
+    zoomSteps: Flow<Float>? = null,
     baseLayer: suspend (width: Int, height: Int) -> Bitmap? = { w, h ->
         withContext(DecodeDispatchers.decode) { runCatching { page.decodeBase(w, h) }.getOrNull() }
     },
@@ -188,6 +191,22 @@ fun PageCanvas(
         } else {
             val clamped = clampOffset(Offset(offsetX, offsetY), vw, vh, page.width, page.height, fitMode, scale)
             offsetX = clamped.x; offsetY = clamped.y
+        }
+    }
+
+    LaunchedEffect(zoomSteps, viewport) {
+        val steps = zoomSteps ?: return@LaunchedEffect
+        val (vw, vh) = viewport
+        if (vw <= 0 || vh <= 0) return@LaunchedEffect
+        steps.collect { factor ->
+            val old = scale
+            scale = (scale * factor).coerceIn(MIN_SCALE, MAX_SCALE)
+            val ratio = scale / old
+            val clamped = clampOffset(
+                Offset(offsetX * ratio, offsetY * ratio), vw, vh, page.width, page.height, fitMode, scale,
+            )
+            offsetX = clamped.x; offsetY = clamped.y
+            reportLock(scale, vw, vh)
         }
     }
 

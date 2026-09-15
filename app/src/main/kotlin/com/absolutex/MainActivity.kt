@@ -59,6 +59,10 @@ class MainActivity : ComponentActivity() {
         // A Uri on the launch intent opens that book directly (VIEW from a file manager,
         // a device-storage location in §5.1, or an instrumented benchmark driving the reader).
         val direct = intent?.data
+        // Start opening a launch Uri now rather than when the reader first composes. Composition
+        // waits behind the splash (theme settings) and a first layout; on the reference phone that
+        // was ~54 ms of the tap-to-first-page budget spent before the archive was even touched.
+        if (direct != null) readerViewModel.open(direct)
         setContent {
             val app = shell.appPrefs.collectAsStateWithLifecycle().value ?: return@setContent
             val dark = when (app.nightMode) {

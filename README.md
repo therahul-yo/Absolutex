@@ -169,7 +169,7 @@ OnePlus 11R (Snapdragon 8+ Gen 1, Android 16), display confirmed at 120 Hz, benc
 | Cold start < 300 ms | Time to initial display, baseline profile: median 286.9 · min 256.8 · max 340.4 ms (no compilation: median 299.9; full AOT: median 302.4) | **met at the median**, not at the tail |
 | Pinch zoom, no drops | Sustained pinch open/close: frame time P50 3.3 · P90 4.8 · P95 5.6 · P99 6.5 ms, overrun P99 −0.4 ms (230–256 frames per iteration) | **met** |
 | Steady reader memory under the §3 ceiling | 150 MB PSS / 304 MB RSS after 12 page turns, against ~1.06 GiB (15% of this phone's 7.4 GB) | **met** |
-| Tap → first page < 250 ms | Warm, time to full display (base layer decoded): median 312.9 · min 266.7 · max 403.5 ms; window up at 78 ms | **not met** (was 513.6) |
+| Tap → first page < 250 ms | Warm, time to full display (base layer decoded): median 291.6 · min 266.2 · max 489.6 ms; window up at 79 ms | **not met** (was 513.6) |
 
 What the two dropped frames are, from a Perfetto trace: not the app's drawing (RenderThread
 draw commands stay under 2.5 ms). RenderThread blocks ~24 ms in `eglSwapBuffers → queueBuffer`
@@ -185,10 +185,12 @@ means the minified app — the one users get — runs on a device every time a b
 PSS understates the reader's graphics: hardware bitmaps are dmabuf-backed and only partly attributed to the
 process, which is why RSS is the larger number above.
 
-Tap → first page went 513.6 → 373.3 → 312.9 ms at the median. First, neighbours stopped decoding alongside the
-page being opened (three 6 MP JPEGs contended and the one on screen finished last). Then a trace showed the
-opened page itself decoded twice at once, identical page, size and viewport; base layers are now shared, one
-decode per page and size. What remains is ~75 ms of archive open and one ~175 ms decode, which is the next cut.
+Tap → first page went 513.6 → 373.3 → 312.9 → 291.6 ms at the median. Neighbours stopped decoding alongside the
+page being opened; the opened page stopped being decoded twice (base layers are shared, one decode per page and
+size); and the activity starts opening a launch Uri in `onCreate` instead of after the splash and first layout.
+What remains is ~48 ms of RAR extraction and one ~174 ms decode of a 6 MP JPEG to screen size. Two ideas were
+measured and dropped: a half-resolution preview decode was barely cheaper on this decoder, and strip-parallel decode
+cannot scale for baseline JPEGs, whose entropy stream must be read from the top for any region.
 
 Two traps that made every earlier number wrong, both now guarded in the benchmark:
 `adb`-created `Android/data` directories are `2770 shell:ext_data_rw` (the app gets EACCES and

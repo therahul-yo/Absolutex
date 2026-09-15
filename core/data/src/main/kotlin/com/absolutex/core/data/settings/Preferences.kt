@@ -17,6 +17,11 @@ enum class NightMode { OFF, ON, SYSTEM }
 data class ReaderPrefs(
     val readingFlow: ReadingFlow = ReadingFlow.LTR,
     val fitMode: FitMode = FitMode.FIT_SCREEN,
+    /**
+     * Volume keys turn pages (§5.3). Off by default: taking over the volume keys silently is the
+     * kind of surprise a reader should ask for, not impose.
+     */
+    val volumeKeysTurnPages: Boolean = false,
 )
 
 /**

@@ -102,6 +102,7 @@ class PrefCodecTest {
                 PrefCodec.KEY_IMAGE_FOLDERS,
                 PrefCodec.KEY_READING_FLOW,
                 PrefCodec.KEY_FIT_MODE,
+                PrefCodec.KEY_VOLUME_KEYS,
             ),
             bag.snapshot().keys,
         )
@@ -221,5 +222,14 @@ class PrefCodecTest {
         assertEquals("open_image_folders", PrefCodec.KEY_IMAGE_FOLDERS)
         assertEquals("reading_flow", PrefCodec.KEY_READING_FLOW)
         assertEquals("fit_mode", PrefCodec.KEY_FIT_MODE)
+        assertEquals("volume_keys_turn_pages", PrefCodec.KEY_VOLUME_KEYS)
+    }
+
+    @Test
+    fun `volume keys are off until the reader asks for them, and the choice round-trips`() {
+        assertEquals(false, PrefCodec.decodeReader(MapPrefBag()).volumeKeysTurnPages)
+        val bag = MapPrefBag()
+        PrefCodec.encodeReader(ReaderPrefs(volumeKeysTurnPages = true), bag)
+        assertEquals(true, PrefCodec.decodeReader(bag).volumeKeysTurnPages)
     }
 }
