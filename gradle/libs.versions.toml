@@ -5,6 +5,11 @@
 [versions]
 agp                  = "9.4.0"          # Sept 2026, latest stable
 kotlin               = "2.4.20"
+# Phase 4 verification (2026-09-15, Maven Central + KSP GitHub releases): 2.3.12 is the
+# newest KSP published and no 2.4.x KSP line exists yet, so there is nothing newer to
+# upgrade to for Kotlin 2.4.20. Kept deliberately; re-check with:
+#   curl -s https://repo1.maven.org/maven2/com/google/devtools/ksp/com.google.devtools.ksp.gradle.plugin/maven-metadata.xml
+# KSP/Room/Hilt wiring is proved by ./gradlew :core:data:kspDebugKotlin (see phase-4 PR).
 ksp                  = "2.3.12"         # KSP moved to independent versioning; no longer <kotlin>-<ksp>
 composeBom           = "2026.08.00"     # Compose 1.12
 hilt                 = "2.60.1"
@@ -62,6 +67,7 @@ room-ktx                     = { module = "androidx.room:room-ktx", version.ref 
 room-compiler                = { module = "androidx.room:room-compiler", version.ref = "room" }
 
 datastore-preferences        = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
+datastore-core               = { module = "androidx.datastore:datastore-core", version.ref = "datastore" }
 kotlinx-coroutines-android   = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 
 androidx-profileinstaller    = { module = "androidx.profileinstaller:profileinstaller", version.ref = "profileinstaller" }

@@ -23,6 +23,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -61,10 +62,13 @@ class ReaderViewModel @Inject constructor(
     private var bookId: String = ""
     // Thread-safe for get-on-Main + put-on-decode-pool; bounded to a sliding window
     // around the current page (see evictFarPages). ConcurrentHashMap needs the manual
-    // bound because it has no access-order eviction of its own.
+    // bound because it has no access-order eviction of its own. A plain HashMap here was
+    // a data race: reads happen on Main, writes on the decode pool.
     private val pageImages = ConcurrentHashMap<Int, PageImage>()
     private val openGeneration = AtomicInteger(0)
     private var openJob: Job? = null
+    // Coalesces fling bursts into one Room write: cancel-and-relaunch around the upsert.
+    private var pendingProgressWrite: Job? = null
 
     companion object {
         /** Resident decoded pages. ~12 covers viewport + prefetch without ballooning native heap. */
@@ -220,7 +224,10 @@ class ReaderViewModel @Inject constructor(
         // book's index against the old count (or vice versa).
         val count = _ui.value.pageCount
         if (id.isEmpty()) return
-        viewModelScope.launch {
+        // 300 ms debounce: a fast fling settles dozens of pages; only the landing page hits disk.
+        pendingProgressWrite?.cancel()
+        pendingProgressWrite = viewModelScope.launch {
+            delay(300)
             progressDao.upsert(
                 ReadingProgress(
                     bookId = id,

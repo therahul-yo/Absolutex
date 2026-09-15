@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.benchmark.macro.FrameTimingMetric
 import androidx.benchmark.macro.StartupMode
+import androidx.benchmark.macro.StartupTimingMetric
 import androidx.benchmark.macro.junit4.MacrobenchmarkRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.uiautomator.By
@@ -92,6 +93,55 @@ class ReaderBenchmark {
             device.waitForIdle()
             content.pinchClose(0.75f, 100)
             device.waitForIdle()
+        }
+    }
+
+    /**
+     * Phase 4: COLD startup — process creation through first frame (§3's "tap book ->
+     * first page rendered < 250 ms" budget starts here). WARM runs above hide exactly this
+     * cost, so without a COLD test a regression in Application.onCreate/Hilt init would
+     * pass the suite while blowing the launch budget on a real tap.
+     */
+    @Test fun coldStartup() = rule.measureRepeated(
+        packageName = pkg,
+        metrics = listOf(StartupTimingMetric()),
+        iterations = 5,
+        startupMode = StartupMode.COLD,
+        setupBlock = {
+            assumeTrue("corpus not staged at $book", File(book).exists())
+            pressHome()
+        },
+    ) {
+        startActivityAndWait(viewIntent())
+        check(device.wait(Until.gone(By.text("Open a comic")), 5_000) != false) {
+            "app showed the picker - the book path was not honoured"
+        }
+    }
+
+    /**
+     * Phase 4: sustained pinch — back-to-back gestures with NO waitForIdle between them.
+     * The discrete [zoom] test above lets the render thread drain after every gesture, so it
+     * measures settle quality, not continuous-gesture jank. A real pinch-zoom holds the
+     * gesture stream open; this keeps it open and lets FrameTimingMetric catch the overruns
+     * that only appear when tiles decode under a live gesture.
+     */
+    @Test fun sustainedPinch() = rule.measureRepeated(
+        packageName = pkg,
+        metrics = listOf(FrameTimingMetric()),
+        iterations = 5,
+        startupMode = StartupMode.WARM,
+        setupBlock = {
+            assumeTrue("corpus not staged at $book", File(book).exists())
+            pressHome()
+            startActivityAndWait(viewIntent())
+        },
+    ) {
+        device.waitForIdle()
+        val content = device.findObject(By.pkg(pkg).depth(0))
+        content.setGestureMargin(device.displayWidth / 8)
+        // Deliberately no waitForIdle inside: the next gesture must land mid-render.
+        repeat(8) { i ->
+            if (i % 2 == 0) content.pinchOpen(0.9f, 50) else content.pinchClose(0.9f, 50)
         }
     }
 }

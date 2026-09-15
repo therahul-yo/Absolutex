@@ -30,6 +30,11 @@ object NaturalOrder : Comparator<String> {
                 continue
             }
 
+            // Phase 4 note: a digit-vs-nondigit pair deliberately falls through to the rank
+            // path below instead of getting its own branch. Both chars land in rank 1, so the
+            // tie-break is a plain case-insensitive char comparison ('0' (0x30) sorts before
+            // letters in code-point order). That keeps mixed names like "10.jpg" vs "a.jpg"
+            // total and deterministic without privileging either side.
             val ra = rank(ca)
             val rb = rank(cb)
             if (ra != rb) return ra - rb
