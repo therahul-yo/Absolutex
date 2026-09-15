@@ -18,8 +18,14 @@ internal object Pdfium {
         System.loadLibrary("absolutex_pdf")
     }
 
-    /** Positive handle, or the negated FPDF error code (so -4 is a password failure). */
-    @JvmStatic external fun nativeOpen(fd: Int, password: String?): Long
+    /**
+     * Opens a document. Returns a handle, or **0** on failure with the FPDF error code written
+     * to `errorOut[0]`.
+     *
+     * A handle is deliberately not testable for sign: bionic tags heap pointers on arm64, so a
+     * valid handle is a negative Long. See set_open_error() in pdfium_jni.c.
+     */
+    @JvmStatic external fun nativeOpen(fd: Int, password: String?, errorOut: IntArray): Long
     @JvmStatic external fun nativeClose(handle: Long)
     @JvmStatic external fun nativePageCount(handle: Long): Int
 

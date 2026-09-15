@@ -135,21 +135,39 @@ static FPDF_PAGE ensure_page(PdfDoc *d, int index) {
  * (so -4 is FPDF_ERR_PASSWORD). An out-parameter would have been racy: FPDF_GetLastError()
  * is process-global, and another thread can overwrite it between the failure and the read.
  */
+/*
+ * The handle and the error travel on SEPARATE channels, and that is not cosmetic.
+ *
+ * Returning the pointer as a jlong and negating it for errors is broken on arm64 Android 11+:
+ * bionic tags every heap allocation with 0xB4 in the top byte (malloc_tagged_pointers.h), so a
+ * valid handle has its top bit set and reads as a NEGATIVE jlong. A caller testing `handle <= 0`
+ * then treats every successful open as a failure and leaks the document, the fd and the parsed
+ * xref. Devices with MTE enabled tag a different bit range and would pass, hiding it.
+ *
+ * So: 0 means failure, anything else is a handle, and the FPDF code goes in the out-param.
+ */
+static void set_open_error(JNIEnv *env, jintArray out, jint code) {
+    if (out == NULL) return;
+    (*env)->SetIntArrayRegion(env, out, 0, 1, &code);
+}
+
 JNIEXPORT jlong JNICALL
 Java_com_absolutex_source_pdf_Pdfium_nativeOpen(JNIEnv *env, jclass clazz,
-                                                jint fd, jstring jpassword) {
+                                                jint fd, jstring jpassword, jintArray jerr) {
     (void) clazz;
     pthread_once(&g_init_once, init_pdfium);
 
+    set_open_error(env, jerr, FPDF_ERR_SUCCESS);
+
     PdfDoc *d = calloc(1, sizeof(PdfDoc));
-    if (d == NULL) return -(jlong) FPDF_ERR_UNKNOWN;
+    if (d == NULL) { set_open_error(env, jerr, FPDF_ERR_UNKNOWN); return 0; }
     d->page_index = -1;
 
     d->fd = private_fd(fd);
-    if (d->fd < 0) { free(d); return -(jlong) FPDF_ERR_FILE; }
+    if (d->fd < 0) { free(d); set_open_error(env, jerr, FPDF_ERR_FILE); return 0; }
 
     off_t len = lseek(d->fd, 0, SEEK_END);
-    if (len <= 0) { close(d->fd); free(d); return -(jlong) FPDF_ERR_FILE; }
+    if (len <= 0) { close(d->fd); free(d); set_open_error(env, jerr, FPDF_ERR_FILE); return 0; }
 
     d->access.m_FileLen  = (unsigned long) len;
     d->access.m_GetBlock = get_block;
@@ -170,7 +188,8 @@ Java_com_absolutex_source_pdf_Pdfium_nativeOpen(JNIEnv *env, jclass clazz,
         close(d->fd);
         free(d);
         if (err == FPDF_ERR_SUCCESS) err = FPDF_ERR_UNKNOWN;
-        return -(jlong) err;
+        set_open_error(env, jerr, (jint) err);
+        return 0;
     }
     return (jlong) (intptr_t) d;
 }

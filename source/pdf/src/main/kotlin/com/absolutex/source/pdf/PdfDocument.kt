@@ -126,14 +126,17 @@ class PdfDocument private constructor(
          * @throws PdfException for any other reason PDFium refuses the document.
          */
         fun open(pfd: ParcelFileDescriptor, password: String? = null): PdfDocument {
-            val result = Pdfium.nativeOpen(pfd.fd, password)
-            if (result <= 0L) throw PdfException.forCode((-result).toInt())
-            val count = Pdfium.nativePageCount(result)
+            // 0 is the only failure value. Testing the handle's sign would fail on every real
+            // arm64 device: bionic tags heap pointers, so a valid handle is a negative Long.
+            val error = IntArray(1)
+            val handle = Pdfium.nativeOpen(pfd.fd, password, error)
+            if (handle == 0L) throw PdfException.forCode(error[0])
+            val count = Pdfium.nativePageCount(handle)
             if (count <= 0) {
-                Pdfium.nativeClose(result)
+                Pdfium.nativeClose(handle)
                 throw PdfException(PdfException.ERR_FORMAT, "document declares no pages")
             }
-            return PdfDocument(pfd, result, count)
+            return PdfDocument(pfd, handle, count)
         }
     }
 }
