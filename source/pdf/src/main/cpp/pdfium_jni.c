@@ -153,7 +153,7 @@ static void set_open_error(JNIEnv *env, jintArray out, jint code) {
 
 JNIEXPORT jlong JNICALL
 Java_com_absolutex_source_pdf_Pdfium_nativeOpen(JNIEnv *env, jclass clazz,
-                                                jint fd, jstring jpassword, jintArray jerr) {
+                                                jint fd, jbyteArray jpassword, jintArray jerr) {
     (void) clazz;
     pthread_once(&g_init_once, init_pdfium);
 
@@ -173,15 +173,32 @@ Java_com_absolutex_source_pdf_Pdfium_nativeOpen(JNIEnv *env, jclass clazz,
     d->access.m_GetBlock = get_block;
     d->access.m_Param    = d;
 
-    const char *password = NULL;
-    if (jpassword != NULL) password = (*env)->GetStringUTFChars(env, jpassword, NULL);
+    /*
+     * The password arrives as real UTF-8 bytes rather than a jstring. GetStringUTFChars
+     * returns MODIFIED UTF-8, which encodes a non-BMP character — an emoji in a passphrase —
+     * as a CESU-8 surrogate pair rather than its true 4-byte form. PDF AES-256 (revision 5/6)
+     * derives its key from the actual UTF-8 bytes, so a correct password containing one would
+     * have been rejected. Kotlin does the encoding; this side only NUL-terminates.
+     */
+    char *password = NULL;
+    if (jpassword != NULL) {
+        jsize plen = (*env)->GetArrayLength(env, jpassword);
+        password = malloc((size_t) plen + 1);
+        if (password == NULL) {
+            close(d->fd); free(d);
+            set_open_error(env, jerr, FPDF_ERR_UNKNOWN);
+            return 0;
+        }
+        (*env)->GetByteArrayRegion(env, jpassword, 0, plen, (jbyte *) password);
+        password[plen] = '\0';   /* FPDF_BYTESTRING is a NUL-terminated C string */
+    }
 
     pthread_mutex_lock(&g_pdfium);
     d->doc = FPDF_LoadCustomDocument(&d->access, password);
     unsigned long err = (d->doc == NULL) ? FPDF_GetLastError() : FPDF_ERR_SUCCESS;
     pthread_mutex_unlock(&g_pdfium);
 
-    if (password != NULL) (*env)->ReleaseStringUTFChars(env, jpassword, password);
+    free(password);
 
     if (d->doc == NULL) {
         LOGE("FPDF_LoadCustomDocument failed, err=%lu", err);

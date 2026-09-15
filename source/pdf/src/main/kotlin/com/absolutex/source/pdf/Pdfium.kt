@@ -24,8 +24,11 @@ internal object Pdfium {
      *
      * A handle is deliberately not testable for sign: bionic tags heap pointers on arm64, so a
      * valid handle is a negative Long. See set_open_error() in pdfium_jni.c.
+     *
+     * [password] is real UTF-8 bytes, not a String: a jstring would cross as MODIFIED
+     * UTF-8 and mangle any non-BMP character. See nativeOpen in pdfium_jni.c.
      */
-    @JvmStatic external fun nativeOpen(fd: Int, password: String?, errorOut: IntArray): Long
+    @JvmStatic external fun nativeOpen(fd: Int, password: ByteArray?, errorOut: IntArray): Long
     @JvmStatic external fun nativeClose(handle: Long)
     @JvmStatic external fun nativePageCount(handle: Long): Int
 

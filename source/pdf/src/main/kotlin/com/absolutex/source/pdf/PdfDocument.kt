@@ -129,7 +129,9 @@ class PdfDocument private constructor(
             // 0 is the only failure value. Testing the handle's sign would fail on every real
             // arm64 device: bionic tags heap pointers, so a valid handle is a negative Long.
             val error = IntArray(1)
-            val handle = Pdfium.nativeOpen(pfd.fd, password, error)
+            // UTF-8 bytes, not the String: crossing JNI as a jstring would encode a
+            // non-BMP character as modified UTF-8 and break AES-256 key derivation.
+            val handle = Pdfium.nativeOpen(pfd.fd, password?.toByteArray(Charsets.UTF_8), error)
             if (handle == 0L) throw PdfException.forCode(error[0])
             val count = Pdfium.nativePageCount(handle)
             if (count <= 0) {

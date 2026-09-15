@@ -132,6 +132,16 @@ jobs:
         if: success() || failure()
         run: ./gradlew :app:assembleRelease
 
+      # Nothing depends on :source:pdf yet, so no other task in this job reaches its native
+      # build: unit tests and lint compile its Kotlin, but externalNativeBuild is wired to
+      # assemble, not to them. Without this step CMake never runs for that module — the pinned
+      # PDFium download and its SHA256 check, the JNI compile, and the POST_BUILD staging of
+      # libpdfium.so are all unverified, and the module ships on Kotlin unit tests alone.
+      # Delete this step once :app depends on :source:pdf; assembleRelease covers it then.
+      - name: Assemble :source:pdf (native)
+        if: success() || failure()
+        run: ./gradlew :source:pdf:assembleDebug
+
       - name: APK size report
         if: success() || failure()
         run: |
