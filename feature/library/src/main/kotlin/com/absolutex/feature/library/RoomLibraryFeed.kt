@@ -1,7 +1,7 @@
 package com.absolutex.feature.library
 
-import com.absolutex.core.data.AbsolutexDatabase
 import com.absolutex.core.data.LibraryBook
+import com.absolutex.core.data.LibraryDao
 import com.absolutex.core.data.LibraryRepository
 import com.absolutex.core.data.ProgressDao
 import com.absolutex.core.data.ReadingProgress
@@ -40,7 +40,7 @@ import javax.inject.Singleton
  */
 @Singleton
 internal class RoomLibraryFeed @Inject constructor(
-    database: AbsolutexDatabase,
+    libraryDao: LibraryDao,
     private val progressDao: ProgressDao,
 ) : LibraryFeed {
 
@@ -53,8 +53,12 @@ internal class RoomLibraryFeed @Inject constructor(
      * leaves the graph alone.
      * TODO(core-data): drop the defaulted parameters from the `@Inject` constructor (or bind
      *  them) so the repository is injectable like everything else.
+     *
+     * The DAO is injected rather than the database for a second reason: Room is an
+     * `implementation` dependency of :core:data, so `RoomDatabase` is not on this module's
+     * compile classpath and naming `AbsolutexDatabase` here does not compile.
      */
-    private val repository = LibraryRepository(database.libraryDao())
+    private val repository = LibraryRepository(libraryDao)
 
     override val capabilities = LibraryCapabilities(
         // Nothing stores a favourite: no column, no table, no preference. See setFavorite.

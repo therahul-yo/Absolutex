@@ -26,6 +26,15 @@ object DataModule {
     @Provides
     fun progressDao(db: AbsolutexDatabase): ProgressDao = db.progressDao()
 
+    /**
+     * Consumers inject the DAO, never [AbsolutexDatabase] itself: Room is an
+     * `implementation` dependency here, so `RoomDatabase` — the database class's supertype —
+     * is not on their compile classpath and injecting the database fails to compile. A `@Dao`
+     * interface has no such supertype and crosses the module boundary cleanly.
+     */
+    @Provides
+    fun libraryDao(db: AbsolutexDatabase): LibraryDao = db.libraryDao()
+
     /** Total device RAM, the input to the cache ceiling (see MemoryBudget). */
     @Provides
     @Singleton
