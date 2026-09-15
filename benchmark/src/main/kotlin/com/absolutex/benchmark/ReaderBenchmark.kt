@@ -36,6 +36,13 @@ class ReaderBenchmark {
     private companion object {
         /** Each direction, per iteration. Well inside a 45-page book in either direction. */
         const val PAGE_TURNS = 5
+
+        /**
+         * Pinch speed in px/s. UiAutomator's speed is travel per second, so across a ~700 px pinch
+         * 2000 px/s is ~0.35 s — a real pinch. It was 100 px/s (50 for sustainedPinch): 17-34 s
+         * per gesture, which is slow motion, not a pinch, and stretched one zoom run past 12 min.
+         */
+        const val PINCH_SPEED = 2000
     }
 
 
@@ -167,10 +174,10 @@ class ReaderBenchmark {
         device.waitForIdle()
         repeat(4) {
             guardFocus()
-            reader().pinchOpen(0.75f, 100)
+            reader().pinchOpen(0.75f, PINCH_SPEED)
             device.waitForIdle()
             guardFocus()
-            reader().pinchClose(0.75f, 100)
+            reader().pinchClose(0.75f, PINCH_SPEED)
             device.waitForIdle()
         }
     }
@@ -240,7 +247,7 @@ class ReaderBenchmark {
         // is a single UiAutomation call, milliseconds — a pause worth paying on a personal phone.
         repeat(8) { i ->
             guardFocus()
-            if (i % 2 == 0) content.pinchOpen(0.9f, 50) else content.pinchClose(0.9f, 50)
+            if (i % 2 == 0) content.pinchOpen(0.9f, PINCH_SPEED) else content.pinchClose(0.9f, PINCH_SPEED)
         }
     }
 }
