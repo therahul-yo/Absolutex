@@ -167,7 +167,8 @@ OnePlus 11R (Snapdragon 8+ Gen 1, Android 16), display confirmed at 120 Hz, benc
 | Page turn < 8.3 ms | CPU frame time P50 2.8 · P90 3.8 · P95 4.2 · P99 5.2 ms (5 iterations, 93–166 frames each) | **met** |
 | Zero dropped frames | 88 turns, 1,387 frames: **2 missed deadlines (0.14%)**, 0 missed vsync, 0 slow UI-thread frames | **not met** |
 | Cold start < 300 ms | Time to initial display, baseline profile: median 286.9 · min 256.8 · max 340.4 ms (no compilation: median 299.9; full AOT: median 302.4) | **met at the median**, not at the tail |
-| Tap → first page, 400% pinch, steady memory | — | not yet measured |
+| Pinch zoom, no drops | Sustained pinch open/close: frame time P50 3.3 · P90 4.8 · P95 5.6 · P99 6.5 ms, overrun P99 −0.4 ms (230–256 frames per iteration) | **met** |
+| Tap → first page, steady memory | — | not yet measured |
 
 What the two dropped frames are, from a Perfetto trace: not the app's drawing (RenderThread
 draw commands stay under 2.5 ms). RenderThread blocks ~24 ms in `eglSwapBuffers → queueBuffer`
