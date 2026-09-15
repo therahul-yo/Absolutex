@@ -6,6 +6,9 @@ import java.util.Locale
 object EntryFilter {
 
     private val JUNK_NAMES = setOf("thumbs.db", ".ds_store", "desktop.ini")
+
+    /** Directories that are archive or filesystem bookkeeping, never part of a book. */
+    private val JUNK_DIRECTORIES = setOf("__macosx")
     private val PAGE_EXTENSIONS = setOf(
         "jpg", "jpeg", "png", "webp", "avif", "heif", "heic", "gif", "bmp", "tif", "tiff",
         // Phase 4: modern/high-bit-depth scan formats (JPEG XL, JPEG 2000 family).
@@ -16,6 +19,15 @@ object EntryFilter {
         if (isJunk(entryName)) return false
         return extensionOf(entryName) in PAGE_EXTENSIONS
     }
+
+    /**
+     * True for a directory that is bookkeeping rather than content.
+     *
+     * Separate from [isJunk] because that one answers "is this entry junk" for a path, and every
+     * directory path ends in "/" which it already rejects. A walker needs to ask about the
+     * directory itself before descending — filtering only files lets "__MACOSX/001.cbz" through.
+     */
+    fun isJunkDirectory(name: String): Boolean = name.lowercase() in JUNK_DIRECTORIES
 
     fun isJunk(entryName: String): Boolean {
         val normalised = entryName.replace('\\', '/')

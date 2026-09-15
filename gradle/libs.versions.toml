@@ -69,6 +69,7 @@ room-compiler                = { module = "androidx.room:room-compiler", version
 datastore-preferences        = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
 datastore-core               = { module = "androidx.datastore:datastore-core", version.ref = "datastore" }
 kotlinx-coroutines-android   = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+kotlinx-coroutines-core      = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 
 androidx-profileinstaller    = { module = "androidx.profileinstaller:profileinstaller", version.ref = "profileinstaller" }
 androidx-benchmark-macro     = { module = "androidx.benchmark:benchmark-macro-junit4", version.ref = "benchmark" }
