@@ -24,10 +24,7 @@ import javax.inject.Singleton
  * [LibraryFeed] over the shipped repository and the progress table.
  *
  * Progress joins on `LibraryBook.contentKey`, which since 6f7d70d is `BookIdentity.of(name, size)`
- * — the same key `ReadingProgress.bookId` now carries, however the book was opened. Before that
- * the two tables keyed on different things (a Uri string against a filesystem path) and the
- * Reading shelf could not exist; this feed deliberately showed every book as unread rather than
- * inventing a mapping that the real fix would undo.
+ * — the same key `ReadingProgress.bookId` now carries, however the book was opened.
  */
 @Singleton
 internal class RoomLibraryFeed @Inject constructor(
@@ -49,65 +46,56 @@ internal class RoomLibraryFeed @Inject constructor(
             // Index the positions once, then look up per book: scanning the progress table per
             // row instead would be quadratic on a large library.
             val byIdentity = progress.associateBy { it.bookId }
-            books.map { it.toUi(byIdentity) }
+            // Deduplicated before mapping, so the expensive part runs once per book that is shown.
+            books.deduplicatedByIdentity().map { it.toUi(byIdentity) }
             // Mapping thousands of rows is real work and Room emits on its own executor; Default
             // keeps it off both the main thread and Room's.
         }.flowOn(Dispatchers.Default)
 
     override suspend fun search(query: String): List<LibraryBookUi> {
         val progress = progressDao.observeAll().first().associateBy { it.bookId }
-        return repository.search(query).map { it.toUi(progress) }
+        return repository.search(query).deduplicatedByIdentity().map { it.toUi(progress) }
     }
 
-    /**
-     * There is no store of configured locations yet, so this answers the question the empty state
-     * actually asks — "is there anything to do here?" — using the only signal available.
-     *
-     * A configured location that genuinely contains no books therefore reads as "no locations".
-     * The advice shown is the same either way ("add a folder"), so the wrong branch still gives
-     * the right instruction; it is the wording that is imprecise.
-     * TODO(library): read this from a real locations store once §5.1 storage locations land.
-     */
-    override suspend fun hasLocations(): Boolean =
-        repository.observeLibrary().first().isNotEmpty()
-
-    override suspend fun setFavorite(paths: Set<String>, favorite: Boolean): BatchOutcome =
-        BatchOutcome.Unsupported(
-            "Favourites need somewhere to live — no column, table or preference exists yet.",
-        )
+    override suspend fun setFavorite(paths: Set<String>, favorite: Boolean): LibraryNotice =
+        LibraryNotice.BatchUnsupported(UnsupportedReason.FAVOURITES_STORE_MISSING)
 
     /**
-     * Writes a position that puts each book at the requested end of it.
+     * Marks a selection read, or clears its position.
      *
-     * Marking unread always works: position zero is unambiguous. Marking read needs to know where
-     * the end is, and a container's page count is unknown until it is opened — those are counted
-     * as skipped rather than guessed at.
+     * What to write is decided by [planSetRead], which knows that a container's page count is
+     * unknown to the scanner and known to the reader — trusting the scan alone made Mark read on
+     * an opened 45-page CBR always answer "needs opening first", and Mark unread then overwrote
+     * the 45 with a 0.
      */
-    override suspend fun setRead(paths: Set<String>, read: Boolean): BatchOutcome {
-        if (paths.isEmpty()) return BatchOutcome.Applied(count = 0, skipped = 0)
+    override suspend fun setRead(paths: Set<String>, read: Boolean): LibraryNotice {
+        if (paths.isEmpty()) return LibraryNotice.BatchApplied(count = 0, skipped = 0)
         val byPath = repository.observeLibrary().first().associateBy { it.path }
+        val stored = progressDao.observeAll().first().associateBy { it.bookId }
         val known = paths.mapNotNull { byPath[it] }
-        val (actionable, unknownLength) = known.partition { !read || (it.pageCount ?: 0) > 0 }
-        val stamp = System.currentTimeMillis()
-        for (book in actionable) {
-            val pages = book.pageCount ?: 0
-            progressDao.upsert(
-                ReadingProgress(
-                    // The library's own identity column, which is what the reader stores too.
+        val plan = planSetRead(
+            targets = known.map { book ->
+                ReadTarget(
                     bookId = book.contentKey,
-                    pageIndex = if (read) pages - 1 else 0,
-                    pageCount = pages,
-                    updatedAt = stamp,
-                ),
-            )
+                    scannedPageCount = book.pageCount,
+                    storedPageCount = stored[book.contentKey]?.pageCount,
+                )
+            },
+            read = read,
+        )
+        val stamp = System.currentTimeMillis()
+        for (write in plan.writes) {
+            progressDao.upsert(ReadingProgress(write.bookId, write.pageIndex, write.pageCount, stamp))
         }
-        val missing = paths.size - known.size
-        return BatchOutcome.Applied(count = actionable.size, skipped = unknownLength.size + missing)
+        // A path the library no longer holds is reported, not silently dropped from the count.
+        return LibraryNotice.BatchApplied(
+            count = plan.writes.size,
+            skipped = plan.skipped + (paths.size - known.size),
+        )
     }
 
-    override suspend fun delete(paths: Set<String>): BatchOutcome = BatchOutcome.Unsupported(
-        "Deleting a book has to remove it from disk, and no repository operation does that yet.",
-    )
+    override suspend fun delete(paths: Set<String>): LibraryNotice =
+        LibraryNotice.BatchUnsupported(UnsupportedReason.DELETE_NOT_IMPLEMENTED)
 
     private fun LibraryBook.toUi(progress: Map<String, ReadingProgress>): LibraryBookUi {
         val position = progress[contentKey]

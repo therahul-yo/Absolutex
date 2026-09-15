@@ -50,7 +50,7 @@ private fun state(
     query = query,
     sort = sort,
     hasLocations = hasLocations,
-)
+).recomputed()
 
 class ReadStateTest {
 

@@ -31,35 +31,26 @@ internal data class LibraryUiState(
     val grid: GridSpec,
     val section: HomeSection,
     val selected: Set<String>,
-    /** False on a fresh install: no storage locations have been added yet. */
+    /** False on a fresh install: no storage location has been added yet. */
     val hasLocations: Boolean,
     val capabilities: LibraryCapabilities,
-    val error: String?,
+    val error: LibraryNotice?,
     /** One-shot feedback from a batch action; cleared once shown. */
-    val message: String?,
-) {
-
+    val message: LibraryNotice?,
     /**
-     * The books the current section shows, in the current order.
+     * The current section, in the current order.
      *
-     * `by lazy`, not `get()`: Compose reads this on every recomposition and a 5,000-book sort per
-     * frame is exactly the kind of thing that turns a scroll janky. A new state instance means a
-     * new sort, which is precisely when it should happen.
+     * A field rebuilt only by [recomputed], not a computed property. `by lazy` reads as equivalent
+     * and is not: every `copy()` makes a new instance, so ticking one checkbox — or typing one
+     * letter — re-filtered and re-sorted the whole library on the main thread. On 5,000 books that
+     * is a full sort per long-press.
      */
-    val visibleBooks: List<LibraryBookUi> by lazy { allBooks.inSection(section).sortedBy(sort) }
-
-    /** Series shelves. Books whose series never parsed fall back to their folder, as the index does. */
-    val seriesShelves: List<Shelf> by lazy {
-        visibleBooks.groupBy { it.series ?: it.folderName }
-            .map { (name, books) -> Shelf(name, books) }
-            .sortedWith(compareBy(NaturalOrder) { it.name })
-    }
-
-    val folderShelves: List<Shelf> by lazy {
-        visibleBooks.groupBy { it.folderName }
-            .map { (name, books) -> Shelf(name, books) }
-            .sortedWith(compareBy(NaturalOrder) { it.name })
-    }
+    val visibleBooks: List<LibraryBookUi>,
+    /** Series shelves over [visibleBooks]. */
+    val seriesShelves: List<Shelf>,
+    /** Folder shelves over [visibleBooks], grouped by path and titled by leaf name. */
+    val folderShelves: List<Shelf>,
+) {
 
     val selectionActive: Boolean get() = selected.isNotEmpty()
 
@@ -67,7 +58,9 @@ internal data class LibraryUiState(
 
     val emptyReason: LibraryEmptyReason
         get() = when {
-            loading || visibleBooks.isNotEmpty() -> LibraryEmptyReason.NONE
+            // A read failure is its own message; saying "no folders yet" over it would be a lie.
+            loading || error != null -> LibraryEmptyReason.NONE
+            visibleBooks.isNotEmpty() -> LibraryEmptyReason.NONE
             !hasLocations -> LibraryEmptyReason.NO_LOCATIONS
             query.isNotBlank() -> LibraryEmptyReason.NO_SEARCH_MATCHES
             allBooks.isEmpty() -> LibraryEmptyReason.LIBRARY_EMPTY
@@ -89,8 +82,59 @@ internal data class LibraryUiState(
             capabilities = LibraryCapabilities.None,
             error = null,
             message = null,
+            visibleBooks = emptyList(),
+            seriesShelves = emptyList(),
+            folderShelves = emptyList(),
         )
     }
+}
+
+/**
+ * Rebuilds everything derived from [LibraryUiState.allBooks], [LibraryUiState.section] and
+ * [LibraryUiState.sort].
+ *
+ * The only thing that rebuilds them, and the only three things that have to call it: a selection
+ * toggle, a layout change or a grid-column change must not pay for a re-sort of the library.
+ */
+internal fun LibraryUiState.recomputed(): LibraryUiState {
+    val visible = allBooks.inSection(section).sortedBy(sort)
+    return copy(
+        visibleBooks = visible,
+        seriesShelves = seriesShelvesOf(visible),
+        folderShelves = folderShelvesOf(visible),
+    )
+}
+
+/**
+ * Series shelves. Books whose series never parsed fall back to their folder, as the index does.
+ */
+internal fun seriesShelvesOf(books: List<LibraryBookUi>): List<Shelf> =
+    books.groupBy { it.series ?: it.folderName }
+        .map { (series, shelf) -> Shelf(series, shelf) }
+        .sortedWith(SHELF_ORDER)
+
+/**
+ * Folder shelves, grouped by **path** rather than by leaf name.
+ *
+ * Grouping by leaf name merged `/Comics/DC/2024` and `/Comics/Marvel/2024` into one shelf called
+ * "2024" — two unrelated folders' worth of books under a header that describes neither. The key is
+ * the path, which is unique; the header still shows the leaf name the user recognises from disk.
+ */
+internal fun folderShelvesOf(books: List<LibraryBookUi>): List<Shelf> =
+    books.groupBy { it.folderPath }
+        .map { (path, shelf) -> Shelf(id = path, books = shelf, title = shelf.first().folderName) }
+        .sortedWith(SHELF_ORDER)
+
+/**
+ * Natural order on the visible title, with the group key as a tiebreak.
+ *
+ * The tiebreak matters now that folders are grouped by path: two shelves can legitimately carry
+ * the same title ("2024" under two parents), and an unstable order would reshuffle them on every
+ * recomputation.
+ */
+private val SHELF_ORDER: Comparator<Shelf> = Comparator { left, right ->
+    val byTitle = NaturalOrder.compare(left.title, right.title)
+    if (byTitle != 0) byTitle else NaturalOrder.compare(left.id, right.id)
 }
 
 /**

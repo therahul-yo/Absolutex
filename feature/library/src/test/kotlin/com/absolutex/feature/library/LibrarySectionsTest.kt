@@ -3,6 +3,7 @@ package com.absolutex.feature.library
 import com.absolutex.core.scan.SortKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -26,7 +27,7 @@ private fun b(
 )
 
 private fun st(books: List<LibraryBookUi>, section: HomeSection) =
-    LibraryUiState.Initial.copy(loading = false, allBooks = books, section = section)
+    LibraryUiState.Initial.copy(loading = false, allBooks = books, section = section).recomputed()
 
 class SectionFilterTest {
 
@@ -67,7 +68,7 @@ class ShelfTest {
             ),
             HomeSection.SERIES,
         )
-        assertEquals(listOf("Batman", "Loose"), state.seriesShelves.map { it.name })
+        assertEquals(listOf("Batman", "Loose"), state.seriesShelves.map { it.title })
     }
 
     @Test fun `shelves are ordered naturally`() {
@@ -78,7 +79,7 @@ class ShelfTest {
             ),
             HomeSection.SERIES,
         )
-        assertEquals(listOf("Volume 2", "Volume 10"), state.seriesShelves.map { it.name })
+        assertEquals(listOf("Volume 2", "Volume 10"), state.seriesShelves.map { it.title })
     }
 
     @Test fun `folder shelves group by parent directory`() {
@@ -90,8 +91,24 @@ class ShelfTest {
             ),
             HomeSection.FOLDERS,
         )
-        val shelves = state.folderShelves.associate { it.name to it.size }
+        val shelves = state.folderShelves.associate { it.title to it.size }
         assertEquals(mapOf("DC" to 1, "Marvel" to 2), shelves)
+    }
+
+    @Test fun `two folders sharing a leaf name are two shelves, not one`() {
+        // The bug: grouping by leaf name merged /Comics/DC/2024 with /Comics/Marvel/2024 into a
+        // single "2024" shelf holding books from two unrelated folders.
+        val state = st(
+            listOf(
+                b("/Comics/DC/2024/a.cbz", series = null),
+                b("/Comics/Marvel/2024/b.cbz", series = null),
+            ),
+            HomeSection.FOLDERS,
+        )
+        val shelves = state.folderShelves
+        assertEquals(listOf("2024", "2024"), shelves.map { it.title })
+        assertEquals(listOf("/Comics/DC/2024", "/Comics/Marvel/2024"), shelves.map { it.id })
+        assertEquals(listOf(1, 1), shelves.map { it.size })
     }
 
     @Test fun `shelf totals sum member sizes`() {
@@ -213,7 +230,77 @@ class VisibleBooksTest {
             ),
             section = HomeSection.READING,
             sort = SortSpec(SortKey.NAME, ascending = true),
-        )
+        ).recomputed()
         assertEquals(listOf("Issue 2.cbz", "Issue 10.cbz"), s.visibleBooks.map { it.originalFilename })
+    }
+}
+
+/**
+ * What [recomputed] rebuilds, and what it must not.
+ *
+ * The lead's review item 10: `visibleBooks` was `by lazy` on a state instance, so every `copy()` —
+ * including one checkbox tap — re-filtered and re-sorted the entire library on the main thread.
+ */
+class DerivedStateTest {
+
+    private val two = listOf(
+        b("/x/Issue 10.cbz", currentPage = 5),
+        b("/x/Issue 2.cbz", currentPage = 5),
+    )
+
+    private fun state(books: List<LibraryBookUi>) =
+        LibraryUiState.Initial.copy(loading = false, allBooks = books, section = HomeSection.SERIES)
+            .recomputed()
+
+    @Test fun `ticking a checkbox does not rebuild the sorted list`() {
+        val s = state(two)
+        val ticked = s.toggleSelection("/x/Issue 2.cbz")
+        assertSame(s.visibleBooks, ticked.visibleBooks)
+        assertSame(s.seriesShelves, ticked.seriesShelves)
+        assertSame(s.folderShelves, ticked.folderShelves)
+    }
+
+    @Test fun `changing layout, grid or message does not rebuild either`() {
+        val s = state(two)
+        assertSame(s.visibleBooks, s.copy(layout = BrowseLayout.GRID).visibleBooks)
+        assertSame(s.visibleBooks, s.copy(grid = GridSpec.Default.withColumns(true, 6)).visibleBooks)
+        assertSame(
+            s.visibleBooks,
+            s.copy(message = LibraryNotice.BatchApplied(count = 1, skipped = 0)).visibleBooks,
+        )
+    }
+
+    @Test fun `a books change only takes effect through recomputed`() {
+        val s = state(two)
+        val grown = s.copy(allBooks = two + b("/x/Issue 3.cbz", currentPage = 5))
+        // Documented, not desired: `copy` keeps the derived lists it was built with, which is why
+        // every path that changes the books calls recomputed.
+        assertSame(s.visibleBooks, grown.visibleBooks)
+        assertEquals(3, grown.recomputed().visibleBooks.size)
+    }
+
+    @Test fun `a section change refilters`() {
+        val s = state(two + b("/x/Issue 3.cbz", currentPage = null))
+        val unread = s.copy(section = HomeSection.UNREAD).recomputed()
+        assertEquals(listOf("Issue 3.cbz"), unread.visibleBooks.map { it.originalFilename })
+    }
+
+    @Test fun `a sort change reorders`() {
+        val s = state(two)
+        val descending = s.copy(sort = SortSpec(SortKey.NAME, ascending = false)).recomputed()
+        assertEquals(listOf("Issue 2.cbz", "Issue 10.cbz"), s.visibleBooks.map { it.originalFilename })
+        assertEquals(listOf("Issue 10.cbz", "Issue 2.cbz"), descending.visibleBooks.map { it.originalFilename })
+    }
+
+    @Test fun `an error suppresses the empty state rather than claiming no folders`() {
+        // A failed load used to be rendered as "No folders yet", which is a different and false
+        // claim about the user's setup.
+        val failed = LibraryUiState.Initial.copy(
+            loading = false,
+            allBooks = emptyList(),
+            hasLocations = false,
+            error = LibraryNotice.LoadFailed,
+        )
+        assertEquals(LibraryEmptyReason.NONE, failed.emptyReason)
     }
 }

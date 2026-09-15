@@ -41,6 +41,9 @@
 
     <string name="library_selection_clear">Leave selection mode</string>
     <string name="library_selection_select_all">Select all on screen</string>
+    <!-- Shown on the button; the long form above is what TalkBack announces. -->
+    <string name="library_selection_select_all_short">Select all</string>
+    <string name="library_selection_more">More actions</string>
     <string name="library_mark_read">Mark read</string>
     <string name="library_mark_unread">Mark unread</string>
     <string name="library_favorite">Favourite</string>
@@ -49,6 +52,26 @@
         <item quantity="one">%1$d selected</item>
         <item quantity="other">%1$d selected</item>
     </plurals>
+
+    <!-- Batch action feedback. The skipped count is the one that varies, so it drives the plural. -->
+    <plurals name="library_batch_applied">
+        <item quantity="one">Updated %1$d.</item>
+        <item quantity="other">Updated %1$d.</item>
+    </plurals>
+    <plurals name="library_batch_none">
+        <item quantity="one">Nothing changed — %1$d needs opening first.</item>
+        <item quantity="other">Nothing changed — %1$d need opening first.</item>
+    </plurals>
+    <plurals name="library_batch_partly">
+        <item quantity="one">%1$d updated, %2$d needs opening first.</item>
+        <item quantity="other">%1$d updated, %2$d need opening first.</item>
+    </plurals>
+    <string name="library_unsupported_favourites">Favourites need somewhere to live, and that store does not exist yet.</string>
+    <string name="library_unsupported_delete">Deleting a book has to remove it from disk, which the library cannot do yet.</string>
+
+    <!-- Shown when the library could not be read at all, as opposed to being empty. -->
+    <string name="library_error_title">Can\'t load your library</string>
+    <string name="library_error_generic">Something went wrong while reading your library. Your books are still on disk.</string>
 
     <plurals name="library_book_pages">
         <item quantity="one">%1$d page</item>

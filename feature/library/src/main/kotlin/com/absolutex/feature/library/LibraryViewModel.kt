@@ -20,7 +20,10 @@ import javax.inject.Inject
  * Holds no rendering logic and no Room types: it moves [LibraryFeed] output into
  * [LibraryUiState] and applies the user's intents. Everything worth asserting about — ordering,
  * section membership, selection, empty states — lives in the plain-Kotlin state layer next door
- * and is unit-tested there.
+ * and is unit-tested there, which is also why this class stays as thin as it is.
+ *
+ * It is the only place that calls [recomputed], which is what keeps a checkbox tap from
+ * re-filtering and re-sorting the library.
  */
 @HiltViewModel
 internal class LibraryViewModel @Inject constructor(
@@ -37,19 +40,23 @@ internal class LibraryViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             feed.observeBooks()
-                .catch { failure -> _ui.update { it.copy(loading = false, error = failure.readable()) } }
+                .catch { _ui.update { it.copy(loading = false, error = LibraryNotice.LoadFailed) } }
                 .collect { books ->
                     everything = books
-                    // A scan landing mid-search must not yank the user's results out from under
-                    // them; the next keystroke (or clearing the box) picks the new data up.
-                    if (_ui.value.query.isBlank()) {
-                        _ui.update { it.copy(loading = false, allBooks = books, error = null) }
+                    _ui.update { state ->
+                        // hasLocations is re-derived from every emission. It used to be read once,
+                        // so a first-run user who added a folder kept seeing "No folders yet" on
+                        // every empty section for the rest of the session.
+                        val next = state.copy(
+                            loading = false,
+                            hasLocations = books.isNotEmpty(),
+                            error = null,
+                        )
+                        // A scan landing mid-search must not yank the user's results out from
+                        // under them; the next keystroke (or clearing the box) picks them up.
+                        if (state.query.isBlank()) next.copy(allBooks = books).recomputed() else next
                     }
                 }
-        }
-        viewModelScope.launch {
-            val located = runCatching { feed.hasLocations() }.getOrDefault(true)
-            _ui.update { it.copy(hasLocations = located) }
         }
     }
 
@@ -58,34 +65,23 @@ internal class LibraryViewModel @Inject constructor(
      *
      * The query text lands in state immediately so the field never lags a keypress, while the
      * lookup itself is debounced and cancellable — one search per pause, not one per character.
-     * Nothing rebuilds an index: the repository query is a scan, and clearing the box replays the
-     * list already in hand.
+     *
+     * The selection is cleared first, because a query narrows what is on screen: keeping a tick on
+     * a row that no longer matches means the next Mark read acts on books the user cannot see.
      */
     fun onQueryChange(query: String) {
-        _ui.update { it.copy(query = query) }
-        searchJob?.cancel()
-        searchJob = viewModelScope.launch {
-            if (query.isBlank()) {
-                _ui.update { it.copy(allBooks = everything, loading = false) }
-                return@launch
-            }
-            delay(SEARCH_DEBOUNCE_MS)
-            val matches = runCatching { feed.search(query) }
-            matches.fold(
-                onSuccess = { books -> _ui.update { it.copy(allBooks = books, loading = false, error = null) } },
-                onFailure = { failure -> _ui.update { it.copy(loading = false, error = failure.readable()) } },
-            )
-        }
+        _ui.update { it.clearSelection().copy(query = query) }
+        search(query, debounce = true)
     }
 
     fun onSectionChange(section: HomeSection) {
         // Leaving a section with rows ticked would strand a selection the user can no longer see.
-        _ui.update { it.clearSelection().copy(section = section) }
+        _ui.update { it.clearSelection().copy(section = section).recomputed() }
     }
 
     fun onLayoutChange(layout: BrowseLayout) = _ui.update { it.copy(layout = layout) }
 
-    fun onSortChange(key: SortKey) = _ui.update { it.copy(sort = it.sort.select(key)) }
+    fun onSortChange(key: SortKey) = _ui.update { it.copy(sort = it.sort.select(key)).recomputed() }
 
     fun onGridColumnsChange(landscape: Boolean, columns: Int) = _ui.update {
         it.copy(grid = it.grid.withColumns(landscape, columns))
@@ -99,36 +95,65 @@ internal class LibraryViewModel @Inject constructor(
 
     fun onMessageShown() = _ui.update { it.copy(message = null) }
 
-    /** One entry point for every batch action, matching the one place they are carried out. */
-    fun onBatch(action: BatchAction) = runBatch { targets ->
-        when (action) {
-            BatchAction.MARK_READ -> feed.setRead(targets, read = true)
-            BatchAction.MARK_UNREAD -> feed.setRead(targets, read = false)
-            BatchAction.FAVORITE -> feed.setFavorite(targets, favorite = true)
-            BatchAction.UNFAVORITE -> feed.setFavorite(targets, favorite = false)
-            BatchAction.DELETE -> feed.delete(targets)
-        }
-    }
-
     /**
      * Runs a batch action over the selection and reports what actually happened.
      *
      * The selection is cleared only on success: leaving it intact after a refusal means the user
      * can act on the same books again without re-picking them.
      */
-    private fun runBatch(action: suspend (Set<String>) -> BatchOutcome) {
+    fun onBatch(action: BatchAction) {
         val targets = _ui.value.selected
         if (targets.isEmpty()) return
         viewModelScope.launch {
-            val outcome = runCatching { action(targets) }
-                .getOrElse { BatchOutcome.Failed(it.readable()) }
+            val notice = runCatching {
+                when (action) {
+                    BatchAction.MARK_READ -> feed.setRead(targets, read = true)
+                    BatchAction.MARK_UNREAD -> feed.setRead(targets, read = false)
+                    BatchAction.FAVORITE -> feed.setFavorite(targets, favorite = true)
+                    BatchAction.UNFAVORITE -> feed.setFavorite(targets, favorite = false)
+                    BatchAction.DELETE -> feed.delete(targets)
+                }
+            }.getOrElse { LibraryNotice.BatchFailed }
             _ui.update { state ->
-                when (outcome) {
-                    is BatchOutcome.Applied -> state.clearSelection().copy(message = outcome.describe())
-                    is BatchOutcome.Unsupported -> state.copy(message = outcome.reason)
-                    is BatchOutcome.Failed -> state.copy(message = outcome.reason)
+                when (notice) {
+                    is LibraryNotice.BatchApplied -> state.clearSelection().copy(message = notice)
+                    is LibraryNotice.BatchUnsupported -> state.copy(message = notice)
+                    LibraryNotice.BatchFailed, LibraryNotice.LoadFailed -> state.copy(message = notice)
                 }
             }
+            // The visible rows were answered from the table as it stood before the write, so
+            // during a search they keep showing "On page N of M" until the next keystroke. Re-run
+            // the query — immediately, because the user started this and is watching for it.
+            val query = _ui.value.query
+            if (notice is LibraryNotice.BatchApplied && query.isNotBlank()) {
+                search(query, debounce = false)
+            }
+        }
+    }
+
+    /**
+     * Runs [query] against the feed, cancelling whatever was in flight.
+     *
+     * @param debounce true waits for a pause in typing; false runs now, for a caller re-reading
+     *   after an action the user took. A blank query is not a search for nothing — it is the whole
+     *   library, which is already in hand.
+     */
+    private fun search(query: String, debounce: Boolean) {
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            if (query.isBlank()) {
+                _ui.update { it.copy(allBooks = everything, loading = false).recomputed() }
+                return@launch
+            }
+            if (debounce) delay(SEARCH_DEBOUNCE_MS)
+            runCatching { feed.search(query) }.fold(
+                onSuccess = { books ->
+                    _ui.update { it.copy(allBooks = books, loading = false, error = null).recomputed() }
+                },
+                onFailure = {
+                    _ui.update { it.copy(loading = false, error = LibraryNotice.LoadFailed) }
+                },
+            )
         }
     }
 
@@ -140,12 +165,4 @@ internal class LibraryViewModel @Inject constructor(
          */
         const val SEARCH_DEBOUNCE_MS = 200L
     }
-}
-
-private fun Throwable.readable(): String = message?.takeIf { it.isNotBlank() } ?: "Something went wrong."
-
-private fun BatchOutcome.Applied.describe(): String = when {
-    count == 0 && skipped > 0 -> "Nothing changed — $skipped need opening first."
-    skipped > 0 -> "Updated $count. $skipped need opening first."
-    else -> "Updated $count."
 }

@@ -101,8 +101,14 @@ internal data class LibraryBookUi(
 /** What the batch action bar can ask for over a selection (§5.1). */
 internal enum class BatchAction { MARK_READ, MARK_UNREAD, FAVORITE, UNFAVORITE, DELETE }
 
-/** A named group of books — a series shelf or a folder shelf. */
-internal data class Shelf(val name: String, val books: List<LibraryBookUi>) {
+/**
+ * A named group of books — a series shelf or a folder shelf.
+ *
+ * [id] is the grouping key; [title] is what the header shows. They differ for folders, where the
+ * key is a path and the title is its leaf name — and [id] doubles as the lazy-list item key, which
+ * has to be unique across shelves.
+ */
+internal data class Shelf(val id: String, val books: List<LibraryBookUi>, val title: String = id) {
     val size: Int get() = books.size
     val totalBytes: Long get() = books.sumOf { it.sizeBytes }
 }

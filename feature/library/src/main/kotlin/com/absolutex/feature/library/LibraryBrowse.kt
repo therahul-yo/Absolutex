@@ -94,7 +94,7 @@ private fun LazyGridScope.gridContent(
         return
     }
     shelves.forEach { shelf ->
-        item(key = "shelf:${shelf.name}", span = { GridItemSpan(maxLineSpan) }) { ShelfHeader(shelf) }
+        item(key = "shelf:${shelf.id}", span = { GridItemSpan(maxLineSpan) }) { ShelfHeader(shelf) }
         items(shelf.books, key = { it.path }) { book ->
             GridCell(book, book.path in state.selected, context)
         }
@@ -111,7 +111,7 @@ private fun LazyListScope.listContent(
         return
     }
     shelves.forEach { shelf ->
-        item(key = "shelf:${shelf.name}") { ShelfHeader(shelf) }
+        item(key = "shelf:${shelf.id}") { ShelfHeader(shelf) }
         items(shelf.books, key = { it.path }) { book -> BookRow(state, book, context) }
     }
 }

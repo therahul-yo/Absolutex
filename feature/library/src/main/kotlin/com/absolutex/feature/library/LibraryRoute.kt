@@ -114,9 +114,14 @@ private fun LibraryBody(
     onAddLocation: () -> Unit,
 ) {
     val snackbar = remember { SnackbarHostState() }
-    LaunchedEffect(state.message) {
-        val message = state.message ?: return@LaunchedEffect
-        snackbar.showSnackbar(message)
+    // Resolved here and not inside the effect: the words are a string resource, and the effect's
+    // block is not @Composable. Keyed on the notice itself rather than its text, so two identical
+    // messages in a row both show.
+    val notice = state.message
+    val noticeText = notice?.text()
+    LaunchedEffect(notice) {
+        if (notice == null || noticeText == null) return@LaunchedEffect
+        snackbar.showSnackbar(noticeText)
         actions.onMessageShown()
     }
     Scaffold(
@@ -156,6 +161,13 @@ private fun LibraryContent(
     onAddLocation: () -> Unit,
 ) {
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val error = state.error
+    if (error != null) {
+        // A database failure replaces the whole surface, including the empty state: "nothing here
+        // yet" over a library that could not be read is a different claim, and a false one.
+        LibraryErrorState(error)
+        return
+    }
     if (state.emptyReason != LibraryEmptyReason.NONE) {
         LibraryEmptyState(state.emptyReason, state.section, state.query, onAddLocation)
         return
