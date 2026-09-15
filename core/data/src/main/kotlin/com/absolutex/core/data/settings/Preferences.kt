@@ -22,7 +22,19 @@ data class ReaderPrefs(
      * kind of surprise a reader should ask for, not impose.
      */
     val volumeKeysTurnPages: Boolean = false,
+    /** The screen stays on while a page is open (§5.2). Reading is not an idle phone. */
+    val keepScreenOn: Boolean = true,
+    /** Rotation lock while reading (§5.2). SYSTEM follows the device's own rotation setting. */
+    val rotationLock: RotationLock = RotationLock.SYSTEM,
+    /**
+     * Pages draw under the display cutout (§5.2). On by default: a camera hole-punch covers a few
+     * pixels of margin, and letterboxing the whole page away from it wastes a strip of screen.
+     */
+    val useCutout: Boolean = true,
 )
+
+/** How the reader holds its orientation. */
+enum class RotationLock { SYSTEM, PORTRAIT, LANDSCAPE }
 
 /**
  * App-wide flags: the Locations, General, Thumbnails and Rendering settings that are simple

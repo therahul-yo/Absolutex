@@ -25,6 +25,9 @@ object PrefCodec {
     internal const val KEY_READING_FLOW = "reading_flow"
     internal const val KEY_FIT_MODE = "fit_mode"
     internal const val KEY_VOLUME_KEYS = "volume_keys_turn_pages"
+    internal const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
+    internal const val KEY_ROTATION_LOCK = "rotation_lock"
+    internal const val KEY_USE_CUTOUT = "use_cutout"
 
     fun decodeApp(bag: PrefBag): AppPrefs {
         val defaults = AppPrefs()
@@ -55,6 +58,9 @@ object PrefCodec {
             readingFlow = bag.enumOr(KEY_READING_FLOW, defaults.readingFlow, ReadingFlow.entries),
             fitMode = bag.enumOr(KEY_FIT_MODE, defaults.fitMode, FitMode.entries),
             volumeKeysTurnPages = bag.boolean(KEY_VOLUME_KEYS) ?: defaults.volumeKeysTurnPages,
+            keepScreenOn = bag.boolean(KEY_KEEP_SCREEN_ON) ?: defaults.keepScreenOn,
+            rotationLock = bag.enumOr(KEY_ROTATION_LOCK, defaults.rotationLock, RotationLock.entries),
+            useCutout = bag.boolean(KEY_USE_CUTOUT) ?: defaults.useCutout,
         )
     }
 
@@ -62,6 +68,9 @@ object PrefCodec {
         bag.putString(KEY_READING_FLOW, prefs.readingFlow.name)
         bag.putString(KEY_FIT_MODE, prefs.fitMode.name)
         bag.putBoolean(KEY_VOLUME_KEYS, prefs.volumeKeysTurnPages)
+        bag.putBoolean(KEY_KEEP_SCREEN_ON, prefs.keepScreenOn)
+        bag.putString(KEY_ROTATION_LOCK, prefs.rotationLock.name)
+        bag.putBoolean(KEY_USE_CUTOUT, prefs.useCutout)
     }
 
     /**

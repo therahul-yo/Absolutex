@@ -1,5 +1,9 @@
 package com.absolutex.feature.reader
 
+import com.absolutex.core.data.settings.RotationLock
+import androidx.compose.runtime.DisposableEffect
+import android.view.WindowManager
+import android.content.pm.ActivityInfo
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.Flow
 import com.absolutex.core.data.settings.ReaderPrefs
@@ -152,7 +156,7 @@ private fun Pages(
             else -> chrome = !chrome
         }
     }
-    ImmersiveWhile(hidden = !chrome)
+    ReaderWindow(prefs, immersive = !chrome)
 
     // §5.3: keyboard and gamepad alone must be enough. Zoom goes only to the page being looked at.
     val zoomSteps = remember { MutableSharedFlow<Float>(extraBufferCapacity = ZOOM_STEP_BUFFER) }
@@ -327,6 +331,47 @@ private fun ReaderChrome(
                     stateDescription = indicator
                 },
             )
+        }
+    }
+}
+
+/**
+ * The window behaviour §5.2 makes settings: keep the screen on, lock rotation, draw under the
+ * cutout. Applied while the reader is on screen and put back when it leaves, so the rest of the app
+ * never inherits a locked orientation or a screen that will not sleep.
+ */
+@Composable
+private fun ReaderWindow(prefs: ReaderPrefs, immersive: Boolean) {
+    ImmersiveWhile(hidden = immersive)
+    val view = LocalView.current
+    val activity = view.context as? Activity
+    DisposableEffect(prefs.keepScreenOn) {
+        view.keepScreenOn = prefs.keepScreenOn
+        onDispose { view.keepScreenOn = false }
+    }
+    DisposableEffect(prefs.rotationLock, activity) {
+        val previous = activity?.requestedOrientation
+        activity?.requestedOrientation = when (prefs.rotationLock) {
+            RotationLock.SYSTEM -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            RotationLock.PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            RotationLock.LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        }
+        onDispose { if (previous != null) activity.requestedOrientation = previous }
+    }
+    DisposableEffect(prefs.useCutout, activity) {
+        val window = activity?.window
+        val previous = window?.attributes?.layoutInDisplayCutoutMode
+        window?.attributes = window?.attributes?.apply {
+            layoutInDisplayCutoutMode = if (prefs.useCutout) {
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            } else {
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
+            }
+        }
+        onDispose {
+            if (window != null && previous != null) {
+                window.attributes = window.attributes.apply { layoutInDisplayCutoutMode = previous }
+            }
         }
     }
 }
