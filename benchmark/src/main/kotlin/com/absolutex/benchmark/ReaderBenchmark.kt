@@ -81,6 +81,18 @@ class ReaderBenchmark {
     }
 
     /**
+     * Checked before EVERY injected gesture, not once per iteration. The reference device is a
+     * personal phone: a call, a system dialog or the notification shade can take focus mid-run,
+     * and a gesture landing there once changed the default dialer and placed a real call.
+     * Stopping the run is always cheaper than whatever the gesture would have touched.
+     */
+    private fun androidx.benchmark.macro.MacrobenchmarkScope.guardFocus() {
+        check(device.currentPackageName == pkg) {
+            "focus left the reader (found ${device.currentPackageName}) - stopping before injecting a gesture"
+        }
+    }
+
+    /**
      * OxygenOS/ColorOS silently drop injected input unless "Disable permission monitoring" is on
      * in Developer options. The swipes then do nothing, the reader draws no frames, and the run
      * dies at the end with "0 found for frameDurationCpuMs" — which reads like a tracing fault.
@@ -89,8 +101,10 @@ class ReaderBenchmark {
     private fun androidx.benchmark.macro.MacrobenchmarkScope.assertGesturesReachTheApp() {
         device.executeShellCommand("dumpsys gfxinfo $pkg reset")
         val y = device.displayHeight / 2
+        guardFocus()
         device.swipe(device.displayWidth * 85 / 100, y, device.displayWidth * 15 / 100, y, 8)
         device.waitForIdle()
+        guardFocus()
         device.swipe(device.displayWidth * 15 / 100, y, device.displayWidth * 85 / 100, y, 8)
         device.waitForIdle()
         val frames = Regex("""Total frames rendered: (\d+)""")
@@ -124,10 +138,12 @@ class ReaderBenchmark {
         val left = device.displayWidth * 15 / 100
         repeat(PAGE_TURNS) {
             // 8 steps is ~40 ms of travel: fast enough to register as a fling rather than a drag.
+            guardFocus()
             device.swipe(right, y, left, y, 8)
             device.waitForIdle()
         }
         repeat(PAGE_TURNS) {
+            guardFocus()
             device.swipe(left, y, right, y, 8)
             device.waitForIdle()
         }
@@ -150,8 +166,10 @@ class ReaderBenchmark {
     ) {
         device.waitForIdle()
         repeat(4) {
+            guardFocus()
             reader().pinchOpen(0.75f, 100)
             device.waitForIdle()
+            guardFocus()
             reader().pinchClose(0.75f, 100)
             device.waitForIdle()
         }
@@ -210,7 +228,7 @@ class ReaderBenchmark {
             // the gestures land on the shade, and Perfetto reports "no renderthread slices" —
             // which is exactly how one run on the reference device failed.
             device.executeShellCommand("cmd statusbar collapse")
-            device.waitForIdle()
+            assertReaderShowsABook()
         },
     ) {
         device.waitForIdle()
@@ -218,8 +236,10 @@ class ReaderBenchmark {
         // settle between them, and re-resolving would insert exactly the pause it is trying
         // to avoid. Nothing recomposes the page away mid-pinch, so the handle stays valid.
         val content = reader()
-        // Deliberately no waitForIdle inside: the next gesture must land mid-render.
+        // Deliberately no waitForIdle inside: the next gesture must land mid-render. The focus check
+        // is a single UiAutomation call, milliseconds — a pause worth paying on a personal phone.
         repeat(8) { i ->
+            guardFocus()
             if (i % 2 == 0) content.pinchOpen(0.9f, 50) else content.pinchClose(0.9f, 50)
         }
     }
