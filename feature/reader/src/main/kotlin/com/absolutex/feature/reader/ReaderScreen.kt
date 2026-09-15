@@ -3,10 +3,12 @@ package com.absolutex.feature.reader
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -19,6 +21,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -43,8 +46,20 @@ fun ReaderScreen(
     ) {
         when {
             ui.loading -> CircularProgressIndicator()
-            ui.error != null -> Text(ui.error!!, color = Color.White, modifier = Modifier.padding(24.dp))
-            ui.pageCount == 0 -> Text("No readable pages", color = Color.White)
+            // Generic string from the ViewModel — never a raw Uri or entry name.
+            ui.error != null -> Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(ui.error!!, color = Color.White)
+                Button(onClick = { vm.open(uri) }) {
+                    Text(stringResource(R.string.reader_retry))
+                }
+            }
+            ui.pageCount == 0 -> Text(
+                stringResource(R.string.reader_no_pages),
+                color = Color.White,
+            )
             else -> Pages(ui.pageCount, ui.currentPage, vm)
         }
     }
@@ -54,6 +69,7 @@ fun ReaderScreen(
 private fun Pages(pageCount: Int, startPage: Int, vm: ReaderViewModel) {
     val pagerState = rememberPagerState(initialPage = startPage) { pageCount }
     var zoom by remember { mutableStateOf(1f) }
+    val failedPages by vm.failedPages.collectAsStateWithLifecycle()
 
     // Persist progress as the reader moves. snapshotFlow keeps this off the composition path.
     LaunchedEffect(pagerState) {
@@ -73,17 +89,19 @@ private fun Pages(pageCount: Int, startPage: Int, vm: ReaderViewModel) {
         LaunchedEffect(index) { image = vm.pageImage(index) }
 
         val img = image
-        if (img == null) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-        } else {
-            PageCanvas(
+        when {
+            img != null -> PageCanvas(
                 page = img,
                 pageIndex = index,
                 cache = vm.tileCache,
                 onZoomChanged = { zoom = it },
             )
+            index in failedPages -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(stringResource(R.string.reader_page_unreadable), color = Color.White)
+            }
+            else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
         }
     }
 }

@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -27,11 +28,39 @@
 #define LOG_TAG "absolutex.archive"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
+/* archive_error_string() may return NULL (no error latched); %s of NULL is UB. */
+static const char *errstr(struct archive *a) {
+    const char *s = archive_error_string(a);
+    return s != NULL ? s : "(no error)";
+}
+
+/* strerror() is not thread-safe (shared static buffer) and the decode pool calls us
+   concurrently. Our targets (bionic, macOS host harness) provide the XSI strerror_r
+   returning int with the message in buf; the GNU variant's pointer return does not
+   apply here. */
+static const char *errno_str(int err, char *buf, size_t n) {
+    buf[0] = '\0';
+    (void) strerror_r(err, buf, n);
+    buf[n - 1] = '\0';
+    return buf[0] ? buf : "unknown error";
+}
+
 #define BLOCK_SIZE 65536
 
-/* A single entry larger than this is hostile input, not a comic page — and a Java byte[] could
-   not hold much more anyway. Bounds the growable read below for entries with no declared size. */
-#define MAX_ENTRY_BYTES (512L * 1024 * 1024)
+/* A single entry larger than this is hostile input, not a comic page. Bounds the
+   growable read below for entries with no declared size, and caps declared sizes too.
+   Total native pressure is this cap TIMES the decode-pool width (each worker holds at
+   most one entry buffer), so keep the pool narrow — see DecodeDispatchers. */
+#define MAX_ENTRY_BYTES (128L * 1024 * 1024)
+
+/* Initial malloc for an entry whose header declares its size: min(declared, this),
+   then grown geometrically as bytes actually arrive. A lying 128 MB header therefore
+   costs 8 MB up front, not 128 MB times the pool width. */
+#define SIZED_START_MAX (8L * 1024 * 1024)
+
+/* More entries than any real comic; a fuzzed central directory claiming millions of
+   entries otherwise grows the names table (and the returned byte[][]) without bound. */
+#define MAX_ENTRIES 20000
 
 /* Starting buffer for an entry whose header does not declare its size. */
 #define UNKNOWN_SIZE_START (256 * 1024)
@@ -52,8 +81,9 @@ static int private_fd(int fd) {
     snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
     int p = open(path, O_RDONLY | O_CLOEXEC);
     if (p >= 0) return p;
+    char ebuf[64];
     LOGE("private_fd: /proc reopen failed (%s) - falling back to dup(), NOT concurrency-safe",
-         strerror(errno));
+         errno_str(errno, ebuf, sizeof(ebuf)));
     return dup(fd);
 }
 
@@ -71,10 +101,19 @@ static struct archive *open_fd(int fd, int *dup_out) {
     archive_read_support_format_rar5(a);
     archive_read_support_format_7zip(a);
     archive_read_support_format_tar(a);
-    archive_read_support_filter_all(a);
+    /* Narrow filter set, not filter_all: every registered bidder sniffs hostile magic,
+       so only the filters our formats use are enabled (none for stored/zip entries,
+       gzip for .cbt, plus bzip2/xz/zstd/lz4 for tars that declare them). Codecs whose
+       CMake switch is OFF degrade to a clean ARCHIVE_FATAL here, never a crash. */
+    archive_read_support_filter_none(a);
+    archive_read_support_filter_gzip(a);
+    archive_read_support_filter_bzip2(a);
+    archive_read_support_filter_xz(a);
+    archive_read_support_filter_zstd(a);
+    archive_read_support_filter_lz4(a);
 
     if (archive_read_open_fd(a, dfd, BLOCK_SIZE) != ARCHIVE_OK) {
-        LOGE("open_fd: %s", archive_error_string(a));
+        LOGE("open_fd: %s", errstr(a));
         archive_read_free(a);
         close(dfd);
         return NULL;
@@ -90,6 +129,9 @@ static struct archive *open_fd(int fd, int *dup_out) {
  * uselocale() is thread-local, so scoping a UTF-8 locale to each JNI call fixes names without
  * touching the process-wide locale other code relies on.
  */
+/* g_utf8 is process-lifetime and intentionally never freed: freeing a locale still
+   installed by another thread is a use-after-free, and one small allocation for the
+   life of the process is benign. */
 static locale_t g_utf8;
 static pthread_once_t g_utf8_once = PTHREAD_ONCE_INIT;
 static void init_utf8(void) {
@@ -145,6 +187,7 @@ static const char *entry_name(struct archive_entry *e) {
 static jobjectArray
 list_impl(JNIEnv *env, jclass clazz, jint fd) {
     (void) clazz;
+    if (fd < 0) return NULL;
     int dfd = -1;
     struct archive *a = open_fd(fd, &dfd);
     if (a == NULL) return NULL;
@@ -157,40 +200,70 @@ list_impl(JNIEnv *env, jclass clazz, jint fd) {
     int r;
     while (header_ok(r = archive_read_next_header(a, &entry))) {
         if (!is_ordinal_entry(entry)) continue;
+        if (n >= MAX_ENTRIES) {
+            LOGE("nativeList: too many entries (>= %d), truncating list", MAX_ENTRIES);
+            break;
+        }
         if (n == cap) {
-            char **grown = realloc(names, cap * 2 * sizeof(char *));
+            size_t ncap = cap * 2;
+            if (ncap <= cap || ncap > (size_t) MAX_ENTRIES + 64) ncap = (size_t) MAX_ENTRIES + 64;
+            char **grown = realloc(names, ncap * sizeof(char *));
             if (grown == NULL) break;   // keep what we have rather than lose the whole list
             names = grown;
-            cap *= 2;
+            cap = ncap;
         }
         char *copy = strdup(entry_name(entry));
         if (copy == NULL) break;
         names[n++] = copy;
     }
     if (r != ARCHIVE_EOF && !header_ok(r)) {
-        LOGE("nativeList stopped early after %zu entries: %s", n, archive_error_string(a));
+        LOGE("nativeList stopped early after %zu entries: %s", n, errstr(a));
     }
     close_archive(a, dfd);
 
+    /* n <= MAX_ENTRIES (20000) < INT_MAX, so the (jsize) casts below cannot overflow;
+       the explicit check is defense in depth against future cap changes. */
+    if (n > (size_t) INT_MAX) {
+        LOGE("nativeList: entry count %zu exceeds jsize range", n);
+        goto fail;
+    }
+
     jobjectArray out = NULL;
     jclass byteArrayClass = (*env)->FindClass(env, "[B");
-    if (byteArrayClass != NULL) {
-        out = (*env)->NewObjectArray(env, (jsize) n, byteArrayClass, NULL);
-    }
+    if (byteArrayClass == NULL || (*env)->ExceptionCheck(env)) goto fail;
+    out = (*env)->NewObjectArray(env, (jsize) n, byteArrayClass, NULL);
+    if (out == NULL || (*env)->ExceptionCheck(env)) { out = NULL; goto done; }
     for (size_t i = 0; i < n; i++) {
-        if (out != NULL && !(*env)->ExceptionCheck(env)) {
-            jsize len = (jsize) strlen(names[i]);
-            jbyteArray bytes = (*env)->NewByteArray(env, len);
-            if (bytes != NULL) {
-                (*env)->SetByteArrayRegion(env, bytes, 0, len, (const jbyte *) names[i]);
-                (*env)->SetObjectArrayElement(env, out, (jsize) i, bytes);
-                (*env)->DeleteLocalRef(env, bytes);   // one local ref per entry would overflow
-            }
+        size_t namelen = strlen(names[i]);
+        if (namelen > (size_t) INT_MAX) {
+            LOGE("nativeList: entry %zu name too long", i);
+            out = NULL;
+            goto done;
         }
-        free(names[i]);
+        jbyteArray bytes = (*env)->NewByteArray(env, (jsize) namelen);
+        if (bytes == NULL || (*env)->ExceptionCheck(env)) { out = NULL; goto done; }
+        (*env)->SetByteArrayRegion(env, bytes, 0, (jsize) namelen, (const jbyte *) names[i]);
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->DeleteLocalRef(env, bytes);
+            out = NULL;
+            goto done;
+        }
+        (*env)->SetObjectArrayElement(env, out, (jsize) i, bytes);
+        (*env)->DeleteLocalRef(env, bytes);   // one local ref per entry would overflow
+        if ((*env)->ExceptionCheck(env)) { out = NULL; goto done; }
     }
+done:
+    (*env)->DeleteLocalRef(env, byteArrayClass);
+    {
+        int failed = (*env)->ExceptionCheck(env);
+        for (size_t i = 0; i < n; i++) free(names[i]);
+        free(names);
+        return failed ? NULL : out;
+    }
+fail:
+    for (size_t i = 0; i < n; i++) free(names[i]);
     free(names);
-    return (*env)->ExceptionCheck(env) ? NULL : out;
+    return NULL;
 }
 
 /*
@@ -214,20 +287,30 @@ static jbyteArray read_entry(JNIEnv *env, struct archive *a, struct archive_entr
         return NULL;
     }
 
-    size_t cap = sized ? (size_t) (declared > 0 ? declared : 1) : UNKNOWN_SIZE_START;
+    /* min(declared, 8 MB) up front, then grow as bytes arrive — never one giant malloc
+       against an untrusted header. Total is still bounded: sized entries by declared
+       (<= 128 MB), unsized by MAX_ENTRY_BYTES. */
+    size_t cap = sized
+        ? (size_t) (declared <= 0 ? 1 : declared < SIZED_START_MAX ? declared : SIZED_START_MAX)
+        : UNKNOWN_SIZE_START;
     char *buf = malloc(cap);
     if (buf == NULL) return NULL;
 
     size_t len = 0;
     for (;;) {
         if (len == cap) {
-            if (sized || cap >= (size_t) MAX_ENTRY_BYTES) {
-                if (sized) break;   // declared size fully read
-                LOGE("entry exceeds %ld bytes", MAX_ENTRY_BYTES);
-                free(buf);
-                return NULL;
+            if (sized && len >= (size_t) declared) break;   // declared size fully read
+            size_t limit = sized ? (size_t) declared : (size_t) MAX_ENTRY_BYTES;
+            if (cap >= limit) {
+                if (!sized) {
+                    LOGE("entry exceeds %ld bytes", MAX_ENTRY_BYTES);
+                    free(buf);
+                    return NULL;
+                }
+                break;   // unreachable (len == cap == declared hits the branch above)
             }
-            size_t grow = cap * 2 > (size_t) MAX_ENTRY_BYTES ? (size_t) MAX_ENTRY_BYTES : cap * 2;
+            size_t grow = cap * 2;
+            if (grow <= cap || grow > limit) grow = limit;   // overflow-clamp, then exact-fit
             char *g = realloc(buf, grow);
             if (g == NULL) { free(buf); return NULL; }
             buf = g;
@@ -236,11 +319,10 @@ static jbyteArray read_entry(JNIEnv *env, struct archive *a, struct archive_entr
         la_ssize_t got = archive_read_data(a, buf + len, cap - len);
         if (got == 0) break;              // end of entry
         if (got < 0) {
-            if (got == ARCHIVE_WARN && len > 0) {
-                LOGE("warning mid-entry, keeping %zu bytes: %s", len, archive_error_string(a));
-                break;
-            }
-            LOGE("read failed after %zu bytes: %s", len, archive_error_string(a));
+            /* Fail closed: a mid-entry WARN/error means the bytes may be corrupt (bad
+               CRC, truncated data). Returning partial bytes would surface a torn page
+               — or hostile content — as valid; NULL maps to a generic error upstream. */
+            LOGE("read failed after %zu bytes: %s", len, errstr(a));
             free(buf);
             return NULL;
         }
@@ -248,14 +330,34 @@ static jbyteArray read_entry(JNIEnv *env, struct archive *a, struct archive_entr
     }
 
     if (sized && (la_int64_t) len != declared) {
-        LOGE("short read: %zu of %lld bytes: %s", len, (long long) declared, archive_error_string(a));
+        LOGE("short read: %zu of %lld bytes: %s", len, (long long) declared, errstr(a));
         free(buf);
         return NULL;   // truncated entry -> caller sees it as unreadable, not as garbage
     }
+    /* Unsized entries have no declared size to check against: got == 0 (end of entry)
+       is the only clean terminator, and the loop above already enforces it — every
+       negative return fails closed. A stale nonzero archive_errno here usually traces
+       to a benign WARN already tolerated at header time (e.g. an untranscodable name),
+       so it is logged for triage, not fatal: failing on it would reintroduce the
+       warn-truncation regression the header_ok() contract fixed. */
+    if (!sized && archive_errno(a) != 0) {
+        LOGE("unsized entry accepted with pending archive status %d: %s",
+             archive_errno(a), errstr(a));
+    }
 
+    /* len <= 128 MB < INT_MAX, so the (jsize) casts cannot overflow; checked anyway. */
+    if (len > (size_t) INT_MAX) {
+        LOGE("entry too large for Java array: %zu bytes", len);
+        free(buf);
+        return NULL;
+    }
     jbyteArray out = (*env)->NewByteArray(env, (jsize) len);
-    if (out != NULL) {
-        (*env)->SetByteArrayRegion(env, out, 0, (jsize) len, (const jbyte *) buf);
+    if (out == NULL || (*env)->ExceptionCheck(env)) { free(buf); return NULL; }
+    (*env)->SetByteArrayRegion(env, out, 0, (jsize) len, (const jbyte *) buf);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->DeleteLocalRef(env, out);
+        free(buf);
+        return NULL;
     }
     free(buf);
     return out;
@@ -272,7 +374,7 @@ static jbyteArray
 extract_impl(JNIEnv *env, jclass clazz,
                                                               jint fd, jint ordinal) {
     (void) clazz;
-    if (ordinal < 0) return NULL;
+    if (fd < 0 || ordinal < 0) return NULL;
 
     int dfd = -1;
     struct archive *a = open_fd(fd, &dfd);
@@ -289,7 +391,7 @@ extract_impl(JNIEnv *env, jclass clazz,
         break;
     }
     if (seen < ordinal && r != ARCHIVE_EOF) {
-        LOGE("nativeExtract: archive ended before ordinal %d: %s", ordinal, archive_error_string(a));
+        LOGE("nativeExtract: archive ended before ordinal %d: %s", ordinal, errstr(a));
     }
 
     close_archive(a, dfd);

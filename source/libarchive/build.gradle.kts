@@ -14,7 +14,17 @@ android {
                 // JNIEXPORT marks the entry points default-visible, so -fvisibility=hidden
                 // strips libarchive's internals without hiding the bridge.
                 arguments += listOf("-DANDROID_STL=none", "-DCMAKE_BUILD_TYPE=Release")
-                cFlags += listOf("-Os", "-fvisibility=hidden")
+                // Hardening, mirrored in src/main/cpp/CMakeLists.txt (source of truth for
+                // non-Gradle builds): -Os keeps the .so small, hidden visibility strips
+                // libarchive internals, protector+FORTIFY+format checks blunt memory bugs.
+                cFlags += listOf(
+                    "-Os",
+                    "-fvisibility=hidden",
+                    "-fstack-protector-strong",
+                    "-D_FORTIFY_SOURCE=2",
+                    "-Wformat", "-Werror=format-security",
+                    "-Wall", "-Wextra",
+                )
             }
         }
     }

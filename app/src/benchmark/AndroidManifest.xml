@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Benchmark build-type overlay (merged only into the `benchmark` variant).
+     Macrobenchmark reads frame timing through the shell; without this the benchmark
+     build is opaque to it. Shell-only, so it exposes nothing to other apps — and it
+     stays out of main/release, which must never be profileable before the store. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <profileable android:shell="true" />
+    </application>
+</manifest>

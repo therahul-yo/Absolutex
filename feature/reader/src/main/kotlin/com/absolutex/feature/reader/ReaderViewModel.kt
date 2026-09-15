@@ -3,6 +3,7 @@ package com.absolutex.feature.reader
 import android.content.Context
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.absolutex.core.data.ProgressDao
@@ -23,6 +24,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
+private const val TAG = "Reader"
+
 data class ReaderUiState(
     val loading: Boolean = false,
     val title: String = "",
@@ -40,6 +43,11 @@ class ReaderViewModel @Inject constructor(
 
     private val _ui = MutableStateFlow(ReaderUiState())
     val ui: StateFlow<ReaderUiState> = _ui.asStateFlow()
+
+    // Pages whose bytes failed to decode. The UI shows a generic string for these —
+    // never the raw entry name — while detail goes to logcat.
+    private val _failedPages = MutableStateFlow<Set<Int>>(emptySet())
+    val failedPages: StateFlow<Set<Int>> = _failedPages.asStateFlow()
 
     val tileCache = TileCache(MemoryBudget.defaultCacheBytes(totalRamBytes))
 
@@ -67,7 +75,13 @@ class ReaderViewModel @Inject constructor(
                     currentPage = resume.coerceIn(0, (opened.pages.size - 1).coerceAtLeast(0)),
                 )
             }.onFailure { t ->
-                _ui.value = ReaderUiState(loading = false, error = t.message ?: "failed to open")
+                // Generic UI string: t.message may embed the raw Uri or entry name.
+                // Detail is logcat-only.
+                Log.e(TAG, "open failed", t)
+                _ui.value = ReaderUiState(
+                    loading = false,
+                    error = context.getString(R.string.reader_open_failed),
+                )
             }
         }
     }
@@ -80,12 +94,14 @@ class ReaderViewModel @Inject constructor(
      * faster and what makes the reader drivable from an instrumented benchmark.
      */
     private fun openDescriptor(uri: Uri): ParcelFileDescriptor = when (uri.scheme) {
+        // Messages below stay generic: the raw Uri must not reach the UI (nor be
+        // formatted into exceptions that the UI renders) — logcat gets the detail.
         "file", null -> ParcelFileDescriptor.open(
-            java.io.File(requireNotNull(uri.path) { "file uri has no path: $uri" }),
+            java.io.File(requireNotNull(uri.path) { "file uri has no path" }),
             ParcelFileDescriptor.MODE_READ_ONLY,
         )
         else -> context.contentResolver.openFileDescriptor(uri, "r")
-            ?: error("could not open document: $uri")
+            ?: error("could not open document")
     }
 
     /** Decoded page, cached. Called off the main thread by the reader. */
@@ -96,6 +112,9 @@ class ReaderViewModel @Inject constructor(
             runCatching {
                 val bytes = src.openPage(index).readBytes()
                 PageImage.from(bytes)
+            }.onFailure { t ->
+                Log.e(TAG, "page $index unreadable", t)
+                _failedPages.value += index
             }.getOrNull()?.also { pageImages[index] = it }
         }
     }

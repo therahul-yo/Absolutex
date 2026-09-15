@@ -39,3 +39,22 @@ target_link_libraries(absolutex_archive PRIVATE archive_static z log)
 target_include_directories(absolutex_archive PRIVATE
     ${libarchive_SOURCE_DIR}/libarchive
 )
+
+# Hardening: stack protector + _FORTIFY_SOURCE (needs -O, we build Release/-Os) +
+# format-string errors. C11 for static_assert/max-align guarantees; hidden visibility
+# so only JNIEXPORT entry points leave the .so (mirrors the Gradle cFlags below —
+# duplication across both is benign, flags are idempotent).
+set_target_properties(absolutex_archive PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
+target_compile_options(absolutex_archive PRIVATE
+    -Os
+    -fvisibility=hidden
+    -fstack-protector-strong
+    -D_FORTIFY_SOURCE=2
+    -Wformat -Werror=format-security
+    -Wall -Wextra
+)

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generic reader errors: raw Uris and archive entry names must never reach the UI
+     (they leak provider paths) — detail goes to logcat only. -->
+<resources>
+    <string name="reader_open_failed">Couldn’t open this book</string>
+    <string name="reader_page_unreadable">This page couldn’t be read</string>
+    <string name="reader_no_pages">No readable pages</string>
+    <string name="reader_retry">Retry</string>
+</resources>
