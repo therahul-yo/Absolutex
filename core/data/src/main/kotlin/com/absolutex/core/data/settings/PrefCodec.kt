@@ -24,6 +24,7 @@ object PrefCodec {
     internal const val KEY_IMAGE_FOLDERS = "open_image_folders"
     internal const val KEY_READING_FLOW = "reading_flow"
     internal const val KEY_FIT_MODE = "fit_mode"
+    internal const val KEY_VOLUME_KEYS = "volume_keys_turn_pages"
 
     fun decodeApp(bag: PrefBag): AppPrefs {
         val defaults = AppPrefs()
@@ -53,12 +54,14 @@ object PrefCodec {
         return ReaderPrefs(
             readingFlow = bag.enumOr(KEY_READING_FLOW, defaults.readingFlow, ReadingFlow.entries),
             fitMode = bag.enumOr(KEY_FIT_MODE, defaults.fitMode, FitMode.entries),
+            volumeKeysTurnPages = bag.boolean(KEY_VOLUME_KEYS) ?: defaults.volumeKeysTurnPages,
         )
     }
 
     fun encodeReader(prefs: ReaderPrefs, bag: MutablePrefBag) {
         bag.putString(KEY_READING_FLOW, prefs.readingFlow.name)
         bag.putString(KEY_FIT_MODE, prefs.fitMode.name)
+        bag.putBoolean(KEY_VOLUME_KEYS, prefs.volumeKeysTurnPages)
     }
 
     /**

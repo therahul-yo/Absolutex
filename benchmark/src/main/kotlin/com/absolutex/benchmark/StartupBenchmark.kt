@@ -1,5 +1,7 @@
 package com.absolutex.benchmark
 
+import android.content.Intent
+import android.net.Uri
 import androidx.benchmark.macro.CompilationMode
 import androidx.benchmark.macro.StartupMode
 import androidx.benchmark.macro.StartupTimingMetric
@@ -8,6 +10,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 
 /**
  * Cold-start timing for the app's launcher activity.
@@ -18,9 +21,8 @@ import org.junit.runner.RunWith
  * profiles mandatory. [startupNoCompilation] and [startupFullCompilation] bracket it: a
  * Partial number close to Full means the profile is doing its job.
  *
- * **These numbers cannot sign off the §3 budget yet.** The `benchmark` build type sets
- * `isMinifyEnabled = false` (see app/build.gradle.kts, `TODO(phase9)`), so the APK measured
- * here is not the one that ships. Re-baseline once R8 keep rules land.
+ * The `benchmark` build type inherits release's R8 and resource shrinking, so the APK measured
+ * here is the one that ships.
  *
  * **What "cold start" reaches depends on persisted state.** MainActivity resumes the last
  * book (§5.2) via a DataStore read plus a persisted-Uri check, and renders nothing until
@@ -35,12 +37,14 @@ import org.junit.runner.RunWith
  * Macrobenchmark has no assertion API, so nothing here fails on a regression. The gate is
  * host-side: `tools/check-startup-budget.py` parses the emitted JSON and enforces the P90.
  *
- * This measures `timeToInitialDisplayMs` — first frame. "Interactive" really means
- * `timeToFullDisplayMs`, which only exists once the app calls `reportFullyDrawn()`. That
- * gap is wider here than usual, because the first frame can be an empty one while the
- * DataStore read is still in flight.
- * TODO(reader): call reportFullyDrawn() when the first page is on screen, then re-point the
- * budget at TTFD — the checker already prefers it when present.
+ * `timeToInitialDisplayMs` is the first frame. `timeToFullDisplayMs` is the first page's pixels:
+ * the reader reports fully drawn when the resumed page's base layer is decoded. On a launch that
+ * lands on the picker there is no page, so no fully-drawn report and no TTFD.
+ *
+ * Known flake: Macrobenchmark occasionally fails an iteration with "No Choreographer#doFrame
+ * (or RT frame slice) ends after reportFullyDrawn" when the report lands on the last frame before
+ * the app goes idle. It has hit the None and Full compilation modes, never the Partial one the
+ * budget uses. Re-run before treating it as a regression.
  *
  * Requires a physical device; an emulator's numbers are not comparable. Prefer the project's
  * runner, which keeps the app installed (the returning-user path):
@@ -71,6 +75,33 @@ class StartupBenchmark {
     @Test
     fun startupFullCompilation() = measureStartup(CompilationMode.Full())
 
+    /**
+      * §3's "tap book -> first page rendered < 250 ms". That budget is a WARM tap from the library,
+      * not a cold start: the process is already up, and what the user waits for is the archive open
+      * plus one page decode. timeToFullDisplayMs is the number, and it exists because the reader
+      * reports fully drawn when the page's base layer is decoded.
+      *
+      * The book is opened by path through ACTION_VIEW, the same way the reader benchmark does, so
+      * this measures the reader rather than SAF.
+      */
+     @Test
+     fun tapToFirstPage() = benchmarkRule.measureRepeated(
+         packageName = TARGET_PACKAGE,
+         metrics = listOf(StartupTimingMetric()),
+         compilationMode = CompilationMode.Partial(),
+         startupMode = StartupMode.WARM,
+         iterations = ITERATIONS,
+         setupBlock = { pressHome() },
+     ) {
+         startActivityAndWait(
+             Intent(Intent.ACTION_VIEW).apply {
+                 setClassName(TARGET_PACKAGE, "com.absolutex.MainActivity")
+                 data = Uri.fromFile(File(BOOK))
+                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+             },
+         )
+     }
+
     private fun measureStartup(compilationMode: CompilationMode) = benchmarkRule.measureRepeated(
         packageName = TARGET_PACKAGE,
         metrics = listOf(StartupTimingMetric()),
@@ -90,6 +121,9 @@ class StartupBenchmark {
 
     private companion object {
         const val TARGET_PACKAGE = "com.absolutex"
+
+        /** Staged by tools/run-benchmark.sh; the reader benchmark opens the same file. */
+        const val BOOK = "/sdcard/Android/data/com.absolutex/files/absolute-batman-001.cbr"
 
         /**
          * Cold start on this hardware has a long tail driven by the scheduler parking work on

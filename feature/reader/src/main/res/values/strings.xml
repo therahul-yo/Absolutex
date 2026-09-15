@@ -6,4 +6,9 @@
     <string name="reader_page_unreadable">This page couldn’t be read</string>
     <string name="reader_no_pages">No readable pages</string>
     <string name="reader_retry">Retry</string>
+
+    <!-- Reader chrome. The indicator is 1-based: page 1 of 45, not 0 of 44. -->
+    <string name="reader_page_indicator">%1$d / %2$d</string>
+    <string name="reader_page_indicator_desc">Page %1$d of %2$d</string>
+    <string name="reader_seek_desc">Jump to a page</string>
 </resources>
