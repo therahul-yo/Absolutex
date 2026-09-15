@@ -38,6 +38,13 @@ coroutines           = "1.10.2"
 # was published by Gradle 9.6.1 and declares configuration-cache support. It is an alpha,
 # and that is the tradeoff: it is the only detekt built for the toolchain this repo is on.
 detekt               = "2.0.0-alpha.6"
+# commons-net: verified 2026-09-15 against live Maven Central, not from memory.
+# Version: maven-metadata.xml reports <latest>3.13.0</latest>/<release>3.13.0</release>.
+# Licence: Apache-2.0 — declared by the Central POM's Apache header plus its parent chain
+# (commons-parent:97 -> apache:37, which carries the Apache License 2.0 grant).
+# Re-check with:
+#   curl -s https://repo1.maven.org/maven2/commons-net/commons-net/maven-metadata.xml
+commonsNet           = "3.13.0"
 
 # SDK levels — see plan §2. minSdk 33 is the AGSL floor; costs ~0% inside our hardware class.
 compileSdk           = "37"
@@ -80,6 +87,7 @@ androidx-test-ext-junit      = { module = "androidx.test.ext:junit", version.ref
 androidx-test-runner         = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
 androidx-uiautomator         = { module = "androidx.test.uiautomator:uiautomator", version.ref = "uiautomator" }
 junit                        = { module = "junit:junit", version.ref = "junit" }
+commons-net                  = { module = "commons-net:commons-net", version.ref = "commonsNet" }
 robolectric                  = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 androidx-test-core           = { module = "androidx.test:core", version.ref = "androidxTestCore" }
 room-testing                 = { module = "androidx.room:room-testing", version.ref = "room" }
