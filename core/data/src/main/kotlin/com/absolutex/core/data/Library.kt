@@ -7,6 +7,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -39,11 +40,34 @@ data class LibraryBook(
     val seenAtScan: Long,
 )
 
+/** Just the columns the upsert has to preserve across a rescan. */
+data class BookOrigin(val path: String, val addedAt: Long)
+
 @Dao
 interface LibraryDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(books: List<LibraryBook>)
+
+    @Query("SELECT path, addedAt FROM library_book WHERE path IN (:paths)")
+    suspend fun originsOf(paths: List<String>): List<BookOrigin>
+
+    /**
+     * Upsert that keeps [LibraryBook.addedAt] from the row already on disk.
+     *
+     * REPLACE deletes and reinserts, so a plain upsert resets addedAt on every scan and
+     * "recently added" would show the whole library after any rescan. Everything else about a
+     * book is re-derived from disk and should be overwritten; when it first appeared cannot be.
+     */
+    @Transaction
+    suspend fun upsertPreservingAddedAt(books: List<LibraryBook>) {
+        if (books.isEmpty()) return
+        val original = originsOf(books.map { it.path }).associate { it.path to it.addedAt }
+        upsertAll(books.map { book -> original[book.path]?.let { book.copy(addedAt = it) } ?: book })
+    }
+
+    @Query("SELECT * FROM library_book ORDER BY series IS NULL, series, issue")
+    suspend fun allOnce(): List<LibraryBook>
 
     @Query("SELECT * FROM library_book ORDER BY series IS NULL, series, issue")
     fun observeAll(): Flow<List<LibraryBook>>
