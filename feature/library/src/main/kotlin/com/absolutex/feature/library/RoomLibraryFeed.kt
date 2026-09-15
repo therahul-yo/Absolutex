@@ -2,6 +2,8 @@ package com.absolutex.feature.library
 
 import com.absolutex.core.data.LibraryBook
 import com.absolutex.core.data.LibraryRepository
+import com.absolutex.core.data.ProgressDao
+import com.absolutex.core.data.ReadingProgress
 import com.absolutex.model.IssueNumber
 import com.absolutex.model.ParsedName
 import dagger.Binds
@@ -10,6 +12,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -18,48 +21,43 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * [LibraryFeed] over the shipped repository.
+ * [LibraryFeed] over the shipped repository and the progress table.
  *
- * ## Why no book here has a reading position
- *
- * `ReadingProgress` is keyed by `uri.toString()` — `file:///…` for a book opened by path,
- * `content://…` for one opened through the picker — while the library keys books by the
- * filesystem path the scanner walked. There is no identity both sides agree on, so this feed does
- * not attempt the join: [LibraryBookUi.currentPage] is always null, every book reads as unread,
- * and the Reading shelf is empty.
- *
- * That is deliberate and was agreed with the lane that owns progress: a book needs one identity
- * chosen at the source, and a mapping invented here would be undone by that fix.
- *
- * TODO(reader/core-data): give a book one identity both sides share, then populate `currentPage`
- *  in [toUi] and turn [LibraryCapabilities.canMarkRead] back on. Nothing else in this module has
- *  to change — the UI already renders positions and progress bars whenever they are present.
+ * Progress joins on `LibraryBook.contentKey`, which since 6f7d70d is `BookIdentity.of(name, size)`
+ * — the same key `ReadingProgress.bookId` now carries, however the book was opened. Before that
+ * the two tables keyed on different things (a Uri string against a filesystem path) and the
+ * Reading shelf could not exist; this feed deliberately showed every book as unread rather than
+ * inventing a mapping that the real fix would undo.
  */
 @Singleton
 internal class RoomLibraryFeed @Inject constructor(
     private val repository: LibraryRepository,
+    private val progressDao: ProgressDao,
 ) : LibraryFeed {
 
     override val capabilities = LibraryCapabilities(
         // Nothing stores a favourite: no column, no table, no preference. See setFavorite.
         canFavorite = false,
-        // Writing a position needs the same book identity the join above lacks; rows written
-        // under a guessed key would be orphaned by the real fix. See setRead.
-        canMarkRead = false,
+        canMarkRead = true,
         // No repository delete exists, and inventing one that removes a user's files from disk
         // is not a call this lane should make. See delete.
         canDelete = false,
     )
 
     override fun observeBooks(): Flow<List<LibraryBookUi>> =
-        repository.observeLibrary()
-            .map { books -> books.map { it.toUi() } }
+        combine(repository.observeLibrary(), progressDao.observeAll()) { books, progress ->
+            // Index the positions once, then look up per book: scanning the progress table per
+            // row instead would be quadratic on a large library.
+            val byIdentity = progress.associateBy { it.bookId }
+            books.map { it.toUi(byIdentity) }
             // Mapping thousands of rows is real work and Room emits on its own executor; Default
             // keeps it off both the main thread and Room's.
-            .flowOn(Dispatchers.Default)
+        }.flowOn(Dispatchers.Default)
 
-    override suspend fun search(query: String): List<LibraryBookUi> =
-        repository.search(query).map { it.toUi() }
+    override suspend fun search(query: String): List<LibraryBookUi> {
+        val progress = progressDao.observeAll().first().associateBy { it.bookId }
+        return repository.search(query).map { it.toUi(progress) }
+    }
 
     /**
      * There is no store of configured locations yet, so this answers the question the empty state
@@ -78,30 +76,56 @@ internal class RoomLibraryFeed @Inject constructor(
             "Favourites need somewhere to live — no column, table or preference exists yet.",
         )
 
-    override suspend fun setRead(paths: Set<String>, read: Boolean): BatchOutcome =
-        BatchOutcome.Unsupported(
-            "Reading position is keyed differently from the library, so a book written here " +
-                "would not be found again. Waiting on one shared book identity.",
-        )
+    /**
+     * Writes a position that puts each book at the requested end of it.
+     *
+     * Marking unread always works: position zero is unambiguous. Marking read needs to know where
+     * the end is, and a container's page count is unknown until it is opened — those are counted
+     * as skipped rather than guessed at.
+     */
+    override suspend fun setRead(paths: Set<String>, read: Boolean): BatchOutcome {
+        if (paths.isEmpty()) return BatchOutcome.Applied(count = 0, skipped = 0)
+        val byPath = repository.observeLibrary().first().associateBy { it.path }
+        val known = paths.mapNotNull { byPath[it] }
+        val (actionable, unknownLength) = known.partition { !read || (it.pageCount ?: 0) > 0 }
+        val stamp = System.currentTimeMillis()
+        for (book in actionable) {
+            val pages = book.pageCount ?: 0
+            progressDao.upsert(
+                ReadingProgress(
+                    // The library's own identity column, which is what the reader stores too.
+                    bookId = book.contentKey,
+                    pageIndex = if (read) pages - 1 else 0,
+                    pageCount = pages,
+                    updatedAt = stamp,
+                ),
+            )
+        }
+        val missing = paths.size - known.size
+        return BatchOutcome.Applied(count = actionable.size, skipped = unknownLength.size + missing)
+    }
 
     override suspend fun delete(paths: Set<String>): BatchOutcome = BatchOutcome.Unsupported(
         "Deleting a book has to remove it from disk, and no repository operation does that yet.",
     )
 
-    private fun LibraryBook.toUi(): LibraryBookUi = LibraryBookUi(
-        path = path,
-        displayName = displayNameOf(this),
-        originalFilename = File(path).name,
-        series = series,
-        sizeBytes = sizeBytes,
-        lastModified = lastModified,
-        addedAt = addedAt,
-        pageCount = pageCount,
-        // TODO(reader/core-data): see the class comment — no shared identity with progress yet.
-        currentPage = null,
-        // TODO(library): read from a real favourites store; see setFavorite.
-        isFavorite = false,
-    )
+    private fun LibraryBook.toUi(progress: Map<String, ReadingProgress>): LibraryBookUi {
+        val position = progress[contentKey]
+        return LibraryBookUi(
+            path = path,
+            displayName = displayNameOf(this),
+            originalFilename = File(path).name,
+            series = series,
+            sizeBytes = sizeBytes,
+            lastModified = lastModified,
+            addedAt = addedAt,
+            // The scanner leaves a container's count null; a position row knows it once opened.
+            pageCount = pageCount ?: position?.pageCount?.takeIf { it > 0 },
+            currentPage = position?.pageIndex,
+            // TODO(library): read from a real favourites store; see setFavorite.
+            isFavorite = false,
+        )
+    }
 
     private companion object {
 
