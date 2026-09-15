@@ -49,6 +49,7 @@ dependencies {
     implementation(project(":source:api"))
     implementation(project(":source:libarchive"))
     implementation(project(":feature:reader"))
+    implementation(project(":feature:widget")) // manifest merge for the widget receiver
 
     implementation(platform(libs.compose.bom))
     implementation(libs.androidx.core.ktx)
