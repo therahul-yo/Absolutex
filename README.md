@@ -157,12 +157,35 @@ undo by accident:
 Do not reach for `detectTransformGestures` in the reader. It consumes every drag past touch
 slop, which stops `HorizontalPager` ever seeing a swipe.
 
+### Measured on the reference device
+
+OnePlus 11R (Snapdragon 8+ Gen 1, Android 16), display confirmed at 120 Hz, benchmark build,
+*Absolute Batman 001* (CBR, 45 × 1988×3057 JPEG). Run with `tools/run-benchmark.sh`.
+
+| Budget (§3) | Measured | Verdict |
+|---|---|---|
+| Page turn < 8.3 ms | CPU frame time P50 2.8 · P90 3.8 · P95 4.2 · P99 5.2 ms (5 iterations, 93–166 frames each) | **met** |
+| Zero dropped frames | 88 turns, 1,387 frames: **2 missed deadlines (0.14%)**, 0 missed vsync, 0 slow UI-thread frames | **not met** |
+| Cold start, tap → first page, 400% pinch, steady memory | — | not yet measured |
+
+What the two dropped frames are, from a Perfetto trace: not the app's drawing (RenderThread
+draw commands stay under 2.5 ms). RenderThread blocks ~24 ms in `eglSwapBuffers → queueBuffer`
+waiting for SurfaceFlinger to release a buffer, and framestats show GPU completion of 22–28 ms on
+exactly those frames. The reader layer composites as `DEVICE` even in Display P3, so wide-gamut
+colour mode is not forcing GPU composition. Leading suspect: GPU frequency dropping during the
+pauses between swipes. Open.
+
+Two traps that made every earlier number wrong, both now guarded in the benchmark:
+`adb`-created `Android/data` directories are `2770 shell:ext_data_rw` (the app gets EACCES and
+the benchmark timed the error screen), and OxygenOS drops injected input unless *Disable
+permission monitoring* is on **and the phone has been rebooted since**.
+
 ## Roadmap
 
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Audit, licensing gates, platform decisions | done |
-| 2 | Scaffold + CBZ/CBR vertical slice | working; budgets not yet measured |
+| 2 | Scaffold + CBZ/CBR vertical slice | working; page turn measured (see above) |
 | 3 | Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | next |
 | 4 | Library: parallel scanner, metadata, home, browse, search | |
 | 5 | Reader depth: layouts, flows, transitions, bookmarks, TOC, input devices | |
