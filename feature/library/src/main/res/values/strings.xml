@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="library_title">Library</string>
+
+    <string name="library_section_reading">Reading</string>
+    <string name="library_section_series">Series</string>
+    <string name="library_section_folders">Folders</string>
+    <string name="library_section_unread">Unread</string>
+    <string name="library_section_favorites">Favourites</string>
+
+    <string name="library_search_hint">Search your library</string>
+    <string name="library_search_clear">Clear search</string>
+
+    <string name="library_sort">Sort</string>
+    <string name="library_sort_name">Name</string>
+    <string name="library_sort_size">Size</string>
+    <string name="library_sort_date">Date</string>
+    <!-- Spoken after the sort field, e.g. "Name, ascending". -->
+    <string name="library_sort_ascending">ascending</string>
+    <string name="library_sort_descending">descending</string>
+
+    <string name="library_layout">View</string>
+    <string name="library_layout_simple">Simple list</string>
+    <string name="library_layout_detailed">Detailed list</string>
+    <string name="library_layout_grid">Grid</string>
+    <string name="library_grid_fewer">Fewer columns</string>
+    <string name="library_grid_more">More columns</string>
+    <string name="library_grid_columns">%1$d columns</string>
+
+    <string name="library_empty_no_locations_title">No folders yet</string>
+    <string name="library_empty_no_locations_body">Add a folder that holds your comics and Absolutex will index everything inside it.</string>
+    <string name="library_empty_no_locations_action">Add a folder</string>
+    <string name="library_empty_library_title">Nothing found</string>
+    <string name="library_empty_library_body">Your folders are set up, but no comics turned up in them yet.</string>
+    <string name="library_empty_search_title">No matches</string>
+    <string name="library_empty_search_body">Nothing in your library matches “%1$s”.</string>
+    <string name="library_empty_section_title">Nothing here yet</string>
+    <string name="library_empty_reading_body">Books you are part-way through will show up here.</string>
+    <string name="library_empty_unread_body">Every book in your library has been started.</string>
+    <string name="library_empty_favorites_body">Mark a book as a favourite and it will appear here.</string>
+
+    <string name="library_selection_clear">Leave selection mode</string>
+    <string name="library_selection_select_all">Select all on screen</string>
+    <string name="library_mark_read">Mark read</string>
+    <string name="library_mark_unread">Mark unread</string>
+    <string name="library_favorite">Favourite</string>
+    <string name="library_delete">Delete</string>
+    <plurals name="library_selected_count">
+        <item quantity="one">%1$d selected</item>
+        <item quantity="other">%1$d selected</item>
+    </plurals>
+
+    <plurals name="library_book_pages">
+        <item quantity="one">%1$d page</item>
+        <item quantity="other">%1$d pages</item>
+    </plurals>
+    <string name="library_book_pages_unknown">Page count unknown</string>
+    <string name="library_book_on_page">On page %1$d of %2$d</string>
+    <string name="library_book_finished">Finished</string>
+    <string name="library_book_unread">Unread</string>
+    <string name="library_book_filename">File: %1$s</string>
+    <plurals name="library_shelf_count">
+        <item quantity="one">%1$d book</item>
+        <item quantity="other">%1$d books</item>
+    </plurals>
+
+    <!-- Spoken when a row is selectable; the row's title is read first. -->
+    <string name="library_row_selected">selected</string>
+    <string name="library_row_not_selected">not selected</string>
+    <string name="library_cover_placeholder">Cover art not available yet</string>
+</resources>
