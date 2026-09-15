@@ -96,6 +96,11 @@ fun PageCanvas(
     rightToLeft: Boolean = false,
     /** The tapped zone of §5.2's 3x3 grid, already mirrored for a right-to-left book. */
     onTapZone: (TapZone) -> Unit = {},
+    /**
+     * The base layer is decoded and the next frame paints it. This is what "first page rendered"
+     * means for §3's budget — the page object existing is not the same as pixels.
+     */
+    onBaseReady: () -> Unit = {},
     /** The pager's axis. A page that can scroll along it must own drags on it. */
     pagerVertical: Boolean = false,
     /**
@@ -187,6 +192,7 @@ fun PageCanvas(
         base = withContext(DecodeDispatchers.decode) {
             runCatching { page.decodeBase(tw, th) }.getOrNull()
         }
+        if (base != null) onBaseReady()
     }
 
     /**

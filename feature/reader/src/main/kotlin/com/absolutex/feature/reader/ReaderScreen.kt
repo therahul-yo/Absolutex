@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerScope
 import androidx.compose.foundation.pager.PagerState
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.Button
@@ -137,9 +138,20 @@ private fun Pages(
         snapshotFlow { pagerState.settledPage }.collect { vm.onPageChanged(it) }
     }
 
+    // §3's "tap book -> first page rendered" ends here, not at the first frame: the window is up
+    // long before the page is decoded. ReportDrawnWhen turns that into timeToFullDisplayMs.
+    var firstPageDrawn by remember(bookId) { mutableStateOf(false) }
+    ReportDrawnWhen { firstPageDrawn }
+
     // A page is laid out the same way whichever pager hosts it; only the axis and direction change.
     val page: @Composable PagerScope.(Int) -> Unit = { index ->
         PageSlot(
+            onBaseReady = { if (index == pagerState.currentPage) firstPageDrawn = true },
+            // A neighbour waits until the page being looked at is up. beyondViewportPageCount
+            // composes both neighbours immediately, and on the reference phone their decodes ran
+            // alongside the current page's: three 6 MP JPEGs at once, and the one the reader is
+            // waiting for came last (295 ms against 179 and 185).
+            decodeNow = index == pagerState.currentPage || firstPageDrawn,
             index = index,
             bookId = bookId,
             vm = vm,
@@ -263,11 +275,14 @@ private fun PageSlot(
     onPagerLockChanged: (Boolean) -> Unit,
     onEdgeSwipe: (Boolean) -> Unit,
     onTapZone: (TapZone) -> Unit,
+    onBaseReady: () -> Unit,
+    decodeNow: Boolean,
 ) {
     var image by remember(index) { mutableStateOf<PageImage?>(null) }
     var attempts by remember(index) { mutableIntStateOf(0) }
     var loading by remember(index) { mutableStateOf(true) }
-    LaunchedEffect(index, attempts) {
+    LaunchedEffect(index, attempts, decodeNow) {
+        if (!decodeNow) return@LaunchedEffect
         loading = true
         image = vm.pageImage(index)
         loading = false
@@ -287,6 +302,7 @@ private fun PageSlot(
             onPagerLockChanged = onPagerLockChanged,
             onEdgeSwipe = onEdgeSwipe,
             onTapZone = onTapZone,
+            onBaseReady = onBaseReady,
         )
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
