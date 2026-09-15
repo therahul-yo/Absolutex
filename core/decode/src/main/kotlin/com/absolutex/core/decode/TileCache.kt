@@ -8,8 +8,12 @@ data class TileKey(
     val col: Int,
     val row: Int,
     val sampleSize: Int,
-    /** Book identity scoping the tile. Default "" keeps older call sites compiling. */
-    val bookId: String = "",
+    /**
+     * Book identity scoping the tile. No default on purpose: it previously defaulted to "" and
+     * every call site took the default, so the scoping compiled, read like a fix, and did
+     * nothing. A required parameter makes a new call site state which book it means.
+     */
+    val bookId: String,
 )
 
 /**

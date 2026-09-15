@@ -41,6 +41,8 @@ data class ReaderUiState(
     val title: String = "",
     val pageCount: Int = 0,
     val currentPage: Int = 0,
+    /** Scopes cached tiles to this book. Empty until a book is open. */
+    val bookId: String = "",
     val error: String? = null,
 )
 
@@ -74,6 +76,12 @@ class ReaderViewModel @Inject constructor(
     private var pendingProgressWrite: Job? = null
     /** Last progress handed to the debounce, so onCleared can flush what it still owes. */
     private var pendingProgress: ReadingProgress? = null
+    /**
+     * Page the pager has settled on. Deliberately NOT in [ReaderUiState]: only the initial
+     * pager position reads currentPage, so writing it per settle recomposed ReaderScreen,
+     * Pages, the pager and every composed page for a value nothing looked at again.
+     */
+    private var settledPage: Int = 0
 
     companion object {
         /** Resident decoded pages. ~12 covers viewport + prefetch without ballooning native heap. */
@@ -132,6 +140,7 @@ class ReaderViewModel @Inject constructor(
                 loading = false,
                 title = uri.lastPathSegment?.substringAfterLast('/').orEmpty(),
                 pageCount = opened.pages.size,
+                bookId = bookId,
                 currentPage = resume.coerceIn(0, (opened.pages.size - 1).coerceAtLeast(0)),
             )
         }
@@ -208,7 +217,7 @@ class ReaderViewModel @Inject constructor(
 
     /** Keeps only a sliding window around the current page; closes evicted pages. */
     private fun evictFarPages() {
-        val center = _ui.value.currentPage
+        val center = settledPage
         while (pageImages.size > MAX_RESIDENT_PAGES) {
             val farthest = pageImages.keys.maxByOrNull { kotlin.math.abs(it - center) } ?: break
             pageImages.remove(farthest)?.let { runCatching { it.close() } }
@@ -228,8 +237,8 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun onPageChanged(index: Int) {
-        if (index == _ui.value.currentPage) return
-        _ui.value = _ui.value.copy(currentPage = index)
+        if (index == settledPage) return
+        settledPage = index
         val id = bookId
         // Capture before launching: a book switch mid-write must not persist the new
         // book's index against the old count (or vice versa).

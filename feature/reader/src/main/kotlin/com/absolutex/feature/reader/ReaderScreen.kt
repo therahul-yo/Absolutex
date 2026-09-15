@@ -62,13 +62,13 @@ fun ReaderScreen(
                 stringResource(R.string.reader_no_pages),
                 color = Color.White,
             )
-            else -> Pages(ui.pageCount, ui.currentPage, vm)
+            else -> Pages(ui.pageCount, ui.currentPage, ui.bookId, vm)
         }
     }
 }
 
 @Composable
-private fun Pages(pageCount: Int, startPage: Int, vm: ReaderViewModel) {
+private fun Pages(pageCount: Int, startPage: Int, bookId: String, vm: ReaderViewModel) {
     val pagerState = rememberPagerState(initialPage = startPage) { pageCount }
     // Per-page zoom: a single var would let page N's zoom leak into page N+1's
     // userScrollEnabled. Hysteresis (1.05f) keeps the pager from flickering at the boundary.
@@ -103,6 +103,7 @@ private fun Pages(pageCount: Int, startPage: Int, vm: ReaderViewModel) {
             img != null -> PageCanvas(
                 page = img,
                 pageIndex = index,
+                bookId = bookId,
                 cache = vm.tileCache,
                 onZoomChanged = { scale ->
                     // Only 1f-boundary crossings update the map (old vs new across 1.02f),

@@ -17,7 +17,10 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded runs on pull requests, never on main. A push to main that cancels the
+  # previous commit's run leaves that commit with no verdict at all — which already happened
+  # once: the integration merge was cancelled mid-run by the very next push.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

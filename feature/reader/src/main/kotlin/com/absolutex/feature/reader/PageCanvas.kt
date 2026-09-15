@@ -76,6 +76,7 @@ private fun floorDiv(a: Int, b: Int): Int = if (a >= 0) a / b else -(((-a) + b -
 fun PageCanvas(
     page: PageImage,
     pageIndex: Int,
+    bookId: String,
     cache: TileCache,
     modifier: Modifier = Modifier,
     onTapCenter: () -> Unit = {},
@@ -169,7 +170,7 @@ fun PageCanvas(
                         chunk.map { t ->
                             async(DecodeDispatchers.decode) {
                                 ensureActive()
-                                val key = TileKey(pageIndex, t.col, t.row, t.sampleSize)
+                                val key = TileKey(pageIndex, t.col, t.row, t.sampleSize, bookId)
                                 if (cache[key] != null) return@async null
                                 val bmp = page.decodeTile(t) ?: return@async null
                                 t to bmp
@@ -177,11 +178,18 @@ fun PageCanvas(
                         }.awaitAll()
                     }.filterNotNull()
                     for ((t, bmp) in decoded) {
-                        cache.put(TileKey(pageIndex, t.col, t.row, t.sampleSize), bmp)
+                        cache.put(TileKey(pageIndex, t.col, t.row, t.sampleSize, bookId), bmp)
                         landed = true
                     }
+                    // Bump per chunk, not once at the end. Cancellation is normal here — any
+                    // pan or zoom restarts this collect — and a bump deferred to the end is
+                    // lost on cancel, leaving decoded tiles sitting in the cache unpainted
+                    // until some later change happens to redraw.
+                    if (landed) {
+                        tileGeneration++
+                        landed = false
+                    }
                 }
-                if (landed) tileGeneration++
             }
     }
 
@@ -300,7 +308,7 @@ fun PageCanvas(
             if (c1 < c0 || r1 < r0) return@drawIntoCanvas
             for (row in r0..r1) {
                 for (col in c0..c1) {
-                    val tile = cache[TileKey(pageIndex, col, row, sample)] ?: continue
+                    val tile = cache[TileKey(pageIndex, col, row, sample, bookId)] ?: continue
                     val tl = originX + col * TileGrid.TILE_SIZE * effective
                     val tt = originY + row * TileGrid.TILE_SIZE * effective
                     val tr = tl + tile.width * sample * effective
