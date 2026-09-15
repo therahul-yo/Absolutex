@@ -5,6 +5,7 @@ import android.security.keystore.KeyProperties
 import java.io.File
 import java.io.IOException
 import java.security.KeyStore
+import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -55,7 +56,7 @@ class AndroidKeyStoreCredentialStore(private val privateDir: File) : CredentialS
             val cipher = Cipher.getInstance(KEY_TRANSFORMATION)
             cipher.init(Cipher.ENCRYPT_MODE, key(aliasFor(service)))
             // GCM generates a fresh random IV per encryption; prepend it for decrypt.
-            blobFile(service).writeBytes(cipher.iv + cipher.doFinal(plain))
+            writeFileAtomically(blobFile(service), cipher.iv + cipher.doFinal(plain))
         } catch (e: java.security.GeneralSecurityException) {
             throw IOException("credential encrypt failed", e)
         } finally {
@@ -100,9 +101,27 @@ class AndroidKeyStoreCredentialStore(private val privateDir: File) : CredentialS
         return generator.generateKey()
     }
 
-    private fun aliasFor(service: String): String =
-        ALIAS_PREFIX + service.filter { it.isLetterOrDigit() }.ifEmpty { "default" }
+    // SHA-256 hex (not the old isLetterOrDigit filter) so distinct services never collide on the
+    // Keystore alias or blob file name -- e.g. "komga:nas-1" and "komganas1" used to both strip
+    // to "komganas1", so saving one server's secret silently overwrote the other's.
+    private fun aliasFor(service: String): String = ALIAS_PREFIX + hashService(service)
 
-    private fun blobFile(service: String): File =
-        File(privateDir, "cred-" + service.filter { it.isLetterOrDigit() }.ifEmpty { "default" } + BLOB_SUFFIX)
+    private fun blobFile(service: String): File = File(privateDir, "cred-" + hashService(service) + BLOB_SUFFIX)
+}
+
+/** Full SHA-256 hex digest (64 chars) of [service] -- collision-free, unlike stripping characters. */
+internal fun hashService(service: String): String =
+    MessageDigest.getInstance("SHA-256").digest(service.toByteArray(Charsets.UTF_8)).joinToString("") {
+        "%02x".format(it)
+    }
+
+/**
+ * Writes [bytes] to [target] via temp-file-then-rename in the same directory, so a crash or power
+ * loss mid-write can never leave [target] holding a partial (corrupt) blob -- the rename is atomic
+ * on the same filesystem, so readers always see either the old file or the fully-written new one.
+ */
+internal fun writeFileAtomically(target: File, bytes: ByteArray) {
+    val tmp = File(target.parentFile, target.name + ".tmp")
+    tmp.writeBytes(bytes)
+    if (!tmp.renameTo(target)) throw IOException("atomic rename failed: ${target.name}")
 }
