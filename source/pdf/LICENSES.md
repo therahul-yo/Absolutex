@@ -47,14 +47,37 @@ of the three is compiled, linked or shipped. No GPL code reaches the APK.
 
 **2. FreeType is bundled under FTL, not GPLv2.**
 FreeType is dual-licensed FTL / GPLv2 and the *licensee* elects one. The archive ships
-`FTL.TXT` only, so the election is FTL: BSD-style, attribution-only. Nothing to do beyond
-the attribution obligation below.
+`FTL.TXT` only, so the election is FTL: BSD-style, attribution-only.
 
 ## What we are actually obliged to do
 
 Every licence here is attribution-only, and between them BSD-3-Clause, Apache-2.0, MIT and
 FTL all require that the licence text travel with a binary distribution. So the texts are
 vendored into `src/main/assets/licenses/pdfium/` and ship inside the APK.
+
+### 🚩 Release gate: shipping the texts is NOT sufficient on its own
+
+Two components additionally require a *positive statement* in the product's documentation,
+which no amount of licence text in `assets/` satisfies. Both are triggered specifically by
+distributing **binary only**, which is exactly what we do — we ship a prebuilt `libpdfium.so`
+and no PDFium source.
+
+- **libjpeg-turbo / IJG** (`libjpeg_turbo.ijg`, clause 2): *"If only executable code is
+  distributed, then the accompanying documentation must state that 'this software is based in
+  part on the work of the Independent JPEG Group'."*
+- **FreeType** (`freetype.txt`, FTL redistribution terms): *"Redistribution in binary form
+  must provide a disclaimer that states that the software is based in part of the work of the
+  FreeType Team, in the distribution documentation."*
+
+So before any release ships this module, the app's about/licences surface must carry both
+sentences verbatim. Suggested wording, covering both in one place:
+
+> This software is based in part on the work of the Independent JPEG Group, and in part on
+> the work of the FreeType Team (https://freetype.org).
+
+> **TODO(app):** this is a **release blocker**, not a nicety, and it is not satisfied by the
+> `assets/` files alone. It belongs with the attribution screen below; whoever builds that
+> screen owns both.
 
 > **TODO(app):** `:app` has no attribution screen yet. Shipping the files in `assets/` meets
 > the "reproduce the notice" requirement, but they should be *reachable* from the UI — a
