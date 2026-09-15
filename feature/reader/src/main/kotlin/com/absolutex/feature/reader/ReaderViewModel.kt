@@ -117,6 +117,9 @@ class ReaderViewModel @Inject constructor(
      */
     private var settledPage: Int = 0
 
+    /** The book page being read: where a reader rebuilt for a new page layout reopens. */
+    val readingPage: Int get() = settledPage
+
     companion object {
         /** Resident decoded pages. ~12 covers viewport + prefetch without ballooning native heap. */
         const val MAX_RESIDENT_PAGES = 12
@@ -181,12 +184,14 @@ class ReaderViewModel @Inject constructor(
             bookId = identity
             runCatching { old?.close() }
             val resume = progressDao.get(bookId)?.pageIndex ?: 0
+            // The previous book's settled page would otherwise stand in until the pager settles.
+            settledPage = resume.coerceIn(0, (source0.pages.size - 1).coerceAtLeast(0))
             _ui.value = ReaderUiState(
                 loading = false,
                 title = uri.lastPathSegment?.substringAfterLast('/').orEmpty(),
                 pageCount = source0.pages.size,
                 bookId = bookId,
-                currentPage = resume.coerceIn(0, (source0.pages.size - 1).coerceAtLeast(0)),
+                currentPage = settledPage,
             )
         }
     }

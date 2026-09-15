@@ -1,6 +1,7 @@
 package com.absolutex.core.data.settings
 
 import com.absolutex.model.FitMode
+import com.absolutex.model.PageLayout
 import com.absolutex.model.ReadingFlow
 
 /**
@@ -28,6 +29,7 @@ object PrefCodec {
     internal const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
     internal const val KEY_ROTATION_LOCK = "rotation_lock"
     internal const val KEY_USE_CUTOUT = "use_cutout"
+    internal const val KEY_PAGE_LAYOUT = "page_layout"
 
     fun decodeApp(bag: PrefBag): AppPrefs {
         val defaults = AppPrefs()
@@ -61,6 +63,7 @@ object PrefCodec {
             keepScreenOn = bag.boolean(KEY_KEEP_SCREEN_ON) ?: defaults.keepScreenOn,
             rotationLock = bag.enumOr(KEY_ROTATION_LOCK, defaults.rotationLock, RotationLock.entries),
             useCutout = bag.boolean(KEY_USE_CUTOUT) ?: defaults.useCutout,
+            pageLayout = bag.enumOr(KEY_PAGE_LAYOUT, defaults.pageLayout, PageLayout.entries),
         )
     }
 
@@ -71,6 +74,7 @@ object PrefCodec {
         bag.putBoolean(KEY_KEEP_SCREEN_ON, prefs.keepScreenOn)
         bag.putString(KEY_ROTATION_LOCK, prefs.rotationLock.name)
         bag.putBoolean(KEY_USE_CUTOUT, prefs.useCutout)
+        bag.putString(KEY_PAGE_LAYOUT, prefs.pageLayout.name)
     }
 
     /**

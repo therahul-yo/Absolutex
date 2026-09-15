@@ -1,6 +1,7 @@
 package com.absolutex.core.data.settings
 
 import com.absolutex.model.FitMode
+import com.absolutex.model.PageLayout
 import com.absolutex.model.ReadingFlow
 
 /** Night mode, as §5.4 groups it under General. */
@@ -31,6 +32,8 @@ data class ReaderPrefs(
      * pixels of margin, and letterboxing the whole page away from it wastes a strip of screen.
      */
     val useCutout: Boolean = true,
+    /** One page per screen, or facing pages side by side (§5.2 page layouts). */
+    val pageLayout: PageLayout = PageLayout.SINGLE,
 )
 
 /** How the reader holds its orientation. */

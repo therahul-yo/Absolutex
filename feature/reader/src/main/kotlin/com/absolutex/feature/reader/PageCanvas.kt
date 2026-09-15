@@ -124,6 +124,8 @@ fun PageCanvas(
      * the only way such a page turns. `forward` is the finger moving left (or up).
      */
     onEdgeSwipe: (forward: Boolean) -> Unit = {},
+    /** Which half of a two-page spread this page fills, if any. */
+    spreadSide: SpreadSide = SpreadSide.NONE,
 ) {
     var scale by remember(pageIndex) { mutableFloatStateOf(1f) }
     var offsetX by remember(pageIndex) { mutableFloatStateOf(0f) }
@@ -402,7 +404,7 @@ fun PageCanvas(
             }
             // rightToLeft is a key: onTap mirrors the grid by it, and a flow change mid-page would
             // otherwise leave taps turning pages the old way while swipes already go the new way.
-            .pointerInput(pageIndex, fitMode, pagerVertical, rightToLeft) {
+            .pointerInput(pageIndex, fitMode, pagerVertical, rightToLeft, spreadSide) {
                 detectTapGestures(
                     onDoubleTap = {
                         // Double-tap toggles between fit and a useful reading zoom, about the
@@ -420,7 +422,7 @@ fun PageCanvas(
                     onTap = { at ->
                         // Mirrored for RTL, so "the column that turns forward" stays under the same
                         // thumb whichever way the book reads.
-                        onTapZone(TapGrid.zoneAt(at.x, at.y, size.width, size.height, rightToLeft))
+                        onTapZone(spreadSide.zoneAt(at.x, at.y, size.width, size.height, rightToLeft))
                     },
                 )
             },
@@ -441,7 +443,9 @@ fun PageCanvas(
         val effective = fit * s
         val drawW = page.width * effective
         val drawH = page.height * effective
-        val originX = (vw - drawW) / 2f + ox
+        // A page narrower than its half of a spread moves its spare width to the outside edge, so
+        // facing pages meet at the gutter. An overflowing page has none and stays centred.
+        val originX = (vw - drawW) / 2f + ox + spreadSide.gutter * max(0f, (vw - drawW) / 2f)
         val originY = (vh - drawH) / 2f + oy
 
         drawIntoCanvas { canvas ->
@@ -514,4 +518,22 @@ private fun clampOffset(
     val maxX = FitGeometry.maxOffsetX(viewportW, pageW, s)
     val maxY = FitGeometry.maxOffsetY(viewportH, pageH, s)
     return Offset(offset.x.coerceIn(-maxX, maxX), offset.y.coerceIn(-maxY, maxY))
+}
+
+/**
+ * Where a page sits in a two-page spread, in screen terms. Each page gets half the screen as its
+ * viewport, but its tap zones stay those of the whole screen: the thumb that turns a single page
+ * forward must turn a spread forward too.
+ */
+enum class SpreadSide(internal val gutter: Float) {
+    NONE(0f),
+    LEFT(1f),
+    RIGHT(-1f),
+    ;
+
+    internal fun zoneAt(x: Float, y: Float, width: Int, height: Int, mirrored: Boolean): TapZone = when (this) {
+        NONE -> TapGrid.zoneAt(x, y, width, height, mirrored)
+        LEFT -> TapGrid.zoneAt(x, y, width * 2, height, mirrored)
+        RIGHT -> TapGrid.zoneAt(x + width, y, width * 2, height, mirrored)
+    }
 }

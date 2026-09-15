@@ -1,6 +1,7 @@
 package com.absolutex.core.data.settings
 
 import com.absolutex.model.FitMode
+import com.absolutex.model.PageLayout
 import com.absolutex.model.ReadingFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -70,6 +71,16 @@ class PrefCodecTest {
     }
 
     @Test
+    fun `every page layout survives a round-trip`() {
+        for (layout in PageLayout.entries) {
+            val original = ReaderPrefs(pageLayout = layout)
+            val bag = MapPrefBag()
+            PrefCodec.encodeReader(original, bag)
+            assertEquals(original, PrefCodec.decodeReader(bag))
+        }
+    }
+
+    @Test
     fun `every night mode survives a round-trip`() {
         for (mode in NightMode.entries) {
             val bag = MapPrefBag()
@@ -106,6 +117,7 @@ class PrefCodecTest {
                 PrefCodec.KEY_KEEP_SCREEN_ON,
                 PrefCodec.KEY_ROTATION_LOCK,
                 PrefCodec.KEY_USE_CUTOUT,
+                PrefCodec.KEY_PAGE_LAYOUT,
             ),
             bag.snapshot().keys,
         )
@@ -229,6 +241,7 @@ class PrefCodecTest {
         assertEquals("keep_screen_on", PrefCodec.KEY_KEEP_SCREEN_ON)
         assertEquals("rotation_lock", PrefCodec.KEY_ROTATION_LOCK)
         assertEquals("use_cutout", PrefCodec.KEY_USE_CUTOUT)
+        assertEquals("page_layout", PrefCodec.KEY_PAGE_LAYOUT)
     }
 
     @Test

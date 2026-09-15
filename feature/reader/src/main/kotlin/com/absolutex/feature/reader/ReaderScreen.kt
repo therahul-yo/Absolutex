@@ -26,6 +26,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.runtime.key
+import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerScope
@@ -69,7 +72,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.absolutex.core.decode.PageImage
 import com.absolutex.model.FitMode
 import com.absolutex.model.ReadingFlow
-import com.absolutex.model.TapGrid
+import com.absolutex.model.Spreads
 import com.absolutex.model.TapZone
 import com.absolutex.model.column
 import kotlinx.coroutines.launch
@@ -109,7 +112,8 @@ fun ReaderScreen(
                 stringResource(R.string.reader_no_pages),
                 color = Color.White,
             )
-            else -> Pages(ui.pageCount, ui.currentPage, ui.bookId, prefs, vm)
+            // A layout change regroups the pages, so the pager restarts on the page being read.
+            else -> key(prefs.pageLayout) { Pages(ui.pageCount, vm.readingPage, ui.bookId, prefs, vm) }
         }
     }
 }
@@ -124,6 +128,8 @@ private const val ZOOM_STEP_BUFFER = 4
 private const val FIRST_COLUMN = 0
 private const val LAST_COLUMN = 2
 
+private const val HALF = 0.5f
+
 @Composable
 private fun Pages(
     pageCount: Int,
@@ -133,15 +139,16 @@ private fun Pages(
     vm: ReaderViewModel,
 ) {
     val flow = prefs.readingFlow
-    val fitMode = prefs.fitMode
-    val pagerState = rememberPagerState(initialPage = startPage) { pageCount }
+    // The pager counts screens; everything else (progress, seeking, keys) speaks book pages.
+    val spreads = remember(pageCount, prefs.pageLayout) { Spreads.of(pageCount, prefs.pageLayout) }
+    val pagerState = rememberPagerState(initialPage = Spreads.indexOf(spreads, startPage)) { spreads.size }
     // Per page, not one flag: page N's zoom or overflow must not lock the pager on page N+1.
     val locks = remember(pageCount) { mutableStateMapOf<Int, Boolean>() }
     val scope = rememberCoroutineScope()
     // Edge swipes arrive in screen terms; in a mirrored right-to-left book left brings the previous page.
     val goTo: (Int) -> Unit = { step ->
         scope.launch {
-            pagerState.animateScrollToPage((pagerState.currentPage + step).coerceIn(0, pageCount - 1))
+            pagerState.animateScrollToPage((pagerState.currentPage + step).coerceIn(0, spreads.lastIndex))
         }
     }
     val turn: (Boolean) -> Unit = { forward -> goTo(if (forward != (flow == ReadingFlow.RTL)) 1 else -1) }
@@ -160,7 +167,7 @@ private fun Pages(
 
     // §5.3: keyboard and gamepad alone must be enough. Zoom goes only to the page being looked at.
     val zoomSteps = remember { MutableSharedFlow<Float>(extraBufferCapacity = ZOOM_STEP_BUFFER) }
-    val jump: (Int) -> Unit = { to -> scope.launch { pagerState.scrollToPage(to.coerceIn(0, pageCount - 1)) } }
+    val jump: (Int) -> Unit = { to -> scope.launch { pagerState.scrollToPage(Spreads.indexOf(spreads, to)) } }
     val rtl = flow == ReadingFlow.RTL
     val keys = readerKeys(rtl, prefs.volumeKeysTurnPages, goTo, jump, pageCount - 1, zoomSteps::tryEmit) {
         chrome = !chrome
@@ -168,7 +175,7 @@ private fun Pages(
 
     // Persist progress as the reader moves. snapshotFlow keeps this off the composition path.
     LaunchedEffect(pagerState) {
-        snapshotFlow { pagerState.settledPage }.collect { vm.onPageChanged(it) }
+        snapshotFlow { pagerState.settledPage }.collect { vm.onPageChanged(spreads[it].first) }
     }
 
     // §3's "tap book -> first page rendered" ends here, not at the first frame: the window is up
@@ -177,32 +184,28 @@ private fun Pages(
     ReportDrawnWhen { firstPageDrawn }
 
     // A page is laid out the same way whichever pager hosts it; only the axis and direction change.
-    val page: @Composable PagerScope.(Int) -> Unit = { index ->
-        PageSlot(
-            onBaseReady = { if (index == pagerState.currentPage) firstPageDrawn = true },
-            // Neighbours wait for the page on screen: decoded together, it finished last (see PageSlot).
-            decodeNow = index == pagerState.currentPage || firstPageDrawn,
-            index = index,
-            bookId = bookId,
-            vm = vm,
-            fitMode = fitMode,
-            rightToLeft = flow == ReadingFlow.RTL,
-            pagerVertical = flow == ReadingFlow.VERTICAL,
-            onPagerLockChanged = { locks[index] = it },
-            onEdgeSwipe = turn,
-            onTapZone = tap,
-            zoomSteps = if (index == pagerState.currentPage) zoomSteps else null,
-        )
+    val page: @Composable PagerScope.(Int) -> Unit = { screen ->
+        val spread = spreads[screen]
+        val current = screen == pagerState.currentPage
+        SpreadRow(spread, rtl) { index, side ->
+            PageSlot(
+                index = index, bookId = bookId, vm = vm, fitMode = prefs.fitMode, rightToLeft = rtl,
+                pagerVertical = flow == ReadingFlow.VERTICAL,
+                onBaseReady = { if (current && index == spread.first) firstPageDrawn = true },
+                // Neighbours wait for the page on screen: decoded together, it finished last (see PageSlot).
+                decodeNow = current || firstPageDrawn,
+                onPagerLockChanged = { locks[index] = it },
+                onEdgeSwipe = turn, onTapZone = tap, spreadSide = side,
+                zoomSteps = if (current) zoomSteps else null,
+            )
+        }
     }
     // A zoomed or overflowing page owns its drags and turns itself at the edge (see PageCanvas).
-    val scrollable = locks[pagerState.currentPage] != true
+    val scrollable = spreads[pagerState.currentPage].none { locks[it] == true }
     Box(Modifier.fillMaxSize().then(keys)) {
         ReaderPager(flow, pagerState, scrollable, page)
         ReaderChrome(
-            visible = chrome,
-            page = pagerState.currentPage,
-            pageCount = pageCount,
-            onSeek = jump,
+            visible = chrome, page = spreads[pagerState.currentPage].first, pageCount = pageCount, onSeek = jump,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
@@ -250,6 +253,32 @@ private fun readerKeys(
             dispatch(action)
             true
         }
+}
+
+/**
+ * One screen of the pager: a page alone, or two facing pages, each in its half. Placed by absolute
+ * left and right, not start and end: the book's flow decides which page is on the left, never the
+ * phone's language.
+ */
+@Composable
+private fun SpreadRow(
+    spread: IntRange,
+    rightToLeft: Boolean,
+    slot: @Composable (index: Int, side: SpreadSide) -> Unit,
+) {
+    if (spread.first == spread.last) {
+        slot(spread.first, SpreadSide.NONE)
+        return
+    }
+    val (left, right) = if (rightToLeft) spread.last to spread.first else spread.first to spread.last
+    Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxWidth(HALF).fillMaxHeight().align(AbsoluteAlignment.CenterLeft)) {
+            slot(left, SpreadSide.LEFT)
+        }
+        Box(Modifier.fillMaxWidth(HALF).fillMaxHeight().align(AbsoluteAlignment.CenterRight)) {
+            slot(right, SpreadSide.RIGHT)
+        }
+    }
 }
 
 /** The pager itself: same page slot either way, only the axis and direction change. */
@@ -403,6 +432,7 @@ private fun PageSlot(
     onPagerLockChanged: (Boolean) -> Unit,
     onEdgeSwipe: (Boolean) -> Unit,
     onTapZone: (TapZone) -> Unit,
+    spreadSide: SpreadSide,
     onBaseReady: () -> Unit,
     /**
      * False until this page may start decoding. beyondViewportPageCount composes both neighbours
@@ -438,6 +468,7 @@ private fun PageSlot(
             onPagerLockChanged = onPagerLockChanged,
             onEdgeSwipe = onEdgeSwipe,
             onTapZone = onTapZone,
+            spreadSide = spreadSide,
             onBaseReady = onBaseReady,
             baseLayer = { w, h -> vm.baseLayer(index, img, w, h) },
             zoomSteps = zoomSteps,
@@ -451,9 +482,9 @@ private fun PageSlot(
         // depends on the page being drawable.
         else -> Box(
             Modifier.fillMaxSize()
-                .pointerInput(rightToLeft) {
+                .pointerInput(rightToLeft, spreadSide) {
                     detectTapGestures { at ->
-                        onTapZone(TapGrid.zoneAt(at.x, at.y, size.width, size.height, rightToLeft))
+                        onTapZone(spreadSide.zoneAt(at.x, at.y, size.width, size.height, rightToLeft))
                     }
                 }
                 .padding(24.dp),
