@@ -13,6 +13,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
     kotlin { jvmToolchain(21) }
+    // Robolectric needs android.jar resources to stand up a real SQLite under the JVM.
+    testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 dependencies {
     implementation(project(":core:model"))
@@ -24,4 +26,11 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.kotlinx.coroutines.android)
+
+    // Room on the JVM via Robolectric: DAO and migration tests without a device.
+    testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.room.testing)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
