@@ -19,6 +19,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -46,6 +48,9 @@ class ReaderViewModel @Inject constructor(
     private var source: ComicSource? = null
     private var bookId: String = ""
     private val pageImages = HashMap<Int, PageImage>()
+    // Phase 4: coalesces fling bursts into one Room write (kept tiny on purpose — phase 1
+    // owns this file, so this must rebase cleanly: cancel-and-relaunch around the upsert).
+    private var pendingProgressWrite: Job? = null
 
     fun open(uri: Uri) {
         if (bookId == uri.toString() && source != null) return
@@ -105,7 +110,10 @@ class ReaderViewModel @Inject constructor(
         _ui.value = _ui.value.copy(currentPage = index)
         val id = bookId
         if (id.isEmpty()) return
-        viewModelScope.launch {
+        // 300 ms debounce: a fast fling settles dozens of pages; only the landing page hits disk.
+        pendingProgressWrite?.cancel()
+        pendingProgressWrite = viewModelScope.launch {
+            delay(300)
             progressDao.upsert(
                 ReadingProgress(
                     bookId = id,

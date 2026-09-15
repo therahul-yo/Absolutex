@@ -17,7 +17,9 @@ dependencies {
     api(libs.compose.ui)
     api(libs.compose.ui.graphics)
     api(libs.compose.material3)
-    api(libs.compose.material3.adaptive.nav)
+    // Phase 4: adaptive-navigation-suite removed — zero adaptive imports repo-wide (grep);
+    // ui/material3 stay api (Theme + downstream Modifier/Color flow through public API),
+    // tooling-preview stays implementation (compile-only, never leaks).
     debugImplementation(libs.compose.ui.tooling)
     implementation(libs.compose.ui.tooling.preview)
 }

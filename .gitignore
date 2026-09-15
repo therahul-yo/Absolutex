@@ -11,3 +11,7 @@
 */*/.cxx/
 /captures
 .externalNativeBuild
+# Phase 4: build outputs and profiler dumps never belong in the repo.
+*.apk
+*.aab
+*.hprof
