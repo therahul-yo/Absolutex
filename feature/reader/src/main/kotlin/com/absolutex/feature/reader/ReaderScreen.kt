@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -32,7 +33,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.absolutex.core.decode.PageImage
+import com.absolutex.model.FitMode
 import com.absolutex.model.ReadingFlow
+import kotlinx.coroutines.launch
 
 @Composable
 fun ReaderScreen(
@@ -68,17 +71,32 @@ fun ReaderScreen(
                 stringResource(R.string.reader_no_pages),
                 color = Color.White,
             )
-            else -> Pages(ui.pageCount, ui.currentPage, ui.bookId, prefs.readingFlow, vm)
+            else -> Pages(ui.pageCount, ui.currentPage, ui.bookId, prefs.readingFlow, prefs.fitMode, vm)
         }
     }
 }
 
 @Composable
-private fun Pages(pageCount: Int, startPage: Int, bookId: String, flow: ReadingFlow, vm: ReaderViewModel) {
+private fun Pages(
+    pageCount: Int,
+    startPage: Int,
+    bookId: String,
+    flow: ReadingFlow,
+    fitMode: FitMode,
+    vm: ReaderViewModel,
+) {
     val pagerState = rememberPagerState(initialPage = startPage) { pageCount }
-    // Per-page zoom: a single var would let page N's zoom leak into page N+1's
-    // userScrollEnabled. Hysteresis (1.05f) keeps the pager from flickering at the boundary.
-    val zooms = remember(pageCount) { mutableStateMapOf<Int, Float>() }
+    // Per page, not one flag: page N's zoom or overflow must not lock the pager on page N+1.
+    val locks = remember(pageCount) { mutableStateMapOf<Int, Boolean>() }
+    val scope = rememberCoroutineScope()
+    // Edge swipes arrive in screen terms (finger left or up). A right-to-left book is laid out
+    // mirrored, so there the finger moving left brings the previous page in, not the next.
+    val turn: (Boolean) -> Unit = { forward ->
+        val step = if (forward != (flow == ReadingFlow.RTL)) 1 else -1
+        scope.launch {
+            pagerState.animateScrollToPage((pagerState.currentPage + step).coerceIn(0, pageCount - 1))
+        }
+    }
 
     // Persist progress as the reader moves. snapshotFlow keeps this off the composition path.
     LaunchedEffect(pagerState) {
@@ -86,9 +104,20 @@ private fun Pages(pageCount: Int, startPage: Int, bookId: String, flow: ReadingF
     }
 
     // A page is laid out the same way whichever pager hosts it; only the axis and direction change.
-    val page: @Composable PagerScope.(Int) -> Unit = { index -> PageSlot(index, bookId, zooms, vm) }
-    // A zoomed page owns its drags; re-enabled the moment it returns to fit scale.
-    val scrollable = (zooms[pagerState.currentPage] ?: 1f) <= 1.05f
+    val page: @Composable PagerScope.(Int) -> Unit = { index ->
+        PageSlot(
+            index = index,
+            bookId = bookId,
+            vm = vm,
+            fitMode = fitMode,
+            rightToLeft = flow == ReadingFlow.RTL,
+            pagerVertical = flow == ReadingFlow.VERTICAL,
+            onPagerLockChanged = { locks[index] = it },
+            onEdgeSwipe = turn,
+        )
+    }
+    // A zoomed or overflowing page owns its drags and turns itself at the edge (see PageCanvas).
+    val scrollable = locks[pagerState.currentPage] != true
     // TODO(phase3): beyondViewportPageCount should follow scroll velocity and the
     // prefetch depth setting (§3). Fixed at 1 for the Phase 2 slice.
     if (flow == ReadingFlow.VERTICAL) {
@@ -115,7 +144,16 @@ private fun Pages(pageCount: Int, startPage: Int, bookId: String, flow: ReadingF
 }
 
 @Composable
-private fun PageSlot(index: Int, bookId: String, zooms: MutableMap<Int, Float>, vm: ReaderViewModel) {
+private fun PageSlot(
+    index: Int,
+    bookId: String,
+    vm: ReaderViewModel,
+    fitMode: FitMode,
+    rightToLeft: Boolean,
+    pagerVertical: Boolean,
+    onPagerLockChanged: (Boolean) -> Unit,
+    onEdgeSwipe: (Boolean) -> Unit,
+) {
     var image by remember(index) { mutableStateOf<PageImage?>(null) }
     var attempts by remember(index) { mutableIntStateOf(0) }
     var loading by remember(index) { mutableStateOf(true) }
@@ -133,14 +171,11 @@ private fun PageSlot(index: Int, bookId: String, zooms: MutableMap<Int, Float>, 
             pageIndex = index,
             bookId = bookId,
             cache = vm.tileCache,
-            onZoomChanged = { scale ->
-                // Only 1f-boundary crossings update the map (old vs new across 1.02f),
-                // so per-frame pinch callbacks never recompose the pager.
-                val old = zooms[index] ?: 1f
-                if ((old <= 1.02f) != (scale <= 1.02f)) {
-                    zooms[index] = scale
-                }
-            },
+            fitMode = fitMode,
+            rightToLeft = rightToLeft,
+            pagerVertical = pagerVertical,
+            onPagerLockChanged = onPagerLockChanged,
+            onEdgeSwipe = onEdgeSwipe,
         )
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
