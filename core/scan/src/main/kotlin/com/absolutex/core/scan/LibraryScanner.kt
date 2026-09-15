@@ -119,6 +119,43 @@ class LibraryScanner(
 
     companion object {
         /**
+         * Parses one file exactly as a scan of its directory would: a container becomes a book,
+         * and a folder at or over the image rule becomes a folder book. Returns null for anything
+         * the scanner would not pick up — junk, hidden when those are excluded, or a plain file
+         * that is neither a container nor a book folder.
+         *
+         * Exists for the change stream: an `Added` names one path, and answering it must not
+         * re-parse its whole location.
+         */
+        fun scanFile(file: File, includeHidden: Boolean = false): ScannedBook? {
+            if (shouldSkip(file, includeHidden)) return null
+            if (file.isDirectory) {
+                val children = file.listFiles()?.filterNot { shouldSkip(it, includeHidden) }
+                    ?: return null
+                val images = children.filter { !it.isDirectory && EntryFilter.isPage(it.name) }
+                val hasSubdir = children.any { it.isDirectory }
+                if (!hasSubdir && images.size >= MIN_IMAGES_FOR_FOLDER_BOOK) {
+                    return ScannedBook(
+                        path = file.path,
+                        sizeBytes = images.sumOf { it.length() },
+                        parsed = FilenameParser.parse(file.path),
+                        isImageFolder = true,
+                        imageCount = images.size,
+                    )
+                }
+                return null
+            }
+            if (file.isFile && EntryFilter.extensionOf(file.name) in CONTAINER_EXTENSIONS) {
+                return ScannedBook(
+                    path = file.path,
+                    sizeBytes = file.length(),
+                    parsed = FilenameParser.parse(file.path),
+                )
+            }
+            return null
+        }
+
+        /**
          * Everything a scan never looks at, in one place.
          *
          * Junk directories matter as much as junk files: filtering only names lets

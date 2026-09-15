@@ -31,23 +31,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * rescan (§5.1). Raw paths are classified with the scanner's own predicates
  * ([LibraryScanner.CONTAINER_EXTENSIONS], [LibraryScanner.MIN_IMAGES_FOR_FOLDER_BOOK],
  * [EntryFilter]), so watch and scan never disagree on what a book is.
- */
-sealed interface LibraryChange {
-    data class Added(val path: String) : LibraryChange
-    data class Removed(val path: String) : LibraryChange
-    data class Modified(val path: String) : LibraryChange
-
-    /** A folder crossed the scanner's image-folder rule and became a book. */
-    data class FolderPromoted(val path: String, val imageCount: Int) : LibraryChange
-
-    /** The platform dropped events; the consumer must re-walk instead of trusting the delta. */
-    data object RescanRequested : LibraryChange
-}
-
-/**
- * Decides what one raw watch event means at book level. Pure over the filesystem except for
- * the folder-book set, which [seed] initialises from the pre-watch walk so the first event
- * on an existing book reads as a modification rather than a promotion.
+ *
+ * The event type itself lives in `LibraryChange.kt`, one declaration for every producer.
  */
 internal class BookEventClassifier(private val includeHidden: Boolean) {
 
@@ -75,6 +60,19 @@ internal class BookEventClassifier(private val includeHidden: Boolean) {
     /** A newly watched dir starts as not-a-book, so its pre-existing files classify as arrivals. */
     fun seedAbsent(dir: File) {
         folderIsBook.remove(canonicalOf(dir))
+    }
+
+    /**
+     * Forgets every folder-book under [dir], which is leaving the tree.
+     *
+     * Without this, a folder deleted and re-created elsewhere carries its old book state into the
+     * new location and the next image inside it reads as a modification of a book the library no
+     * longer has — a `Modified` for a path that was never `Added`.
+     */
+    fun forget(dir: File) {
+        val root = canonicalOf(dir)
+        val prefix = root + File.separator
+        folderIsBook.removeAll { it == root || it.startsWith(prefix) }
     }
 
     private fun isFolderBook(snapshot: FolderSnapshot): Boolean =
@@ -134,6 +132,17 @@ internal class BookEventClassifier(private val includeHidden: Boolean) {
     }
 }
 
+/**
+ * The one shape a delta cannot express: a directory that left the tree.
+ *
+ * (Implemented in `core/scan/DirectoryDepartures.kt`, next to this file, because both the
+ * buffered flush and the poll loop answer it and the two must answer the same way.) A folder move
+ * or rename produces a single `ENTRY_DELETE` for the directory on its parent's key — nothing
+ * names the books inside it, so their rows would stay in the database at paths that no longer
+ * exist — and arriving as create+delete it would also synthesise every one of those books again
+ * under the new name. One walk of the location settles both.
+ */
+
 private fun canonicalOf(file: File): String =
     runCatching { file.canonicalPath }.getOrElse { file.absolutePath }
 
@@ -141,29 +150,49 @@ private fun canonicalOf(file: File): String =
  * Recursive filesystem watch over the library roots.
  *
  * Platform notes: this watches the filesystem, so SAF-only locations (no filesystem events)
- * are an explicit limitation — document, don't fake.
- * TODO(library-watcher): a MediaStore observer as the follow-up for SAF locations; wire
- * [LibraryChange] into LibraryRepository (Added/Modified → upsert scan, Removed → delete,
- * RescanRequested → scanLocation re-walk). Owned by the scan lane; the repository lane
- * owns the wiring.
+ * are an explicit limitation — document, don't fake. A SAF tree Uri is observed by re-listing it
+ * after `registerContentObserver` on the tree's document Uri, and that is a follow-up: until it
+ * exists, those locations are refreshed by [LibraryChange.RescanRequested] on demand rather than
+ * by a watcher. Watching `MediaStore.Files` volume-wide is NOT that follow-up — see PR #18.
+ *
+ * A directory that leaves the tree — deleted, or renamed — is answered with one
+ * [LibraryChange.RescanRequested] instead of a delta: nothing names the books inside it, and a
+ * rename would otherwise re-announce every one of them under a new path while their old rows
+ * stayed in the database.
  *
  * @param roots directories to watch. Watched in the caller's scope: [watch] is cold and
  *   cleanup rides on collection cancellation.
+ * @param bufferSize how many changes may be in flight before the watcher asks for a rescan
+ *   rather than losing them. Tests pass 1 to reach that path deterministically.
  */
 class LibraryWatcher(
     private val roots: List<File>,
     private val debounceMs: Long = DEBOUNCE_MS,
     private val includeHidden: Boolean = false,
+    private val bufferSize: Int = LibraryScanner.CHANNEL_CAPACITY,
 ) : Closeable {
 
-    private data class Pending(val first: WatchEvent.Kind<*>, val last: WatchEvent.Kind<*>, val file: File)
+    // (The per-collection state — Pending, WatchState and their members — is declared as internal
+    // members here rather than as file-level declarations, solely so the departure handling in
+    // DirectoryDepartures can share them. Kotlin forbids an internal member from using a private
+    // type, so going the other way would have meant demoting the interesting logic instead.)
+    internal data class Pending(val first: WatchEvent.Kind<*>, val last: WatchEvent.Kind<*>, val file: File)
 
-    private class WatchState(
+    internal class WatchState(
         val service: WatchService,
         val keys: MutableMap<WatchKey, Path>,
         val seen: MutableSet<String>,
         val classifier: BookEventClassifier,
-    )
+    ) {
+
+            /** Canonical paths of the directories actually registered, for departure detection. */
+        val registered: MutableSet<String> = java.util.Collections.synchronizedSet(HashSet())
+
+        /** Directories we could not register. See [LibraryWatcher.registerOne]. */
+        val failed = AtomicInteger(0)
+
+        fun isRegistered(dir: File): Boolean = registered.contains(canonicalOf(dir))
+    }
 
     private val closed = AtomicBoolean(false)
     private val liveServices = ConcurrentHashMap.newKeySet<WatchService>()
@@ -193,9 +222,30 @@ class LibraryWatcher(
             }
             val pending = LinkedHashMap<String, Pending>()
             var flush: Job? = null
+            var overflowRetry: Job? = null
+            /**
+             * Sends one change, and asks for a rescan if there was no room for it.
+             *
+             * `trySend` failing means the event is *dropped*, not delayed: the buffer is full
+             * because the consumer is behind — a bulk copy landing while the repository writes —
+             * and nothing replays it. The delta is then incomplete, so one rescan stands in for
+             * everything that did not fit. It must not be dropped either, hence the retry loop.
+             */
+            fun emit(change: LibraryChange) {
+                if (trySend(change).isSuccess) return
+                overflowRetry?.cancel()
+                overflowRetry = launch {
+                    while (isActive && trySend(LibraryChange.RescanRequested).isFailure) {
+                        delay(RETRY_MS)
+                    }
+                }
+            }
             fun enqueue(kind: WatchEvent.Kind<*>, file: File) {
-                // Last write wins per path, so a burst of temp+rename writes classifies once.
+                // The flush job is cancelled and replaced under the same lock that guards
+                // `pending`: read from the poller thread and written from the flush coroutine,
+                // an unsynchronised `flush` could have cancelled a flush that had just started.
                 synchronized(pending) {
+                    // Last write wins per path, so a burst of temp+rename writes classifies once.
                     val key = if (kind == StandardWatchEventKinds.OVERFLOW) {
                         OVERFLOW_KEY
                     } else {
@@ -207,19 +257,23 @@ class LibraryWatcher(
                     } else {
                         pending[key] = prior.copy(last = kind, file = file)
                     }
-                }
-                flush?.cancel()
-                flush = launch {
-                    delay(debounceMs)
-                    val batch = synchronized(pending) {
-                        pending.values.toList().also { pending.clear() }
+                    flush?.cancel()
+                    flush = launch {
+                        delay(debounceMs)
+                        val batch = synchronized(pending) {
+                            pending.values.toList().also { pending.clear() }
+                        }
+                        classifyBatch(batch, state, ::enqueue, ::emit)
                     }
-                    classifyBatch(batch, state, ::enqueue) { trySend(it) }
                 }
             }
+            // A subtree we could not register is a subtree whose events we will never see. Say so
+            // instead of streaming a delta with a branch missing from it: inotify's watch limit is
+            // per user, shared with MediaProvider, and reached on a large comic library.
+            if (state.failed.get() > 0) emit(LibraryChange.RescanRequested)
             // Blocking take() lives on a child of the caller's scope: cancelling collection
             // cancels the poll, and closing the service unblocks the take.
-            val poller = launch(Dispatchers.IO) { pollLoop(state, ::enqueue) }
+            val poller = launch(Dispatchers.IO) { pollLoop(state, ::enqueue, ::emit) }
             try {
                 awaitClose {
                     poller.cancel()
@@ -235,28 +289,54 @@ class LibraryWatcher(
         }
         // Bounded like the scanner's channel: a cancelled collector stops promptly instead
         // of draining a backlog.
-    }.buffer(LibraryScanner.CHANNEL_CAPACITY)
+    }.buffer(bufferSize)
 
     private fun classifyBatch(
         batch: List<Pending>,
         state: WatchState,
         enqueue: (WatchEvent.Kind<*>, File) -> Unit,
-        send: (LibraryChange) -> Unit,
+        emit: (LibraryChange) -> Unit,
     ) {
+        // One coalesced batch can hold one departure at most from the watch's own point of view:
+        // a directory that left the tree names no file inside it, so the books under it would stay
+        // in the database at paths that no longer exist; and a rename arrives as create+delete, so
+        // classifying the new name's contents as arrivals would announce every one of them *again*.
+        // One walk of the location settles both, so for this batch it is the whole answer.
+        val departed = DirectoryDepartures.take(batch, state)
+        if (departed != null) {
+            registeredDirs.addAndGet(-departed.cancelled)
+            // Anything new in the same burst (the other half of a rename) is still watched, so
+            // later changes are seen; its contents are left to the rescan rather than announced.
+            for (entry in batch) {
+                if (resolveEffectiveKind(entry.first, entry.last) == StandardWatchEventKinds.ENTRY_CREATE) {
+                    registerIfDir(entry.file, state, enqueue, synthesize = false)
+                }
+            }
+            emit(LibraryChange.RescanRequested)
+            return
+        }
         for (entry in batch) {
             val effective = resolveEffectiveKind(entry.first, entry.last) ?: continue
             // A subdir born just before the flush still gets registered; its later events
             // arrive normally and the seed keeps its folder state honest.
-            if (effective == StandardWatchEventKinds.ENTRY_CREATE) {
-                registerIfDir(entry.file, state, enqueue)
+            if (effective == StandardWatchEventKinds.ENTRY_CREATE &&
+                !registerIfDir(entry.file, state, enqueue)
+            ) {
+                // Unwatched subtree: the consumer has to know its delta is incomplete.
+                emit(LibraryChange.RescanRequested)
             }
-            state.classifier.onRaw(effective, entry.file)?.let(send)
+            state.classifier.onRaw(effective, entry.file)?.let(emit)
         }
     }
 
+    /**
+     * Forgets every directory that is gone. Moved to [DirectoryDepartures.retireAll]: see its KDoc
+     * for why the buffered flush and the dead-key path in [pollLoop] share one implementation.
+     */
     private fun CoroutineScope.pollLoop(
         state: WatchState,
         enqueue: (WatchEvent.Kind<*>, File) -> Unit,
+        emit: (LibraryChange) -> Unit,
     ) {
         while (isActive) {
             val key = nextKey(state.service) ?: break
@@ -264,12 +344,15 @@ class LibraryWatcher(
             if (dir == null) {
                 key.cancel()
             } else {
-                for (event in key.pollEvents()) handleEvent(event, dir, state, enqueue)
+                for (event in key.pollEvents()) handleEvent(event, dir, state, enqueue, emit)
                 if (!key.reset()) {
                     synchronized(state.keys) { state.keys.remove(key) }
-                    // A deleted watched dir reports no file event for itself, so synthesise
-                    // it here; pending coalescing keeps it to one Removed.
-                    enqueue(StandardWatchEventKinds.ENTRY_DELETE, dir.toFile())
+                    // The watched directory itself is gone, so nothing inside it can be trusted
+                    // and no per-file event will name what it held. Same answer as a departure
+                    // seen on the parent's key: retire the subtree and re-walk.
+                    val retired = DirectoryDepartures.retireAll(listOf(dir.toFile()), state)
+                    registeredDirs.addAndGet(-retired)
+                    emit(LibraryChange.RescanRequested)
                 }
             }
         }
@@ -286,6 +369,7 @@ class LibraryWatcher(
         dir: Path,
         state: WatchState,
         enqueue: (WatchEvent.Kind<*>, File) -> Unit,
+        emit: (LibraryChange) -> Unit,
     ) {
         val kind = event.kind()
         if (kind == StandardWatchEventKinds.OVERFLOW) {
@@ -294,7 +378,9 @@ class LibraryWatcher(
         }
         @Suppress("UNCHECKED_CAST")
         val child = dir.resolve(event.context() as Path).toFile()
-        if (kind == StandardWatchEventKinds.ENTRY_CREATE) registerIfDir(child, state, enqueue)
+        if (kind == StandardWatchEventKinds.ENTRY_CREATE && !registerIfDir(child, state, enqueue)) {
+            emit(LibraryChange.RescanRequested)
+        }
         enqueue(kind, child)
     }
 
@@ -302,16 +388,25 @@ class LibraryWatcher(
         dir: File,
         state: WatchState,
         enqueue: (WatchEvent.Kind<*>, File) -> Unit,
-    ) {
-        if (!dir.isDirectory) return
+        synthesize: Boolean = true,
+    ): Boolean {
+        if (!dir.isDirectory) return true
         val fresh = registerAll(dir, state)
+        // Nothing registered for a directory we would watch: the platform refused it, and its
+        // subtree will stay invisible. (A skipped directory is a deliberate miss, not a failure.)
+        if (!state.isRegistered(dir) && !LibraryScanner.shouldSkip(dir, includeHidden)) return false
         // A late registration can postdate the files that triggered it (an extractor writes
         // dir+files in one burst, faster than registration), so seed as absent and reconcile:
         // without this, files born before their dir's watch are invisible on every platform.
-        for (freshDir in fresh) {
-            state.classifier.seedAbsent(freshDir)
-            synthesizeArrivals(freshDir, enqueue)
+        // It is skipped for a directory that is merely new *here* — a rename, whose contents the
+        // caller is answering with a rescan instead.
+        if (synthesize) {
+            for (freshDir in fresh) {
+                state.classifier.seedAbsent(freshDir)
+                synthesizeArrivals(freshDir, enqueue)
+            }
         }
+        return true
     }
 
     /**
@@ -374,13 +469,18 @@ class LibraryWatcher(
                 StandardWatchEventKinds.ENTRY_MODIFY,
             )
             synchronized(state.keys) { state.keys[key] = path }
+            // Only a directory that registered successfully counts as watched; the departure
+            // detection reads this, and a failed registration is reported to the consumer.
+            state.registered.add(canonicalOf(dir))
             registeredDirs.incrementAndGet()
             // Re-lists the directory just read: one extra readdir per dir at startup, so no
             // child inventory is kept in memory.
             dir.listFiles()?.filter { it.isDirectory }
         } catch (_: IOException) {
+            state.failed.incrementAndGet()
             null
         } catch (_: SecurityException) {
+            state.failed.incrementAndGet()
             null
         }
     }
@@ -397,6 +497,13 @@ class LibraryWatcher(
          * making adds feel laggy. TODO(library-watcher): tune the delay on device.
          */
         const val DEBOUNCE_MS = 500L
+
+        /**
+         * How long to wait before trying again to deliver a rescan the buffer had no room for.
+         * Only reached when the consumer is already behind, so it trades latency on a bad path
+         * for never losing the event that says the delta is incomplete.
+         */
+        internal const val RETRY_MS = 250L
 
         // Not an absolute path, so it never collides with a real pending key: overflows
         // coalesce with each other and nothing else.

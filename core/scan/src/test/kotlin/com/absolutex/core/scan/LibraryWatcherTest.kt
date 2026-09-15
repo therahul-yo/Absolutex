@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -76,8 +77,12 @@ class LibraryWatcherTest {
         ) { watcher.registeredDirectoryCount() >= expectedDirs }
     }
 
-    private suspend fun withWatch(debounceMs: Long = 80L, block: suspend (LibraryWatcher, Sink) -> Unit) {
-        val watcher = LibraryWatcher(listOf(tmp.root), debounceMs = debounceMs)
+    private suspend fun withWatch(
+        debounceMs: Long = 80L,
+        bufferSize: Int = LibraryScanner.CHANNEL_CAPACITY,
+        block: suspend (LibraryWatcher, Sink) -> Unit,
+    ) {
+        val watcher = LibraryWatcher(listOf(tmp.root), debounceMs = debounceMs, bufferSize = bufferSize)
         val sink = Sink()
         val scope = CoroutineScope(Dispatchers.Default)
         val job = sink.collectIn(scope, watcher.watch())
@@ -166,13 +171,20 @@ class LibraryWatcherTest {
         }
     }
 
-    @Test fun `deleting a folder book directory removes the book`() = runBlocking {
+    @Test fun `deleting a folder book directory asks for a rescan`() = runBlocking {
         write("Loose/001.jpg")
         write("Loose/002.jpg")
         withWatch { watcher, sink ->
             awaitReady(watcher, 2)
             assertTrue(File(tmp.root, "Loose").deleteRecursively())
-            awaitEvent(liveTimeoutMs, sink) { it == LibraryChange.Removed(File(tmp.root, "Loose").path) }
+            // The directory took its books with it and no event names them individually, so the
+            // database drops them in the re-walk rather than keeping stale rows for vanished files.
+            awaitEvent(liveTimeoutMs, sink) { it == LibraryChange.RescanRequested }
+            val retired = sink.snapshot().filterIsInstance<LibraryChange.Removed>().map { it.path }
+            assertTrue(
+                "only the folder itself may be retired, never a book inside it: $retired",
+                retired.all { it == File(tmp.root, "Loose").path },
+            )
         }
     }
 
@@ -248,6 +260,83 @@ class LibraryWatcherTest {
             val promoted = got as LibraryChange.FolderPromoted
             assertEquals(File(tmp.root, "Fresh").path, promoted.path)
             assertEquals(2, promoted.imageCount)
+        }
+    }
+
+    @Test fun `a directory moved out of the tree asks for a rescan, not stale books`() = runBlocking {
+        val dir = mkdir("Batman")
+        write("Batman/Batman 001.cbz")
+        write("Batman/Batman 002.cbz")
+        val outside = Files.createTempDirectory("moved-out").toFile()
+        try {
+            withWatch { watcher, sink ->
+                awaitReady(watcher, 1)
+                assertTrue(dir.renameTo(File(outside, "Batman")))
+                // A move names the directory and nothing else: no event identifies the books that
+                // went with it, so before this the library kept both rows pointing at files that
+                // had left. The re-walk is what retires them.
+                awaitEvent(liveTimeoutMs, sink) { it == LibraryChange.RescanRequested }
+                val retired = sink.snapshot().filterIsInstance<LibraryChange.Removed>().map { it.path }
+                assertTrue(
+                    "a per-file event claimed a book that merely moved: $retired",
+                    retired.all { it.startsWith(dir.path) },
+                )
+            }
+        } finally {
+            outside.deleteRecursively()
+        }
+    }
+
+    @Test fun `a renamed directory never reports a book at the path that is gone`() = runBlocking {
+        val dir = mkdir("Batman")
+        write("Batman/Batman 001.cbz")
+        withWatch { watcher, sink ->
+            awaitReady(watcher, 1)
+            val renamed = File(tmp.root, "Batman 2024")
+            assertTrue(dir.renameTo(renamed))
+            // A rename arrives as delete+create. The delete half is the departure; the create half
+            // must not synthesise every book inside as an arrival, which is the duplicate.
+            awaitEvent(liveTimeoutMs, sink) { it == LibraryChange.RescanRequested }
+
+            write("Batman 2024/Batman 002.cbz")
+            // A settle window rather than a timing assertion: whatever the platform reports, the
+            // two assertions below have to hold for all of it.
+            Thread.sleep(2_000)
+            val stalePath = File(dir, "Batman 002.cbz").path
+            val arrivals = sink.snapshot().filterIsInstance<LibraryChange.Added>().map { it.path }
+            assertTrue("an event named a path that no longer exists: $arrivals", stalePath !in arrivals)
+            assertTrue(
+                "an arrival after a rename must name the new directory: $arrivals",
+                arrivals.all { it.startsWith(renamed.path) },
+            )
+        }
+    }
+
+    @Test fun `a full buffer asks for a rescan instead of dropping events`() = runBlocking {
+        val watcher = LibraryWatcher(listOf(tmp.root), debounceMs = 20L, bufferSize = 1)
+        val scope = CoroutineScope(Dispatchers.Default)
+        val seen = java.util.Collections.synchronizedList(mutableListOf<LibraryChange>())
+        // A collector that stalls on its first event: the slot behind it fills and the rest of the
+        // burst has nowhere to go. Those events used to disappear without a word, which is how a
+        // bulk copy could leave the library quietly wrong until the next manual rescan.
+        val job = scope.launch {
+            watcher.watch().collect { change ->
+                seen.add(change)
+                if (seen.size == 1) delay(3_000)
+            }
+        }
+        try {
+            awaitTrue(liveTimeoutMs, "watch never registered") { watcher.registeredDirectoryCount() >= 1 }
+            mkdir("Burst")
+            for (index in 1..6) write("Burst/Batman 00$index.cbz")
+            awaitTrue(liveTimeoutMs, "the buffer filled silently; got ${seen.toList()}") {
+                synchronized(seen) { seen.contains(LibraryChange.RescanRequested) }
+            }
+        } finally {
+            job.cancel()
+            withTimeout(5_000) { job.join() }
+            scope.cancel()
+            watcher.close()
         }
     }
 
