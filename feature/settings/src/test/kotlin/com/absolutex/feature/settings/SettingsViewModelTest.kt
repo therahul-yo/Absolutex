@@ -154,4 +154,21 @@ class SettingsViewModelTest {
         assertEquals(1, fake.appWrites.size)
         assertEquals(1, fake.readerWrites.size)
     }
+
+    @Test
+    fun `setCacheSize writes exactly once per committed value`() = runTest {
+        // CacheSizeRow now calls this only from onValueChangeFinished, so one commit must
+        // still mean one write here, not one per drag frame the row used to forward.
+        val fake = FakeSettingsWriter()
+        val vm = viewModel(fake)
+        vm.setCacheSize(256)
+        advanceUntilIdle()
+        assertEquals(1, fake.appWrites.size)
+        assertEquals(256, fake.app.cacheSizeMiB)
+
+        vm.setCacheSize(512)
+        advanceUntilIdle()
+        assertEquals(2, fake.appWrites.size)
+        assertEquals(512, fake.app.cacheSizeMiB)
+    }
 }

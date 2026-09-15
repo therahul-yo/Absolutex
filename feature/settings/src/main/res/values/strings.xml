@@ -29,12 +29,12 @@
     <string name="settings_flow_ltr">Left to right</string>
     <string name="settings_flow_rtl">Right to left</string>
     <string name="settings_flow_vertical">Vertical</string>
-    <string name="settings_fit_mode_desc">Fit mode</string>
     <string name="settings_fit_screen">Fit screen</string>
     <string name="settings_fit_full">Full size</string>
     <string name="settings_fit_width">Fit width</string>
     <string name="settings_fit_height">Fit height</string>
 
-    <string name="settings_cache_value">Thumbnail cache: %1$d MiB</string>
-    <string name="settings_cache_size_desc">Thumbnail cache size, currently %1$d MiB</string>
+    <!-- AppPrefs.cacheSizeMiB is the decode/page cache, not thumbnails; see lead review on #15. -->
+    <string name="settings_cache_value">Page cache: %1$d MiB</string>
+    <string name="settings_cache_size_desc">Page cache size, currently %1$d MiB</string>
 </resources>

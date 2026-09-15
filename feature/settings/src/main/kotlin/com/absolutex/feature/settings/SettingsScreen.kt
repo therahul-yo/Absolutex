@@ -167,7 +167,6 @@ private fun ReaderGroup(reader: ReaderPrefs, actions: SettingsActions) {
                 titleRes = fitModeLabelRes(mode),
                 selected = reader.fitMode == mode,
                 onClick = { actions.onFitMode(mode) },
-                descriptionRes = R.string.settings_fit_mode_desc,
             )
         }
     }

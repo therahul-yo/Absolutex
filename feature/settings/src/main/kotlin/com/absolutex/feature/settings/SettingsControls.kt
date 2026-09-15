@@ -18,6 +18,10 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -25,6 +29,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.NightMode
@@ -32,8 +37,11 @@ import com.absolutex.model.FitMode
 import com.absolutex.model.ReadingFlow
 import kotlin.math.roundToInt
 
-// Every row meets the §7 accessibility floor: at least 48dp tall, with an explicit
-// TalkBack description (switches and sliders carry no text of their own to announce).
+// Every row meets the §7 accessibility floor: at least 48dp tall, and merges into one
+// TalkBack stop per row. The title Text supplies the announced label (never overridden by
+// contentDescription, or every row with the same descriptionRes would read identically);
+// a helpful descriptionRes rides along as stateDescription instead, alongside the switch's
+// own on/off state.
 
 @Composable
 fun SwitchSettingRow(
@@ -49,7 +57,7 @@ fun SwitchSettingRow(
             .fillMaxWidth()
             .defaultMinSize(minHeight = 48.dp)
             .toggleable(value = checked, role = Role.Switch, onValueChange = onChange)
-            .semantics(mergeDescendants = true) { contentDescription = description },
+            .semantics(mergeDescendants = true) { stateDescription = description },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -95,18 +103,16 @@ fun RadioSettingRow(
     titleRes: Int,
     selected: Boolean,
     onClick: () -> Unit,
-    descriptionRes: Int,
     modifier: Modifier = Modifier,
 ) {
-    val description = stringResource(descriptionRes)
     Row(
         modifier = modifier
             .fillMaxWidth()
             .defaultMinSize(minHeight = 48.dp)
             .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
-            .semantics(mergeDescendants = true) {
-                contentDescription = description
-            },
+            // No contentDescription override: the merged title Text is the label, so every
+            // fit-mode row announces its own name instead of the shared group description.
+            .semantics(mergeDescendants = true) {},
         verticalAlignment = Alignment.CenterVertically,
     ) {
         RadioButton(selected = selected, onClick = null)
@@ -124,16 +130,21 @@ fun CacheSizeRow(
     onChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Tracks the thumb during a drag so the store sees one write per gesture, not one per
+    // frame; onValueChangeFinished commits it. Keyed on valueMiB so an external change (e.g.
+    // restoring a saved value) still overrides an unmoved thumb.
+    var pending by remember(valueMiB) { mutableIntStateOf(valueMiB) }
     Column(modifier = modifier.fillMaxWidth()) {
         Text(
-            text = stringResource(R.string.settings_cache_value, valueMiB),
+            text = stringResource(R.string.settings_cache_value, pending),
             style = MaterialTheme.typography.bodyLarge,
             modifier = Modifier.padding(vertical = 8.dp),
         )
-        val sliderDescription = stringResource(R.string.settings_cache_size_desc, valueMiB)
+        val sliderDescription = stringResource(R.string.settings_cache_size_desc, pending)
         Slider(
-            value = valueMiB.toFloat(),
-            onValueChange = { onChange(it.roundToInt()) },
+            value = pending.toFloat(),
+            onValueChange = { pending = it.roundToInt() },
+            onValueChangeFinished = { onChange(pending) },
             valueRange = AppPrefs.MIN_CACHE_MIB.toFloat()..AppPrefs.MAX_CACHE_MIB.toFloat(),
             modifier = Modifier
                 .fillMaxWidth()
