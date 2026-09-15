@@ -26,6 +26,14 @@ object DataModule {
     @Provides
     fun progressDao(db: AbsolutexDatabase): ProgressDao = db.progressDao()
 
+    /**
+     * Missing until the library screen became the first thing to inject it. The table and DAO
+     * shipped, the repository shipped, and nothing could obtain one through Hilt — which only
+     * validates bindings something actually requests, so it compiled cleanly the whole time.
+     */
+    @Provides
+    fun libraryDao(db: AbsolutexDatabase): LibraryDao = db.libraryDao()
+
     /** Total device RAM, the input to the cache ceiling (see MemoryBudget). */
     @Provides
     @Singleton

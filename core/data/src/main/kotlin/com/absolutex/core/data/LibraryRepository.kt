@@ -15,11 +15,23 @@ import javax.inject.Singleton
  * should leave behind the books it did find instead of nothing.
  */
 @Singleton
-class LibraryRepository @Inject constructor(
+class LibraryRepository internal constructor(
     private val dao: LibraryDao,
-    private val scanner: LibraryScanner = LibraryScanner(),
-    private val now: () -> Long = System::currentTimeMillis,
+    private val scanner: LibraryScanner,
+    private val now: () -> Long,
 ) {
+
+    /**
+     * The constructor Hilt uses. Only [dao] is a real dependency.
+     *
+     * The scanner and clock used to be default arguments on the @Inject constructor itself.
+     * Dagger cannot see Kotlin defaults, so it demanded bindings for LibraryScanner and
+     * Function0<Long> and the repository was un-injectable. That compiled only because nothing had
+     * injected it yet; the library screen was the first caller and hit it. Tests use the internal
+     * constructor to supply a fixed clock.
+     */
+    @Inject constructor(dao: LibraryDao) : this(dao, LibraryScanner(), System::currentTimeMillis)
+
 
     fun observeLibrary(): Flow<List<LibraryBook>> = dao.observeAll()
 
