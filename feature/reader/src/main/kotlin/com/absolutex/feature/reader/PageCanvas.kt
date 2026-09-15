@@ -46,6 +46,12 @@ private const val MIN_SCALE = 1f
 private const val TILE_THRESHOLD = 1.2f
 /** Zoom callbacks only fire on crossings of this scale, to avoid per-frame recompose. */
 private const val ZOOM_REPORT_THRESHOLD = 1.02f
+
+/** Zoom quantisation for the tile-fetch trigger: quarter steps of scale. */
+private const val ZOOM_BUCKETS_PER_UNIT = 4
+
+/** Tiles decoded per batch, so the nearest ones land before the whole ring is done. */
+private const val TILE_FETCH_CHUNK = 4
 /** Hysteresis is handled in ReaderScreen (1.05f); this is just the reporting gate. */
 private fun crossesZoomBoundary(old: Float, new: Float): Boolean =
     (old <= ZOOM_REPORT_THRESHOLD) != (new <= ZOOM_REPORT_THRESHOLD)
@@ -121,7 +127,7 @@ fun PageCanvas(
                 val eff = fit * s
                 if (eff <= 0f) return@distinctUntilChangedBy Triple(0, 0, 0)
                 Triple(
-                    (s * 4).toInt(),
+                    (s * ZOOM_BUCKETS_PER_UNIT).toInt(),
                     (ox / eff / TileGrid.TILE_SIZE).toInt(),
                     (oy / eff / TileGrid.TILE_SIZE).toInt(),
                 )
@@ -157,7 +163,7 @@ fun PageCanvas(
                     (tcx - cx) * (tcx - cx) + (tcy - cy) * (tcy - cy)
                 }
                 var landed = false
-                for (chunk in ordered.chunked(4)) {
+                for (chunk in ordered.chunked(TILE_FETCH_CHUNK)) {
                     ensureActive()
                     val decoded = coroutineScope {
                         chunk.map { t ->
@@ -206,35 +212,22 @@ fun PageCanvas(
                                 offsetX = 0f; offsetY = 0f
                             } else {
                                 offsetX += pan.x; offsetY += pan.y
-                                // Clamp so the image edge stays within the viewport.
-                                val vw = size.width
-                                val vh = size.height
-                                if (vw > 0 && vh > 0 && page.width > 0 && page.height > 0) {
-                                    val fit = min(vw.toFloat() / page.width, vh.toFloat() / page.height)
-                                    val dw = page.width * fit * scale
-                                    val dh = page.height * fit * scale
-                                    val maxX = if (dw <= vw) 0f else (dw - vw) / 2f
-                                    val maxY = if (dh <= vh) 0f else (dh - vh) / 2f
-                                    offsetX = offsetX.coerceIn(-maxX, maxX)
-                                    offsetY = offsetY.coerceIn(-maxY, maxY)
-                                }
+                                val clamped = clampOffset(
+                                    Offset(offsetX, offsetY), size.width, size.height,
+                                    page.width, page.height, scale,
+                                )
+                                offsetX = clamped.x; offsetY = clamped.y
                             }
                             event.changes.forEach { if (it.positionChanged()) it.consume() }
                             if (old != scale) maybeReportZoom(scale)
                         } else if (scale > MIN_SCALE && pan != Offset.Zero) {
                             offsetX += pan.x
                             offsetY += pan.y
-                            val vw = size.width
-                            val vh = size.height
-                            if (vw > 0 && vh > 0 && page.width > 0 && page.height > 0) {
-                                val fit = min(vw.toFloat() / page.width, vh.toFloat() / page.height)
-                                val dw = page.width * fit * scale
-                                val dh = page.height * fit * scale
-                                val maxX = if (dw <= vw) 0f else (dw - vw) / 2f
-                                val maxY = if (dh <= vh) 0f else (dh - vh) / 2f
-                                offsetX = offsetX.coerceIn(-maxX, maxX)
-                                offsetY = offsetY.coerceIn(-maxY, maxY)
-                            }
+                                val clamped = clampOffset(
+                                    Offset(offsetX, offsetY), size.width, size.height,
+                                    page.width, page.height, scale,
+                                )
+                                offsetX = clamped.x; offsetY = clamped.y
                             event.changes.forEach { if (it.positionChanged()) it.consume() }
                         }
                     } while (event.changes.any { it.pressed })
@@ -321,4 +314,26 @@ fun PageCanvas(
             }
         }
     }
+}
+
+/**
+ * Keeps the drawn page's edges inside the viewport, so a pan cannot strand the page off screen.
+ * Returns the offset unchanged when either the viewport or the page has no size yet.
+ */
+private fun clampOffset(
+    offset: Offset,
+    viewportW: Int,
+    viewportH: Int,
+    pageW: Int,
+    pageH: Int,
+    scale: Float,
+): Offset {
+    if (viewportW <= 0 || viewportH <= 0) return offset
+    if (pageW <= 0 || pageH <= 0) return offset
+    val fit = min(viewportW.toFloat() / pageW, viewportH.toFloat() / pageH)
+    val drawW = pageW * fit * scale
+    val drawH = pageH * fit * scale
+    val maxX = if (drawW <= viewportW) 0f else (drawW - viewportW) / 2f
+    val maxY = if (drawH <= viewportH) 0f else (drawH - viewportH) / 2f
+    return Offset(offset.x.coerceIn(-maxX, maxX), offset.y.coerceIn(-maxY, maxY))
 }

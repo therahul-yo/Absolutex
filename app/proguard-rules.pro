@@ -1,17 +1,12 @@
-# libarchive JNI entry points are reached from native code.
+# libarchive JNI entry points are reached from native code, never from Kotlin.
 -keepclasseswithmembernames class * { native <methods>; }
 
-# Phase 4: minimal safe keeps for the release/benchmark variants (R8 full mode).
-# Generic signatures feed Hilt/Room/Compose codegen and runtime reflection; without them
-# @HiltViewModel injection and Room's schema validation silently break in minified builds.
+# Generic signatures feed Room's schema validation and Hilt's generated factories. This keeps
+# metadata only — it does not stop R8 shrinking the classes themselves.
 -keepattributes Signature,InnerClasses,EnclosingMethod
 
-# Hilt: entry points and generated components are reached reflectively.
--keep class * extends androidx.lifecycle.ViewModel { *; }
--keep class dagger.hilt.** { *; }
--keep class **_HiltModules { *; }
-
-# Room: entities/DAOs/database are read reflectively; the impl is generated at compile time.
--keep class * extends androidx.room.RoomDatabase { *; }
--keep @androidx.room.Entity class * { *; }
--keep @androidx.room.Dao class * { *; }
+# Deliberately NOT here: blanket keeps for dagger.hilt.**, ViewModel subclasses, RoomDatabase
+# subclasses, @Entity and @Dao. Hilt and Room both ship consumer ProGuard rules that AGP applies
+# automatically, so those keeps are redundant — and they cost 113 KiB of dex by disabling
+# shrinking across both runtimes, which pushed the APK 49 KiB past the size gate.
+# If a release build ever fails reflectively, add the narrowest rule that fixes it, with a note.

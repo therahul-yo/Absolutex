@@ -19,6 +19,9 @@ import com.absolutex.source.libarchive.LibArchiveSource
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -69,12 +72,20 @@ class ReaderViewModel @Inject constructor(
     private var openJob: Job? = null
     // Coalesces fling bursts into one Room write: cancel-and-relaunch around the upsert.
     private var pendingProgressWrite: Job? = null
+    /** Last progress handed to the debounce, so onCleared can flush what it still owes. */
+    private var pendingProgress: ReadingProgress? = null
 
     companion object {
         /** Resident decoded pages. ~12 covers viewport + prefetch without ballooning native heap. */
         const val MAX_RESIDENT_PAGES = 12
+
+        /** A fast fling settles dozens of pages; only the landing page should hit disk. */
+        const val PROGRESS_DEBOUNCE_MS = 300L
     }
 
+    // Throwable on purpose: any failure to open a book must reach the user as one generic
+    // message, and the detail is logged. Narrowing would let an unlisted failure crash instead.
+    @Suppress("TooGenericExceptionCaught")
     fun open(uri: Uri) {
         if (bookId == uri.toString() && source != null) return
         // Cancel any in-flight open so a rapid book switch cannot land stale state.
@@ -150,6 +161,7 @@ class ReaderViewModel @Inject constructor(
      * Staged across two pools: archive I/O on [DecodeDispatchers.extract], pixel decode on
      * [DecodeDispatchers.decode]. Only the byte[] crosses between them.
      */
+    @Suppress("TooGenericExceptionCaught", "ReturnCount")
     suspend fun pageImage(index: Int): PageImage? {
         val src = source ?: return null
         pageImages[index]?.let { return it }
@@ -199,8 +211,7 @@ class ReaderViewModel @Inject constructor(
         val center = _ui.value.currentPage
         while (pageImages.size > MAX_RESIDENT_PAGES) {
             val farthest = pageImages.keys.maxByOrNull { kotlin.math.abs(it - center) } ?: break
-            val removed = pageImages.remove(farthest) ?: break
-            runCatching { removed.close() }
+            pageImages.remove(farthest)?.let { runCatching { it.close() } }
         }
     }
 
@@ -224,23 +235,29 @@ class ReaderViewModel @Inject constructor(
         // book's index against the old count (or vice versa).
         val count = _ui.value.pageCount
         if (id.isEmpty()) return
-        // 300 ms debounce: a fast fling settles dozens of pages; only the landing page hits disk.
         pendingProgressWrite?.cancel()
+        val progress = ReadingProgress(
+            bookId = id,
+            pageIndex = index,
+            pageCount = count,
+            // Every row carries its own timestamp: §5.5 sync is last-write-wins.
+            updatedAt = System.currentTimeMillis(),
+        )
+        pendingProgress = progress
         pendingProgressWrite = viewModelScope.launch {
-            delay(300)
-            progressDao.upsert(
-                ReadingProgress(
-                    bookId = id,
-                    pageIndex = index,
-                    pageCount = count,
-                    // Every row carries its own timestamp: §5.5 sync is last-write-wins.
-                    updatedAt = System.currentTimeMillis(),
-                ),
-            )
+            delay(PROGRESS_DEBOUNCE_MS)
+            progressDao.upsert(progress)
+            pendingProgress = null
         }
     }
 
     override fun onCleared() {
+        // The debounced write lives in viewModelScope and dies with it, so a book closed
+        // inside the debounce window would lose its last page. Flush it detached.
+        pendingProgressWrite?.cancel()
+        pendingProgress?.let { progress ->
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { progressDao.upsert(progress) }
+        }
         openJob?.cancel()
         pageImages.values.forEach { runCatching { it.close() } }
         pageImages.clear()
