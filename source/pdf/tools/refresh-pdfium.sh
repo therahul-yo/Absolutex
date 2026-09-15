@@ -40,15 +40,34 @@ echo "=== Build configuration (v8 and xfa must both be false) ==="
 grep -E 'pdf_enable_v8|pdf_enable_xfa|target_cpu|target_os' "$WORK/args.gn"
 
 echo
-echo "=== 16 KB page alignment (every LOAD segment must be 0x4000) ==="
-readelf -lW "$WORK/lib/libpdfium.so" | awk '/LOAD/ {print "    align=" $NF}'
-
-echo
 echo "=== Refreshing vendored licence texts ==="
 rm -f "$ASSETS"/*
 cp "$WORK"/licenses/* "$ASSETS/"
 cp "$WORK/LICENSE" "$ASSETS/pdfium-binaries-packaging.txt"
 ls "$ASSETS"
+
+echo
+echo "=== 16 KB page alignment (every LOAD segment must be 0x4000) ==="
+# Deliberately AFTER the licence refresh, and deliberately non-fatal.
+# macOS has no readelf. Under `set -euo pipefail` an earlier placement meant every developer
+# on this project — all of whom are on macOS — got the new URL_HASH printed and then watched
+# the script die, leaving the vendored licence texts describing the PREVIOUS binary. Paste the
+# hash, ship stale licences. The NDK provides llvm-readelf; Homebrew binutils provides greadelf.
+READELF=""
+for candidate in readelf llvm-readelf greadelf \
+                 "${ANDROID_NDK_HOME:-}/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-readelf" \
+                 "${ANDROID_NDK_HOME:-}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"; do
+    if [[ -n "$candidate" ]] && command -v "$candidate" >/dev/null 2>&1; then
+        READELF="$candidate"; break
+    fi
+done
+if [[ -n "$READELF" ]]; then
+    "$READELF" -lW "$WORK/lib/libpdfium.so" | awk '/LOAD/ {print "    align=" $NF}'
+else
+    echo "    SKIPPED: no readelf found (tried readelf, llvm-readelf, greadelf, \$ANDROID_NDK_HOME)."
+    echo "    Check by hand before shipping — 16 KB alignment is required on Android 15+:"
+    echo "      \$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/*/bin/llvm-readelf -lW <libpdfium.so>"
+fi
 
 echo
 echo "=== Copyleft scan ==="

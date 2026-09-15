@@ -27,10 +27,9 @@ object DataModule {
     fun progressDao(db: AbsolutexDatabase): ProgressDao = db.progressDao()
 
     /**
-     * Consumers inject the DAO, never [AbsolutexDatabase] itself: Room is an
-     * `implementation` dependency here, so `RoomDatabase` — the database class's supertype —
-     * is not on their compile classpath and injecting the database fails to compile. A `@Dao`
-     * interface has no such supertype and crosses the module boundary cleanly.
+     * Missing until the library screen became the first thing to inject it. The table and DAO
+     * shipped, the repository shipped, and nothing could obtain one through Hilt — which only
+     * validates bindings something actually requests, so it compiled cleanly the whole time.
      */
     @Provides
     fun libraryDao(db: AbsolutexDatabase): LibraryDao = db.libraryDao()
