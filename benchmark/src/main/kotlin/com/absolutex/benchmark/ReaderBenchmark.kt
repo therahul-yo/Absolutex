@@ -10,7 +10,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.Until
-import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -45,13 +44,17 @@ class ReaderBenchmark {
         addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
     }
 
+    /** Freshly resolved reader node, with a gesture margin so pinches stay inside the page. */
+    private fun androidx.benchmark.macro.MacrobenchmarkScope.reader() =
+        checkNotNull(device.wait(Until.findObject(By.pkg(pkg)), 5_000)) { "reader not on screen" }
+            .apply { setGestureMargin(device.displayWidth / 8) }
+
     @Test fun pageTurn() = rule.measureRepeated(
         packageName = pkg,
         metrics = listOf(FrameTimingMetric()),
         iterations = 5,
         startupMode = StartupMode.WARM,
         setupBlock = {
-            assumeTrue("corpus not staged at $book", File(book).exists())
             pressHome()
             startActivityAndWait(viewIntent())
         },
@@ -63,14 +66,16 @@ class ReaderBenchmark {
         }
         device.waitForIdle()
 
-        val content = device.findObject(By.pkg(pkg).depth(0))
-        // Margin set once: inside the loop it just repeats work between measured gestures.
-        content.setGestureMargin(device.displayWidth / 8)
         repeat(10) {
             // LEFT advances. Direction.RIGHT scrolls content rightward, i.e. to the PREVIOUS
             // page — from a resumed mid-book position that walks back to page 0 and then
             // measures an idle screen, which reads as a perfect score for doing nothing.
-            content.fling(Direction.LEFT)
+            // Coordinates, not a UiObject2. A handle to the reader goes stale across a page
+            // turn (StaleObjectException), and re-resolving it mid-turn can momentarily find
+            // no node at all (NullPointerException). Both aborted real runs on the device.
+            // 8 steps is ~40 ms of travel: fast enough to fling rather than drag.
+            val y = device.displayHeight / 2
+            device.swipe(device.displayWidth * 85 / 100, y, device.displayWidth * 15 / 100, y, 8)
             device.waitForIdle()
         }
     }
@@ -81,17 +86,15 @@ class ReaderBenchmark {
         iterations = 5,
         startupMode = StartupMode.WARM,
         setupBlock = {
-            assumeTrue("corpus not staged at $book", File(book).exists())
             pressHome()
             startActivityAndWait(viewIntent())
         },
     ) {
         device.waitForIdle()
-        val content = device.findObject(By.pkg(pkg).depth(0))
         repeat(4) {
-            content.pinchOpen(0.75f, 100)
+            reader().pinchOpen(0.75f, 100)
             device.waitForIdle()
-            content.pinchClose(0.75f, 100)
+            reader().pinchClose(0.75f, 100)
             device.waitForIdle()
         }
     }
@@ -108,7 +111,6 @@ class ReaderBenchmark {
         iterations = 5,
         startupMode = StartupMode.COLD,
         setupBlock = {
-            assumeTrue("corpus not staged at $book", File(book).exists())
             pressHome()
         },
     ) {
@@ -131,14 +133,15 @@ class ReaderBenchmark {
         iterations = 5,
         startupMode = StartupMode.WARM,
         setupBlock = {
-            assumeTrue("corpus not staged at $book", File(book).exists())
             pressHome()
             startActivityAndWait(viewIntent())
         },
     ) {
         device.waitForIdle()
-        val content = device.findObject(By.pkg(pkg).depth(0))
-        content.setGestureMargin(device.displayWidth / 8)
+        // Resolved once here on purpose: this test measures back-to-back gestures with no
+        // settle between them, and re-resolving would insert exactly the pause it is trying
+        // to avoid. Nothing recomposes the page away mid-pinch, so the handle stays valid.
+        val content = reader()
         // Deliberately no waitForIdle inside: the next gesture must land mid-render.
         repeat(8) { i ->
             if (i % 2 == 0) content.pinchOpen(0.9f, 50) else content.pinchClose(0.9f, 50)
