@@ -1,5 +1,6 @@
 package com.absolutex.feature.reader
 
+import android.content.ComponentCallbacks2
 import android.content.Context
 import android.net.Uri
 import android.os.ParcelFileDescriptor
@@ -22,6 +23,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 
 private const val TAG = "Reader"
@@ -108,15 +111,38 @@ class ReaderViewModel @Inject constructor(
     suspend fun pageImage(index: Int): PageImage? {
         val src = source ?: return null
         pageImages[index]?.let { return it }
-        return withContext(DecodeDispatchers.decode) {
-            runCatching {
-                val bytes = src.openPage(index).readBytes()
-                PageImage.from(bytes)
-            }.onFailure { t ->
-                Log.e(TAG, "page $index unreadable", t)
-                _failedPages.value += index
-            }.getOrNull()?.also { pageImages[index] = it }
+        // Staged: archive I/O on extract, pixel decode on decode. The book stays open on
+        // extract (open() above); only the byte[] crosses to the decode pool.
+        val bytes = try {
+            withContext(DecodeDispatchers.extract) {
+                src.openPage(index).readBytes()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IOException) {
+            return failPage(index, e)
         }
+        return try {
+            withContext(DecodeDispatchers.decode) {
+                PageImage.from(bytes)
+            }.also { pageImages[index] = it }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: RuntimeException) {
+            failPage(index, e)
+        }
+    }
+
+    /**
+     * Records an unreadable page so the reader can say so instead of spinning forever (§2's
+     * "N of M readable"). CancellationException is rethrown above rather than landing here: a
+     * cancelled prefetch is not a corrupt page, and swallowing it also breaks structured
+     * concurrency.
+     */
+    private fun failPage(index: Int, cause: Throwable): PageImage? {
+        Log.e(TAG, "page $index unreadable", cause)
+        _failedPages.value += index
+        return null
     }
 
     fun onPageChanged(index: Int) {
@@ -143,5 +169,12 @@ class ReaderViewModel @Inject constructor(
         tileCache.clear()
         runCatching { source?.close() }
         super.onCleared()
+    }
+
+    /** Halves the tile budget on memory pressure; called from MainActivity's callbacks. */
+    fun onTrimMemory(level: Int) {
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            tileCache.trimToSize(tileCache.maxBytes() / 2)
+        }
     }
 }
