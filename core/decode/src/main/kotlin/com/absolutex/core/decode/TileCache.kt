@@ -8,6 +8,8 @@ data class TileKey(
     val col: Int,
     val row: Int,
     val sampleSize: Int,
+    /** Book identity scoping the tile. Default "" keeps older call sites compiling. */
+    val bookId: String = "",
 )
 
 /**
@@ -35,16 +37,16 @@ class TileCache(maxBytes: Long) {
         }
     }
 
-    operator fun get(key: TileKey): Bitmap? = lru.get(key)
+    operator fun get(key: TileKey): Bitmap? = synchronized(lru) { lru.get(key) }
 
     fun put(key: TileKey, bitmap: Bitmap) {
         if (bitmap.allocationByteCount <= 0) return
-        lru.put(key, bitmap)
+        synchronized(lru) { lru.put(key, bitmap) }
     }
 
-    fun sizeBytes(): Int = lru.size()
-    fun maxBytes(): Int = lru.maxSize()
+    fun sizeBytes(): Int = synchronized(lru) { lru.size() }
+    fun maxBytes(): Int = synchronized(lru) { lru.maxSize() }
 
     /** Drops everything. Used when the reader closes a book, not between pages. */
-    fun clear() = lru.evictAll()
+    fun clear() = synchronized(lru) { lru.evictAll() }
 }

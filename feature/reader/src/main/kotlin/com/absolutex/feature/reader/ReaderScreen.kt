@@ -3,15 +3,18 @@ package com.absolutex.feature.reader
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -70,20 +73,48 @@ private fun Pages(pageCount: Int, startPage: Int, vm: ReaderViewModel) {
         beyondViewportPageCount = 1,
     ) { index ->
         var image by remember(index) { mutableStateOf<PageImage?>(null) }
-        LaunchedEffect(index) { image = vm.pageImage(index) }
+        var attempts by remember(index) { mutableIntStateOf(0) }
+        var loading by remember(index) { mutableStateOf(true) }
+        LaunchedEffect(index, attempts) {
+            loading = true
+            image = vm.pageImage(index)
+            loading = false
+        }
 
-        val img = image
-        if (img == null) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+        // Corrupt decodes (width<=0) are treated as unreadable, never rendered.
+        val img = image?.takeIf { it.width > 0 && it.height > 0 }
+        when {
+            img != null -> {
+                PageCanvas(
+                    page = img,
+                    pageIndex = index,
+                    cache = vm.tileCache,
+                    onZoomChanged = { zoom = it },
+                )
             }
-        } else {
-            PageCanvas(
-                page = img,
-                pageIndex = index,
-                cache = vm.tileCache,
-                onZoomChanged = { zoom = it },
-            )
+            loading -> {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+            else -> {
+                // Null must not spin forever: after the load settles with no image,
+                // surface the failure with a retry that clears the cache entry.
+                Box(
+                    Modifier.fillMaxSize().padding(24.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Page unreadable", color = Color.White)
+                        Button(onClick = {
+                            vm.invalidatePage(index)
+                            attempts++
+                        }) {
+                            Text("Retry")
+                        }
+                    }
+                }
+            }
         }
     }
 }
