@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -72,7 +73,6 @@ private fun Pages(pageCount: Int, startPage: Int, vm: ReaderViewModel) {
     // Per-page zoom: a single var would let page N's zoom leak into page N+1's
     // userScrollEnabled. Hysteresis (1.05f) keeps the pager from flickering at the boundary.
     val zooms = remember(pageCount) { mutableStateMapOf<Int, Float>() }
-    val failedPages by vm.failedPages.collectAsStateWithLifecycle()
 
     // Persist progress as the reader moves. snapshotFlow keeps this off the composition path.
     LaunchedEffect(pagerState) {
@@ -89,9 +89,16 @@ private fun Pages(pageCount: Int, startPage: Int, vm: ReaderViewModel) {
         beyondViewportPageCount = 1,
     ) { index ->
         var image by remember(index) { mutableStateOf<PageImage?>(null) }
-        LaunchedEffect(index) { image = vm.pageImage(index) }
+        var attempts by remember(index) { mutableIntStateOf(0) }
+        var loading by remember(index) { mutableStateOf(true) }
+        LaunchedEffect(index, attempts) {
+            loading = true
+            image = vm.pageImage(index)
+            loading = false
+        }
 
-        val img = image
+        // A decode with no dimensions is unreadable, never rendered.
+        val img = image?.takeIf { it.width > 0 && it.height > 0 }
         when {
             img != null -> PageCanvas(
                 page = img,
@@ -106,11 +113,24 @@ private fun Pages(pageCount: Int, startPage: Int, vm: ReaderViewModel) {
                     }
                 },
             )
-            index in failedPages -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(stringResource(R.string.reader_page_unreadable), color = Color.White)
-            }
-            else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
+            }
+            // A settled load with no image must not spin forever: say so, and offer a retry
+            // that clears both the cached entry and the failure mark.
+            else -> Box(
+                Modifier.fillMaxSize().padding(24.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(stringResource(R.string.reader_page_unreadable), color = Color.White)
+                    Button(onClick = {
+                        vm.invalidatePage(index)
+                        attempts++
+                    }) {
+                        Text(stringResource(R.string.reader_retry))
+                    }
+                }
             }
         }
     }

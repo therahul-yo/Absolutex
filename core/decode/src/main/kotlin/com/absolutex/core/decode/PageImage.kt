@@ -41,20 +41,24 @@ class PageImage private constructor(
     /** One tile at its own subsample. Returns null if the region decoder is unavailable. */
     fun decodeTile(tile: Tile): Bitmap? {
         val rd = regionDecoder ?: return null
-        val opts = BitmapFactory.Options().apply {
-            inSampleSize = tile.sampleSize
-            inPreferredConfig = Bitmap.Config.HARDWARE
-        }
-        val rect = android.graphics.Rect(tile.left, tile.top, tile.right, tile.bottom)
-        return runCatching { rd.decodeRegion(rect, opts) }.getOrElse {
-            // Some encoders reject HARDWARE for region decode. Fall back to ARGB_8888 —
-            // never RGB_565, which the brief forbids outright.
-            runCatching {
-                rd.decodeRegion(rect, BitmapFactory.Options().apply {
-                    inSampleSize = tile.sampleSize
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
-                })
-            }.getOrNull()
+        // BitmapRegionDecoder is not thread-safe; tiles decode on a pool while the
+        // base layer may decode concurrently, so all region access takes one monitor.
+        synchronized(this) {
+            val opts = BitmapFactory.Options().apply {
+                inSampleSize = tile.sampleSize
+                inPreferredConfig = Bitmap.Config.HARDWARE
+            }
+            val rect = android.graphics.Rect(tile.left, tile.top, tile.right, tile.bottom)
+            return runCatching { rd.decodeRegion(rect, opts) }.getOrElse {
+                // Some encoders reject HARDWARE for region decode. Fall back to ARGB_8888 —
+                // never RGB_565, which the brief forbids outright.
+                runCatching {
+                    rd.decodeRegion(rect, BitmapFactory.Options().apply {
+                        inSampleSize = tile.sampleSize
+                        inPreferredConfig = Bitmap.Config.ARGB_8888
+                    })
+                }.getOrNull()
+            }
         }
     }
 
@@ -73,6 +77,11 @@ class PageImage private constructor(
             return maxOf(1, (w * scale).toInt()) to maxOf(1, (h * scale).toInt())
         }
 
+        /**
+         * Never throws for corrupt input: if bounds decode to width<=0||height<=0 the
+         * returned object is corrupt and callers must treat it as unreadable
+         * (check width/height, do not cache), but [from] itself still returns.
+         */
         fun from(bytes: ByteArray): PageImage {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
