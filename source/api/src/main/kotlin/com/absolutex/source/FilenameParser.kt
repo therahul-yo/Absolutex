@@ -165,6 +165,52 @@ object FilenameParser {
         return clean(volumeMatch?.let { blank(normalised, it.range) } ?: normalised)
     }
 
+
+    /** Which number is the issue, which is a year, and the text with the year taken out. */
+    private data class Numbers(
+        val issue: MatchResult?,
+        val yearToken: MatchResult?,
+        val masked: String,
+        val year: Int?,
+    )
+
+    /**
+     * Decides the issue and the year together, because they compete for the same digits.
+     *
+     * Order matters. An explicit marker outranks everything: "#1900" is an issue even though 1900
+     * reads like a year, and looking for the year first blanked those digits, so "Series 100
+     * #1900" fell back to 100 and shelved the book under "Series".
+     */
+    private fun resolveNumbers(text: String, hasVolume: Boolean, taggedYear: Int?): Numbers {
+        val explicit = PADDED_LEADING_ISSUE.find(text)
+            ?: LEADING_ISSUE.find(text)
+            ?: PREFIXED_ISSUE.findAll(text).lastOrNull()
+            ?: ISSUE_RANGE.findAll(text).lastOrNull()
+
+        // A year is never the explicit issue's digits, and never the FIRST number, because a
+        // series may open with one ("2000 AD 1234").
+        val standalone = STANDALONE_NUMBER.findAll(text)
+            .filterNot { explicit != null && it.range overlaps explicit.range }
+            .toList()
+        val yearToken = standalone.drop(1).lastOrNull { looksLikeYear(it.groupValues[1]) }
+        val masked = yearToken?.let { blank(text, it.range) } ?: text
+
+        // With a volume marker present the book is identified by its volume, so a bare number
+        // left over belongs to the series: "Kaiju No. 8 v01" is volume 1, not issue 8.
+        val issue = explicit
+            ?: masked.takeIf { !hasVolume }?.let { STANDALONE_NUMBER.findAll(it).lastOrNull() }
+
+        return Numbers(
+            issue = issue,
+            yearToken = yearToken,
+            masked = masked,
+            year = taggedYear ?: yearToken?.groupValues?.get(1)?.toIntOrNull(),
+        )
+    }
+
+    private infix fun IntRange.overlaps(other: IntRange): Boolean =
+        first <= other.last && other.first <= last
+
     private fun looksLikeYear(digits: String): Boolean =
         digits.length == YEAR_DIGITS && '.' !in digits &&
             (digits.toIntOrNull() ?: 0) in PLAUSIBLE_YEARS
@@ -183,28 +229,11 @@ object FilenameParser {
         // volume 2 and issue 2 off the same digits.
         val volumeMasked = volumeMatch?.let { blank(normalised, it.range) } ?: normalised
 
-        // An unbracketed year ("Absolute.Batman.001.2024.Webrip") is a year, not an issue. Three
-        // guards keep that from eating numbers that are not years:
-        //  - some other number must be available to be the issue, so "Batman 1234" keeps its issue;
-        //  - it cannot be the FIRST number, because a series may open with one ("2000 AD 1234");
-        //  - a name of the form "<padded issue> <title>" is not mined at all, since a year inside
-        //    a title is part of the title ("001 To You, 2000 Years From Now").
-        val standalone = STANDALONE_NUMBER.findAll(volumeMasked).toList()
-        val titleCarriesTheRest = PADDED_LEADING_ISSUE.containsMatchIn(volumeMasked)
-        val yearToken = standalone.drop(1)
-            .lastOrNull { looksLikeYear(it.groupValues[1]) }
-            ?.takeIf { !titleCarriesTheRest }
-        val masked = yearToken?.let { blank(volumeMasked, it.range) } ?: volumeMasked
-        val resolvedYear = year ?: yearToken?.groupValues?.get(1)?.toIntOrNull()
-
-        val issueMatch = PADDED_LEADING_ISSUE.find(masked)
-            ?: LEADING_ISSUE.find(masked)
-            ?: PREFIXED_ISSUE.findAll(masked).lastOrNull()
-            ?: ISSUE_RANGE.findAll(masked).lastOrNull()
-            // With a volume marker present the book is identified by its volume, so a bare number
-            // left over belongs to the series: "Kaiju No. 8 v01" is volume 1, not issue 8.
-            ?: masked.takeIf { volumeMatch == null }
-                ?.let { STANDALONE_NUMBER.findAll(it).lastOrNull() }
+        val numbers = resolveNumbers(volumeMasked, volumeMatch != null, year)
+        val issueMatch = numbers.issue
+        val masked = numbers.masked
+        val resolvedYear = numbers.year
+        val yearToken = numbers.yearToken
 
         val spans = listOfNotNull(volumeMatch?.range, issueMatch?.range, yearToken?.range)
         val series: String?
