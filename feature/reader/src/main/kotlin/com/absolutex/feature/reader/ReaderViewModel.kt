@@ -11,6 +11,8 @@ import androidx.lifecycle.viewModelScope
 import com.absolutex.core.data.ProgressDao
 import com.absolutex.core.data.ReadingProgress
 import com.absolutex.core.data.TotalRamBytes
+import com.absolutex.core.data.settings.ReaderPrefs
+import com.absolutex.core.data.settings.ReaderPrefsSource
 import com.absolutex.core.decode.DecodeDispatchers
 import com.absolutex.core.decode.MemoryBudget
 import com.absolutex.core.decode.PageImage
@@ -26,8 +28,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -53,7 +57,15 @@ class ReaderViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val progressDao: ProgressDao,
     @TotalRamBytes private val totalRamBytes: Long,
+    prefs: ReaderPrefsSource,
 ) : ViewModel() {
+
+    /**
+     * Reading flow and fit mode, live. Eager so the value is usually in hand before the first page:
+     * the archive open that gates rendering takes longer than the first DataStore read.
+     */
+    val readerPrefs: StateFlow<ReaderPrefs> =
+        prefs.readerPrefs.stateIn(viewModelScope, SharingStarted.Eagerly, ReaderPrefs())
 
     private val _ui = MutableStateFlow(ReaderUiState())
     val ui: StateFlow<ReaderUiState> = _ui.asStateFlow()
