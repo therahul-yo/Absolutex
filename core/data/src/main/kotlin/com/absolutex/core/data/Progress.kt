@@ -33,6 +33,17 @@ interface ProgressDao {
 
     @Query("SELECT * FROM reading_progress ORDER BY updatedAt DESC LIMIT 1")
     suspend fun mostRecent(): ReadingProgress?
+
+    /**
+     * Every stored position, for the library's Reading and Unread shelves (§5.1).
+     *
+     * A whole-table read rather than one lookup per book: the library renders thousands of rows
+     * and per-book queries would be thousands of round trips per scan. The table holds one row
+     * per book ever opened, so it stays far smaller than the library itself. Joined on
+     * BookIdentity, which since 6f7d70d is the key both this table and library_book use.
+     */
+    @Query("SELECT * FROM reading_progress")
+    fun observeAll(): Flow<List<ReadingProgress>>
 }
 
 /**

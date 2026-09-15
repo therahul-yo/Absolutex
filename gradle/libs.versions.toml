@@ -59,6 +59,8 @@ compose-ui-graphics          = { module = "androidx.compose.ui:ui-graphics" }
 compose-ui-tooling           = { module = "androidx.compose.ui:ui-tooling" }
 compose-ui-tooling-preview   = { module = "androidx.compose.ui:ui-tooling-preview" }
 compose-material3            = { module = "androidx.compose.material3:material3" }
+# Lists, grids and gestures for the library screens. BOM-managed, so no version to pin here.
+compose-foundation           = { module = "androidx.compose.foundation:foundation" }
 compose-material3-adaptive-nav = { module = "androidx.compose.material3:material3-adaptive-navigation-suite", version.ref = "adaptive" }
 
 hilt-android                 = { module = "com.google.dagger:hilt-android", version.ref = "hilt" }
