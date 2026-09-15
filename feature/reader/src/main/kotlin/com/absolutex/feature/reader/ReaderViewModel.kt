@@ -2,7 +2,9 @@ package com.absolutex.feature.reader
 
 import android.content.ComponentCallbacks2
 import android.content.Context
+import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Trace
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import android.util.Log
@@ -32,6 +34,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -86,6 +91,17 @@ class ReaderViewModel @Inject constructor(
     // bound because it has no access-order eviction of its own. A plain HashMap here was
     // a data race: reads happen on Main, writes on the decode pool.
     private val pageImages = ConcurrentHashMap<Int, PageImage>()
+
+    /**
+     * Base layers, finished or still decoding, keyed by page and size. A second request for the same
+     * base awaits the first instead of starting another decode. On the reference phone the resumed
+     * page was decoded twice at once on every open, identical page, size and viewport, which cost
+     * ~150 ms of the tap-to-first-page budget; swiping back to a page also re-decoded its base.
+     * Native decodes cannot be cancelled, so a duplicate is paid for in full.
+     */
+    private val bases = ConcurrentHashMap<BaseKey, Deferred<Bitmap?>>()
+
+    private data class BaseKey(val bookId: String, val page: Int, val width: Int, val height: Int)
     private val openGeneration = AtomicInteger(0)
     private var openJob: Job? = null
     // Coalesces fling bursts into one Room write: cancel-and-relaunch around the upsert.
@@ -102,6 +118,9 @@ class ReaderViewModel @Inject constructor(
     companion object {
         /** Resident decoded pages. ~12 covers viewport + prefetch without ballooning native heap. */
         const val MAX_RESIDENT_PAGES = 12
+
+        /** Base layers kept around the settled page: it and two either side, ~9 MB each here. */
+        const val BASE_WINDOW = 2
 
         /** A fast fling settles dozens of pages; only the landing page should hit disk. */
         const val PROGRESS_DEBOUNCE_MS = 300L
@@ -120,6 +139,7 @@ class ReaderViewModel @Inject constructor(
         tileCache.clear()
         pageImages.values.forEach { runCatching { it.close() } }
         pageImages.clear()
+        bases.clear()
         _ui.value = ReaderUiState(loading = true)
         openJob = viewModelScope.launch {
             val opened = try {
@@ -250,7 +270,35 @@ class ReaderViewModel @Inject constructor(
     /** Clears one cached page and its failure mark so the UI retry forces a fresh decode. */
     fun invalidatePage(index: Int) {
         pageImages.remove(index)?.let { runCatching { it.close() } }
+        bases.keys.removeIf { it.page == index }
         _failedPages.value -= index
+    }
+
+    /**
+     * The page's base layer at [width]x[height], decoded once however many callers ask. The decode
+     * runs in the ViewModel's scope, so a caller leaving composition does not waste a decode someone
+     * else is about to await. A failed decode is not remembered, so a retry decodes again.
+     */
+    suspend fun baseLayer(index: Int, image: PageImage, width: Int, height: Int): Bitmap? {
+        val key = BaseKey(bookId, index, width, height)
+        val decode = bases.computeIfAbsent(key) {
+            viewModelScope.async(DecodeDispatchers.decode, start = CoroutineStart.LAZY) {
+                Trace.beginSection("absx.base p=$index ${width}x$height")
+                try {
+                    runCatching { image.decodeBase(width, height) }.getOrNull()
+                } finally {
+                    Trace.endSection()
+                }
+            }
+        }
+        val bitmap = decode.await()
+        if (bitmap == null) {
+            bases.remove(key, decode)
+        } else {
+            // Keep only the settled page's neighbourhood; a far base is cheap to decode again.
+            bases.keys.removeIf { kotlin.math.abs(it.page - settledPage) > BASE_WINDOW }
+        }
+        return bitmap
     }
 
     /** Keeps only a sliding window around the current page; closes evicted pages. */
@@ -308,6 +356,7 @@ class ReaderViewModel @Inject constructor(
         openJob?.cancel()
         pageImages.values.forEach { runCatching { it.close() } }
         pageImages.clear()
+        bases.clear()
         tileCache.clear()
         runCatching { source?.close() }
         source = null
@@ -318,6 +367,7 @@ class ReaderViewModel @Inject constructor(
     fun onTrimMemory(level: Int) {
         if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
             tileCache.trimToSize(tileCache.maxBytes() / 2)
+            bases.keys.removeIf { it.page != settledPage }
         }
     }
 }

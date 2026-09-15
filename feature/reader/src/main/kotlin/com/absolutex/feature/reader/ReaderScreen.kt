@@ -1,8 +1,10 @@
 package com.absolutex.feature.reader
 
 import android.app.Activity
+import android.os.Trace
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.Column
@@ -34,8 +36,10 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
@@ -49,6 +53,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.absolutex.core.decode.PageImage
 import com.absolutex.model.FitMode
 import com.absolutex.model.ReadingFlow
+import com.absolutex.model.TapGrid
 import com.absolutex.model.TapZone
 import com.absolutex.model.column
 import kotlinx.coroutines.launch
@@ -171,7 +176,7 @@ private fun Pages(
             visible = chrome,
             page = pagerState.currentPage,
             pageCount = pageCount,
-            onSeek = { target -> goTo(target - pagerState.currentPage) },
+            onSeek = { target -> scope.launch { pagerState.scrollToPage(target.coerceIn(0, pageCount - 1)) } },
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
@@ -223,7 +228,11 @@ private fun ReaderChrome(
     modifier: Modifier = Modifier,
 ) {
     if (!visible || pageCount <= 0) return
-    val shown = page + 1
+    // While dragging, the thumb and label follow the finger locally; the pager moves once, on
+    // release. Seeking through the pager on every drag tick launched an animated scroll per tick,
+    // each cancelling the last, and the page stuttered behind the thumb.
+    var dragging by remember { mutableStateOf<Float?>(null) }
+    val shown = (dragging?.roundToInt() ?: page) + 1
     val indicator = stringResource(R.string.reader_page_indicator_desc, shown, pageCount)
     val seekLabel = stringResource(R.string.reader_seek_desc)
     Surface(
@@ -239,10 +248,18 @@ private fun ReaderChrome(
             // Slider works in page numbers, not fractions: a 45-page book has 45 stops and the
             // value it reports is the page the reader lands on.
             Slider(
-                value = page.toFloat(),
-                onValueChange = { onSeek(it.roundToInt()) },
+                value = dragging ?: page.toFloat(),
+                onValueChange = { dragging = it },
+                onValueChangeFinished = {
+                    dragging?.let { onSeek(it.roundToInt()) }
+                    dragging = null
+                },
                 valueRange = 0f..(pageCount - 1).toFloat().coerceAtLeast(0f),
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = seekLabel },
+                // The slider's own value is 0-based; TalkBack should hear the page number shown.
+                modifier = Modifier.fillMaxWidth().semantics {
+                    contentDescription = seekLabel
+                    stateDescription = indicator
+                },
             )
         }
     }
@@ -284,7 +301,9 @@ private fun PageSlot(
     LaunchedEffect(index, attempts, decodeNow) {
         if (!decodeNow) return@LaunchedEffect
         loading = true
+        Trace.beginAsyncSection("absx.pageImage p=$index", index)
         image = vm.pageImage(index)
+        Trace.endAsyncSection("absx.pageImage p=$index", index)
         loading = false
     }
 
@@ -303,14 +322,23 @@ private fun PageSlot(
             onEdgeSwipe = onEdgeSwipe,
             onTapZone = onTapZone,
             onBaseReady = onBaseReady,
+            baseLayer = { w, h -> vm.baseLayer(index, img, w, h) },
         )
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
         }
         // A settled load with no image must not spin forever: say so, and offer a retry
         // that clears both the cached entry and the failure mark.
+        // A broken page must still be tapped past: tap zones are the one way to turn that never
+        // depends on the page being drawable.
         else -> Box(
-            Modifier.fillMaxSize().padding(24.dp),
+            Modifier.fillMaxSize()
+                .pointerInput(rightToLeft) {
+                    detectTapGestures { at ->
+                        onTapZone(TapGrid.zoneAt(at.x, at.y, size.width, size.height, rightToLeft))
+                    }
+                }
+                .padding(24.dp),
             contentAlignment = Alignment.Center,
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {

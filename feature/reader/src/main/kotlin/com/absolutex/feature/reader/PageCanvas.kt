@@ -101,6 +101,13 @@ fun PageCanvas(
      * means for §3's budget — the page object existing is not the same as pixels.
      */
     onBaseReady: () -> Unit = {},
+    /**
+     * Supplies the base layer at a size. The reader passes one that shares a decode per page and
+     * size; the default decodes directly, for previews and tests.
+     */
+    baseLayer: suspend (width: Int, height: Int) -> Bitmap? = { w, h ->
+        withContext(DecodeDispatchers.decode) { runCatching { page.decodeBase(w, h) }.getOrNull() }
+    },
     /** The pager's axis. A page that can scroll along it must own drags on it. */
     pagerVertical: Boolean = false,
     /**
@@ -189,10 +196,10 @@ fun PageCanvas(
         val (vw, vh) = viewport
         if (vw <= 0 || vh <= 0) return@LaunchedEffect
         val (tw, th) = baseTarget(vw, vh)
-        base = withContext(DecodeDispatchers.decode) {
-            runCatching { page.decodeBase(tw, th) }.getOrNull()
-        }
-        if (base != null) onBaseReady()
+        base = baseLayer(tw, th)
+        // Success or failure, the page has reached a stable state; reporting only on success left a
+        // book whose first base failed never "fully drawn", which starves the startup metric.
+        onBaseReady()
     }
 
     /**
@@ -374,7 +381,9 @@ fun PageCanvas(
                     } while (!released && event.changes.any { it.pressed })
                 }
             }
-            .pointerInput(pageIndex, fitMode, pagerVertical) {
+            // rightToLeft is a key: onTap mirrors the grid by it, and a flow change mid-page would
+            // otherwise leave taps turning pages the old way while swipes already go the new way.
+            .pointerInput(pageIndex, fitMode, pagerVertical, rightToLeft) {
                 detectTapGestures(
                     onDoubleTap = {
                         // Double-tap toggles between fit and a useful reading zoom, about the
