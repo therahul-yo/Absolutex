@@ -35,6 +35,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.absolutex.core.decode.PageImage
 import com.absolutex.model.FitMode
 import com.absolutex.model.ReadingFlow
+import com.absolutex.model.TapZone
+import com.absolutex.model.column
 import kotlinx.coroutines.launch
 
 @Composable
@@ -76,6 +78,10 @@ fun ReaderScreen(
     }
 }
 
+/** Grid columns that turn pages; the centre column is chrome. */
+private const val FIRST_COLUMN = 0
+private const val LAST_COLUMN = 2
+
 @Composable
 private fun Pages(
     pageCount: Int,
@@ -91,10 +97,20 @@ private fun Pages(
     val scope = rememberCoroutineScope()
     // Edge swipes arrive in screen terms (finger left or up). A right-to-left book is laid out
     // mirrored, so there the finger moving left brings the previous page in, not the next.
-    val turn: (Boolean) -> Unit = { forward ->
-        val step = if (forward != (flow == ReadingFlow.RTL)) 1 else -1
+    val goTo: (Int) -> Unit = { step ->
         scope.launch {
             pagerState.animateScrollToPage((pagerState.currentPage + step).coerceIn(0, pageCount - 1))
+        }
+    }
+    val turn: (Boolean) -> Unit = { forward -> goTo(if (forward != (flow == ReadingFlow.RTL)) 1 else -1) }
+    // §5.2 tap zones. The outer columns turn pages — the one way to turn that never competes with
+    // the pager, which matters on a zoomed or overflowing page where the pager is switched off.
+    // TODO(phase5): the centre column opens the reader chrome once it exists.
+    val tap: (TapZone) -> Unit = { zone ->
+        when (zone.column) {
+            LAST_COLUMN -> goTo(1)
+            FIRST_COLUMN -> goTo(-1)
+            else -> Unit
         }
     }
 
@@ -114,6 +130,7 @@ private fun Pages(
             pagerVertical = flow == ReadingFlow.VERTICAL,
             onPagerLockChanged = { locks[index] = it },
             onEdgeSwipe = turn,
+            onTapZone = tap,
         )
     }
     // A zoomed or overflowing page owns its drags and turns itself at the edge (see PageCanvas).
@@ -153,6 +170,7 @@ private fun PageSlot(
     pagerVertical: Boolean,
     onPagerLockChanged: (Boolean) -> Unit,
     onEdgeSwipe: (Boolean) -> Unit,
+    onTapZone: (TapZone) -> Unit,
 ) {
     var image by remember(index) { mutableStateOf<PageImage?>(null) }
     var attempts by remember(index) { mutableIntStateOf(0) }
@@ -176,6 +194,7 @@ private fun PageSlot(
             pagerVertical = pagerVertical,
             onPagerLockChanged = onPagerLockChanged,
             onEdgeSwipe = onEdgeSwipe,
+            onTapZone = onTapZone,
         )
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()

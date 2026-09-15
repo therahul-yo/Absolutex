@@ -34,6 +34,8 @@ import com.absolutex.core.decode.TileGrid
 import com.absolutex.core.decode.TileKey
 import com.absolutex.model.FitGeometry
 import com.absolutex.model.FitMode
+import com.absolutex.model.TapGrid
+import com.absolutex.model.TapZone
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -92,7 +94,8 @@ fun PageCanvas(
     fitMode: FitMode = FitMode.FIT_SCREEN,
     /** Where an overflowing page starts: its right edge for a right-to-left book. */
     rightToLeft: Boolean = false,
-    onTapCenter: () -> Unit = {},
+    /** The tapped zone of §5.2's 3x3 grid, already mirrored for a right-to-left book. */
+    onTapZone: (TapZone) -> Unit = {},
     /** The pager's axis. A page that can scroll along it must own drags on it. */
     pagerVertical: Boolean = false,
     /**
@@ -380,7 +383,11 @@ fun PageCanvas(
                         offsetX = clamped.x; offsetY = clamped.y
                         reportLock(scale, size.width, size.height)
                     },
-                    onTap = { onTapCenter() },
+                    onTap = { at ->
+                        // Mirrored for RTL, so "the column that turns forward" stays under the same
+                        // thumb whichever way the book reads.
+                        onTapZone(TapGrid.zoneAt(at.x, at.y, size.width, size.height, rightToLeft))
+                    },
                 )
             },
     ) {
