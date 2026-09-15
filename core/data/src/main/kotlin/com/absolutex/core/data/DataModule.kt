@@ -17,7 +17,11 @@ object DataModule {
     @Provides
     @Singleton
     fun database(@ApplicationContext context: Context): AbsolutexDatabase =
-        Room.databaseBuilder(context, AbsolutexDatabase::class.java, "absolutex.db").build()
+        // Pre-1.0 acceptable: a schema bump resets reading progress rather than crashing
+        // on launch. Replace with an explicit Migration before 1.0 — progress is user data.
+        Room.databaseBuilder(context, AbsolutexDatabase::class.java, "absolutex.db")
+            .fallbackToDestructiveMigration()
+            .build()
 
     @Provides
     fun progressDao(db: AbsolutexDatabase): ProgressDao = db.progressDao()

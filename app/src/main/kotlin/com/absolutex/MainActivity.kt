@@ -57,7 +57,8 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
         val saved = vm.lastBook()
         if (saved != null) {
             val held = context.contentResolver.persistedUriPermissions.any { it.uri.toString() == saved }
-            if (held) uri = Uri.parse(saved) else vm.clearLastBook()
+            // Pass the stale Uri so the grant (if half-held) is released, not leaked.
+            if (held) uri = Uri.parse(saved) else vm.clearLastBook(saved)
         }
         restored = true
     }
@@ -66,12 +67,21 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
         ActivityResultContracts.OpenDocument(),
     ) { picked ->
         if (picked != null) {
+            // OpenDocument offers a persistable grant, but not every provider honours
+            // it — take() then throws SecurityException. Attempt, then VERIFY against
+            // persistedUriPermissions: only a verified Uri survives process death, and
+            // only a verified Uri is remembered for §5.2 resume.
             runCatching {
                 context.contentResolver.takePersistableUriPermission(
                     picked, Intent.FLAG_GRANT_READ_URI_PERMISSION,
                 )
+            }.onFailure { android.util.Log.w("Shell", "persistable grant refused", it) }
+            val persisted = context.contentResolver.persistedUriPermissions.any { it.uri == picked }
+            if (!persisted) {
+                android.util.Log.w("Shell", "grant not persisted; opening for this session only")
+            } else {
+                vm.rememberBook(picked.toString())
             }
-            vm.rememberBook(picked.toString())
             uri = picked
         }
     }

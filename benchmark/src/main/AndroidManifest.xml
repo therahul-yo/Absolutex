@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- No permissions: run-benchmark stages the corpus into the app's OWN external dir
+     (/sdcard/Android/data/<pkg>/files), which is readable with no permission under
+     scoped storage. The former WRITE_EXTERNAL_STORAGE grant was unused — removed
+     rather than scoped, so the benchmark APK requests nothing. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 </manifest>
