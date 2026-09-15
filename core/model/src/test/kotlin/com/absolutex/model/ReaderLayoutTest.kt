@@ -162,3 +162,19 @@ class TapGridTest {
         assertNotEquals(0, counts[TapZone.CENTER])
     }
 }
+
+class TapZoneColumnTest {
+
+    @Test fun `column is the position within the row, so page turns need no grid maths`() {
+        assertEquals(0, TapZone.TOP_LEFT.column)
+        assertEquals(1, TapZone.TOP_CENTER.column)
+        assertEquals(2, TapZone.TOP_RIGHT.column)
+        assertEquals(0, TapZone.BOTTOM_LEFT.column)
+        assertEquals(2, TapZone.MIDDLE_RIGHT.column)
+    }
+
+    @Test fun `a mirrored tap on the left reports the right column, so RTL turns forward there`() {
+        val zone = TapGrid.zoneAt(x = 10f, y = 500f, width = 1200, height = 2700, mirrored = true)
+        assertEquals(2, zone.column)
+    }
+}

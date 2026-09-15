@@ -105,6 +105,12 @@ enum class TapZone {
 }
 
 /**
+ * Which column of the grid a zone sits in: 0 left, 1 centre, 2 right. The enum is row-major, so the
+ * column is the entry's position within its row. Page turns care about the column alone.
+ */
+val TapZone.column: Int get() = ordinal % TapGrid.CELLS
+
+/**
  * Splits the reader surface into the 9-zone tap grid (§5.2).
  *
  * [mirrored] swaps the left and right columns, which is what an RTL book needs: the zone that
@@ -113,7 +119,7 @@ enum class TapZone {
 object TapGrid {
 
     /** Rows and columns: §5.2's grid is 3 x 3. */
-    private const val CELLS = 3
+    const val CELLS = 3
     private const val LAST_CELL = CELLS - 1
 
     fun zoneAt(x: Float, y: Float, width: Int, height: Int, mirrored: Boolean = false): TapZone {
