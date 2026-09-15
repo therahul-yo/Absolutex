@@ -4,6 +4,7 @@ import android.content.ComponentCallbacks2
 import android.content.Context
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.provider.OpenableColumns
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -14,6 +15,7 @@ import com.absolutex.core.decode.DecodeDispatchers
 import com.absolutex.core.decode.MemoryBudget
 import com.absolutex.core.decode.PageImage
 import com.absolutex.core.decode.TileCache
+import com.absolutex.model.BookIdentity
 import com.absolutex.source.ComicSource
 import com.absolutex.source.libarchive.LibArchiveSource
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -65,6 +67,8 @@ class ReaderViewModel @Inject constructor(
 
     private var source: ComicSource? = null
     private var bookId: String = ""
+    /** The Uri currently open, for the same-book check. Distinct from [bookId], the book's identity. */
+    private var openedUri: String = ""
     // Thread-safe for get-on-Main + put-on-decode-pool; bounded to a sliding window
     // around the current page (see evictFarPages). ConcurrentHashMap needs the manual
     // bound because it has no access-order eviction of its own. A plain HashMap here was
@@ -95,7 +99,7 @@ class ReaderViewModel @Inject constructor(
     // message, and the detail is logged. Narrowing would let an unlisted failure crash instead.
     @Suppress("TooGenericExceptionCaught")
     fun open(uri: Uri) {
-        if (bookId == uri.toString() && source != null) return
+        if (openedUri == uri.toString() && source != null) return
         // Cancel any in-flight open so a rapid book switch cannot land stale state.
         openJob?.cancel()
         val generation = openGeneration.incrementAndGet()
@@ -109,7 +113,7 @@ class ReaderViewModel @Inject constructor(
             val opened = try {
                 withContext(DecodeDispatchers.extract) {
                     // A fresh descriptor per read — a shared SAF fd corrupts parallel reads.
-                    LibArchiveSource.open { openDescriptor(uri) }
+                    LibArchiveSource.open { openDescriptor(uri) } to identityOf(uri)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -125,25 +129,47 @@ class ReaderViewModel @Inject constructor(
                 }
                 return@launch
             }
+            val (source0, identity) = opened
             if (generation != openGeneration.get()) {
-                runCatching { opened.close() }
+                runCatching { source0.close() }
                 return@launch
             }
             // Close the old source only now, immediately before replacing, so in-flight
             // page decodes against it fail cleanly instead of racing a premature close.
             val old = source
-            source = opened
-            bookId = uri.toString()
+            source = source0
+            openedUri = uri.toString()
+            bookId = identity
             runCatching { old?.close() }
             val resume = progressDao.get(bookId)?.pageIndex ?: 0
             _ui.value = ReaderUiState(
                 loading = false,
                 title = uri.lastPathSegment?.substringAfterLast('/').orEmpty(),
-                pageCount = opened.pages.size,
+                pageCount = source0.pages.size,
                 bookId = bookId,
-                currentPage = resume.coerceIn(0, (opened.pages.size - 1).coerceAtLeast(0)),
+                currentPage = resume.coerceIn(0, (source0.pages.size - 1).coerceAtLeast(0)),
             )
         }
+    }
+
+    /**
+     * The book's identity, however it was reached — see BookIdentity. Keying progress by the Uri
+     * string gave one comic a different identity per route, so the library could never match a
+     * shelf entry to its reading position.
+     */
+    private fun identityOf(uri: Uri): String = when (uri.scheme) {
+        "file", null -> uri.path?.let { java.io.File(it) }
+            ?.let { BookIdentity.ofOrFallback(it.name, it.length(), uri.toString()) }
+            ?: uri.toString()
+        else -> context.contentResolver.query(
+            uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null,
+        )?.use { c ->
+            if (!c.moveToFirst()) return@use null
+            val name = c.getColumnIndex(OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let(c::getString)
+            val size = c.getColumnIndex(OpenableColumns.SIZE)
+                .takeIf { it >= 0 && !c.isNull(it) }?.let(c::getLong)
+            BookIdentity.ofOrFallback(name, size, uri.toString())
+        } ?: uri.toString()
     }
 
     /**

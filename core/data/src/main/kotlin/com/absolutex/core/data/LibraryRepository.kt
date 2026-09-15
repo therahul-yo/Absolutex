@@ -2,6 +2,7 @@ package com.absolutex.core.data
 
 import com.absolutex.core.scan.LibraryScanner
 import com.absolutex.core.scan.ScannedBook
+import com.absolutex.model.BookIdentity
 import kotlinx.coroutines.flow.Flow
 import java.io.File
 import javax.inject.Inject
@@ -73,7 +74,7 @@ class LibraryRepository internal constructor(
         path = path,
         // Identity for cross-location deduplication (§5.1): the same file seen twice through
         // two configured roots. Name and size, because hashing contents is unaffordable.
-        contentKey = "${File(path).name}:$sizeBytes",
+        contentKey = BookIdentity.of(File(path).name, sizeBytes),
         series = parsed.series,
         title = parsed.title,
         issue = parsed.issue?.value,
