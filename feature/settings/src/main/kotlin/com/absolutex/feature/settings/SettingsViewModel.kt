@@ -74,4 +74,8 @@ class SettingsViewModel @Inject constructor(
     fun setFitMode(mode: FitMode) {
         viewModelScope.launch { writer.updateReader { it.withFitMode(mode) } }
     }
+
+    fun updateReader(change: (ReaderPrefs) -> ReaderPrefs) {
+        viewModelScope.launch { writer.updateReader(change) }
+    }
 }

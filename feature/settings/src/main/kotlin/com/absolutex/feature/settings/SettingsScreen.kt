@@ -23,6 +23,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.data.settings.ReaderPrefs
+import com.absolutex.core.data.settings.RotationLock
+import com.absolutex.model.PageLayout
 import com.absolutex.core.ui.AbsolutexTheme
 import com.absolutex.model.FitMode
 import com.absolutex.model.ReadingFlow
@@ -53,6 +55,7 @@ fun SettingsScreen(
                 onOpenImageFolders = vm::setOpenImageFolders,
                 onReadingFlow = vm::setReadingFlow,
                 onFitMode = vm::setFitMode,
+                onReader = vm::updateReader,
                 onCacheSize = vm::setCacheSize,
             ),
             modifier = modifier,
@@ -169,6 +172,38 @@ private fun ReaderGroup(reader: ReaderPrefs, actions: SettingsActions) {
                 onClick = { actions.onFitMode(mode) },
             )
         }
+        SegmentedSettingRow(
+            options = PageLayout.entries,
+            selected = reader.pageLayout,
+            onSelect = { layout -> actions.onReader { it.copy(pageLayout = layout) } },
+            labelRes = ::pageLayoutLabelRes,
+            descriptionRes = R.string.settings_page_layout_desc,
+        )
+        SegmentedSettingRow(
+            options = RotationLock.entries,
+            selected = reader.rotationLock,
+            onSelect = { lock -> actions.onReader { it.copy(rotationLock = lock) } },
+            labelRes = ::rotationLockLabelRes,
+            descriptionRes = R.string.settings_rotation_desc,
+        )
+        SwitchSettingRow(
+            titleRes = R.string.settings_keep_screen_on,
+            checked = reader.keepScreenOn,
+            onChange = { on -> actions.onReader { it.copy(keepScreenOn = on) } },
+            descriptionRes = R.string.settings_keep_screen_on_desc,
+        )
+        SwitchSettingRow(
+            titleRes = R.string.settings_use_cutout,
+            checked = reader.useCutout,
+            onChange = { on -> actions.onReader { it.copy(useCutout = on) } },
+            descriptionRes = R.string.settings_use_cutout_desc,
+        )
+        SwitchSettingRow(
+            titleRes = R.string.settings_volume_keys,
+            checked = reader.volumeKeysTurnPages,
+            onChange = { on -> actions.onReader { it.copy(volumeKeysTurnPages = on) } },
+            descriptionRes = R.string.settings_volume_keys_desc,
+        )
     }
 }
 

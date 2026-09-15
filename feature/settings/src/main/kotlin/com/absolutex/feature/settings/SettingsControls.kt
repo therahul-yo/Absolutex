@@ -33,6 +33,8 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.NightMode
+import com.absolutex.core.data.settings.RotationLock
+import com.absolutex.model.PageLayout
 import com.absolutex.model.FitMode
 import com.absolutex.model.ReadingFlow
 import kotlin.math.roundToInt
@@ -192,4 +194,16 @@ fun fitModeLabelRes(mode: FitMode): Int = when (mode) {
     FitMode.FULL_SIZE -> R.string.settings_fit_full
     FitMode.FIT_WIDTH -> R.string.settings_fit_width
     FitMode.FIT_HEIGHT -> R.string.settings_fit_height
+}
+
+fun pageLayoutLabelRes(layout: PageLayout): Int = when (layout) {
+    PageLayout.SINGLE -> R.string.settings_layout_single
+    PageLayout.DOUBLE -> R.string.settings_layout_double
+    PageLayout.DOUBLE_WITH_COVER -> R.string.settings_layout_cover
+}
+
+fun rotationLockLabelRes(lock: RotationLock): Int = when (lock) {
+    RotationLock.SYSTEM -> R.string.settings_rotation_system
+    RotationLock.PORTRAIT -> R.string.settings_rotation_portrait
+    RotationLock.LANDSCAPE -> R.string.settings_rotation_landscape
 }

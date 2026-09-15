@@ -33,6 +33,20 @@
     <string name="settings_fit_full">Full size</string>
     <string name="settings_fit_width">Fit width</string>
     <string name="settings_fit_height">Fit height</string>
+    <string name="settings_page_layout_desc">Page layout</string>
+    <string name="settings_layout_single">Single</string>
+    <string name="settings_layout_double">Double</string>
+    <string name="settings_layout_cover">Cover, then double</string>
+    <string name="settings_rotation_desc">Rotation while reading</string>
+    <string name="settings_rotation_system">System</string>
+    <string name="settings_rotation_portrait">Portrait</string>
+    <string name="settings_rotation_landscape">Landscape</string>
+    <string name="settings_keep_screen_on">Keep screen on</string>
+    <string name="settings_keep_screen_on_desc">Keep screen on. The screen stays awake while a page is open.</string>
+    <string name="settings_use_cutout">Use the cutout area</string>
+    <string name="settings_use_cutout_desc">Use the cutout area. Pages draw around the camera cutout instead of below it.</string>
+    <string name="settings_volume_keys">Volume keys turn pages</string>
+    <string name="settings_volume_keys_desc">Volume keys turn pages. Volume down goes forward, volume up goes back.</string>
 
     <!-- AppPrefs.cacheSizeMiB is the decode/page cache, not thumbnails; see lead review on #15. -->
     <string name="settings_cache_value">Page cache: %1$d MiB</string>

@@ -6,6 +6,7 @@ import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.data.settings.ReaderPrefs
 import com.absolutex.core.data.settings.SettingsWriter
 import com.absolutex.model.FitMode
+import com.absolutex.model.PageLayout
 import com.absolutex.model.ReadingFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -115,6 +116,21 @@ class SettingsViewModelTest {
         advanceUntilIdle()
         assertEquals(
             ReaderPrefs().copy(readingFlow = ReadingFlow.RTL, fitMode = FitMode.FIT_WIDTH),
+            fake.reader,
+        )
+        assertEquals(AppPrefs(), fake.app)
+    }
+
+    @Test
+    fun `a reader field edit writes only that field`() = runTest {
+        val fake = FakeSettingsWriter()
+        val vm = viewModel(fake)
+        vm.setReadingFlow(ReadingFlow.RTL)
+        vm.updateReader { it.copy(pageLayout = PageLayout.DOUBLE_WITH_COVER) }
+        vm.updateReader { it.copy(keepScreenOn = false) }
+        advanceUntilIdle()
+        assertEquals(
+            ReaderPrefs(readingFlow = ReadingFlow.RTL, pageLayout = PageLayout.DOUBLE_WITH_COVER, keepScreenOn = false),
             fake.reader,
         )
         assertEquals(AppPrefs(), fake.app)
