@@ -39,12 +39,9 @@ interface SettingsWriter {
  * until the DataStore adapter exists. Backing it with a DataStore-fronted bag makes it the real
  * thing, which is the point of the seam.
  *
- * TODO(lane-E): the DataStore-backed MutablePrefBag is not in this change. It needs
- *  `androidx.datastore:datastore` (the typed/Proto artifact, which is not yet in the version
- *  catalog — only datastore-preferences and datastore-core are) plus the protobuf Gradle plugin
- *  for the reader-prefs schema that §6 asks for. Adding an androidx coordinate means pinning a
- *  version, and this container cannot reach Google Maven to verify one against the live
- *  repository, which the project's rules require. See the PR description.
+ * The persisted implementation is [DataStoreSettings]: the same [PrefCodec] validation over
+ * Preferences DataStore, bound to all three contracts in SettingsDataModule. This class stays as
+ * the test double behind [MapPrefBag]; every public signature here is frozen for existing consumers.
  */
 class InMemorySettings(
     private val bag: MutablePrefBag = MapPrefBag(),
