@@ -1,4 +1,4 @@
-package com.absolutex.remote.smb
+package com.absolutex.remote.core
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -6,12 +6,12 @@ import org.junit.Assert.fail
 import org.junit.Test
 import java.io.IOException
 
-class SeekableSmbReaderTest {
+class SeekableReaderTest {
 
-    private fun readerOf(size: Int, blockSize: Int = 16): Pair<FakeSmbTransport, SeekableSmbReader> {
+    private fun readerOf(size: Int, blockSize: Int = 16): Pair<FakeRangeTransport, SeekableReader> {
         val bytes = ByteArray(size) { it.toByte() }
-        val transport = FakeSmbTransport(mapOf("book.cbz" to bytes))
-        val reader = SeekableSmbReader(transport, "book.cbz", size.toLong(), BlockCache(blockSize, 1024))
+        val transport = FakeRangeTransport(bytes)
+        val reader = SeekableReader(transport, size.toLong(), BlockCache(blockSize, 1024))
         return transport to reader
     }
 
@@ -41,6 +41,15 @@ class SeekableSmbReaderTest {
         assertTrue(reader.readAt(12, 8).contentEquals(byteArrayOf(12, 13, 14, 15, 16, 17, 18, 19)))
     }
 
+    @Test fun `partial cache fetches only the missing runs`() {
+        val (transport, reader) = readerOf(64)
+        reader.readAt(0, 16)
+        val calls = reader.readCalls
+        reader.readAt(8, 16)
+        assertEquals(calls + 1, reader.readCalls)
+        assertTrue(transport.bytesServed <= 32)
+    }
+
     @Test fun `read past end throws, never wraps`() {
         val (_, reader) = readerOf(32)
         try {
@@ -60,12 +69,18 @@ class SeekableSmbReaderTest {
     }
 
     @Test fun `read larger than the cache streams window by window`() {
-        // Item 3: a span the cache cannot hold used to fail with "cache miss after fetch"
-        // after transferring the whole span. Windows cap each fetch at cache capacity.
+        // A span the cache cannot hold used to fail with "cache miss after fetch" after
+        // transferring the whole span. Windows cap each fetch at cache capacity.
         val size = 10 * 1024
         val bytes = ByteArray(size) { it.toByte() }
-        val transport = FakeSmbTransport(mapOf("b" to bytes))
-        val reader = SeekableSmbReader(transport, "b", size.toLong(), BlockCache(1024, 4096))
+        val transport = FakeRangeTransport(bytes)
+        val reader = SeekableReader(transport, size.toLong(), BlockCache(1024, 4096))
         assertTrue(reader.readAt(0, size).contentEquals(bytes))
+    }
+
+    @Test fun `zero-length read returns empty with no fetch`() {
+        val (transport, reader) = readerOf(64)
+        assertEquals(0, reader.readAt(10, 0).size)
+        assertEquals(0, transport.ranges.size)
     }
 }

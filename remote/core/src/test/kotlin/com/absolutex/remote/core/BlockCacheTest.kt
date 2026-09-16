@@ -1,4 +1,4 @@
-package com.absolutex.remote.smb
+package com.absolutex.remote.core
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -33,5 +33,22 @@ class BlockCacheTest {
         cache.put(0, ByteArray(8))
         cache.put(1, ByteArray(3))
         assertEquals(11, cache.sizeBytes())
+    }
+
+    @Test fun `overwrite keeps byte accounting flat`() {
+        val cache = BlockCache(blockSize = 8, maxBytes = 64)
+        cache.put(0, ByteArray(8))
+        cache.put(0, ByteArray(5))
+        assertEquals(5, cache.sizeBytes())
+        assertTrue(cache.get(0)?.size == 5)
+    }
+
+    @Test fun `lone over-budget block degrades to a pass-through`() {
+        // No production path puts one (readers chunk to blockSize); the fail-safe is that a
+        // misbehaving caller cannot pin the cache.
+        val cache = BlockCache(blockSize = 8, maxBytes = 16)
+        cache.put(0, ByteArray(64))
+        assertNull(cache.get(0))
+        assertEquals(0, cache.sizeBytes())
     }
 }

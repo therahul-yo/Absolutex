@@ -1,4 +1,4 @@
-package com.absolutex.remote.smb
+package com.absolutex.remote.core
 
 import java.io.IOException
 import java.io.InputStream
@@ -6,11 +6,12 @@ import java.io.InputStream
 /**
  * Seekable reads over one remote file through a [BlockCache]. Missing ranges are coalesced:
  * one contiguous transport read covers all absent blocks in the span, because on a LAN one
- * larger read is cheaper than N round trips.
+ * larger read is cheaper than N round trips. Reads wider than the cache stream window by
+ * window instead of dying with "cache miss after fetch" — a span the cache cannot hold would
+ * evict its own head before it is copied.
  */
-class SeekableSmbReader(
-    private val transport: SmbTransport,
-    private val remotePath: String,
+class SeekableReader(
+    private val transport: RangeTransport,
     val sizeBytes: Long,
     private val cache: BlockCache = BlockCache(),
 ) {
@@ -44,9 +45,8 @@ class SeekableSmbReader(
                 var data = cache.get(block)
                 if (data == null) {
                     // Fetch at most a cache-full window ahead of this block: a longer span
-                    // would evict the head before it is copied ("cache miss after fetch").
-                    // The loop refills window by window, so reads bigger than the cache
-                    // stream instead of throwing.
+                    // would evict the head before it is copied. The loop refills window by
+                    // window, so reads bigger than the cache stream instead of throwing.
                     fetchSpan(pos, minOf(offset + length, pos + cache.maxBytes))
                     data = cache.get(block)
                         ?: throw IOException("cache miss after fetch at block $block")
@@ -81,9 +81,9 @@ class SeekableSmbReader(
         while (block <= lastBlock) {
             if (cache.get(block) == null) {
                 var end = block
-                // Cap the run at what the cache holds: inserting more would evict this span's
-                // own head, and the read would fail with "cache miss after fetch" after an
-                // OOM-sized transfer. The loop refills window by window instead.
+                // Cap the run at what the cache holds: inserting more would evict this
+                // span's own head, and the read would fail after an OOM-sized transfer.
+                // The readAt loop refills window by window instead.
                 while (end + 1 <= lastBlock && cache.get(end + 1) == null &&
                     (end + 1 - block + 1) * cache.blockSize <= cache.maxBytes
                 ) {
@@ -91,7 +91,7 @@ class SeekableSmbReader(
                 }
                 val start = block * cache.blockSize
                 val stop = minOf((end + 1) * cache.blockSize, sizeBytes)
-                val bytes = transport.readAt(remotePath, start, (stop - start).toInt())
+                val bytes = transport.readAt(start, (stop - start).toInt())
                 bytesFetched += bytes.size
                 readCalls++
                 var cursor = 0

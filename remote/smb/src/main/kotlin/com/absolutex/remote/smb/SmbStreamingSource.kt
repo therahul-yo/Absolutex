@@ -1,6 +1,8 @@
 package com.absolutex.remote.smb
 
 import com.absolutex.model.Page
+import com.absolutex.remote.core.SeekableReader
+import com.absolutex.remote.core.ZipDirectory
 import com.absolutex.source.EntryFilter
 import com.absolutex.source.NaturalOrder
 import java.io.ByteArrayInputStream
@@ -10,7 +12,7 @@ import java.util.zip.Inflater
 import java.util.zip.InflaterInputStream
 
 /**
- * ZIP/CBZ over [SeekableSmbReader]: index from the tail, pages from entry ranges.
+ * ZIP/CBZ over a core [SeekableReader]: index from the tail, pages from entry ranges.
  * STORED entries stream straight through the block cache; DEFLATED entries fetch exactly
  * their compressed range and inflate in memory — still no whole-archive download either way.
  *
@@ -21,8 +23,8 @@ import java.util.zip.InflaterInputStream
  * ZIP/CBZ-only; anything else fails fast instead of pretending.
  */
 class SmbStreamingSource private constructor(
-    private val reader: SeekableSmbReader,
-    private val entries: List<ZipEntryRange>,
+    private val reader: SeekableReader,
+    private val entries: List<ZipDirectory.Entry>,
     override val pages: List<Page>,
 ) : RemoteComicSource {
 
@@ -30,21 +32,26 @@ class SmbStreamingSource private constructor(
         val page = pages.getOrNull(index)
             ?: throw IndexOutOfBoundsException("page $index of ${pages.size}")
         val entry = entries[page.index]
-        if (entry.compressedSize > MAX_REMOTE_ENTRY_BYTES) {
-            throw IOException("entry too large: ${entry.compressedSize} bytes")
-        }
+        checkEntryReadable(entry)
         // Local header offsets resolve here, per opened page — indexing never pays a
-        // ranged read per entry (item 6: ~600 round trips for a 200-page CBZ).
-        val dataOffset = ZipRemoteIndex.dataOffsetOf(reader, entry)
+        // ranged read per entry (about 600 round trips for a 200-page CBZ).
+        val dataOffset = ZipDirectory.localDataOffsetOf(reader::readAt, entry)
         return when (entry.method) {
-            ZipRemoteIndex.METHOD_STORED ->
+            ZipDirectory.METHOD_STORED ->
                 reader.openStream(dataOffset, entry.compressedSize)
             else ->
-                // nowrap=true: ZIP stores raw DEFLATE (RFC 1951); the default Inflater expects
-                // a zlib wrapper (RFC 1950) and fails every entry with "incorrect header check".
                 DeflateStream(
                     reader.readAt(dataOffset, entry.compressedSize.toInt()),
                 )
+        }
+    }
+
+    private fun checkEntryReadable(entry: ZipDirectory.Entry) {
+        if (entry.compressedSize > MAX_REMOTE_ENTRY_BYTES) {
+            throw IOException("entry too large: ${entry.compressedSize} bytes")
+        }
+        if (entry.method != ZipDirectory.METHOD_STORED && entry.method != ZipDirectory.METHOD_DEFLATED) {
+            throw IOException("unsupported ZIP method ${entry.method}: ${entry.name}")
         }
     }
 
@@ -57,39 +64,38 @@ class SmbStreamingSource private constructor(
     companion object {
         // A page is a few megabytes; larger means hostile input, not a scan (§2 degrade rule).
         const val MAX_REMOTE_ENTRY_BYTES = 32L * 1024 * 1024
+
         @Throws(IOException::class)
         fun open(transport: SmbTransport, remotePath: String): SmbStreamingSource {
-            val size = transport.sizeBytes(remotePath)
-            if (size < MIN_ZIP_SIZE) throw IOException("too small for an archive")
-            val probe = SeekableSmbReader(transport, remotePath, size)
-            if (!isZip(probe)) {
+            val reader = SeekableReader(transport.bind(remotePath), transport.sizeBytes(remotePath))
+            if (!isZip(reader)) {
                 throw IOException("remote streaming supports zip/cbz only (TODO: cached fallback)")
             }
-            val index = ZipRemoteIndex.open(probe)
-            val kept = index.entries
+            val entries = ZipDirectory.open(reader::readAt, reader.sizeBytes)
                 .filter { EntryFilter.isPage(it.name) }
+                .filter { it.method == ZipDirectory.METHOD_STORED || it.method == ZipDirectory.METHOD_DEFLATED }
                 .sortedWith { a, b -> NaturalOrder.compare(a.name, b.name) }
-            val pages = kept.mapIndexed { i, entry ->
+            val pages = entries.mapIndexed { i, entry ->
                 Page(index = i, entryName = entry.name, sizeBytes = entry.uncompressedSize)
             }
-            // kept is parallel to pages: filter/sort produce the view, entries stay attached.
-            return SmbStreamingSource(probe, kept, pages)
+            // entries is parallel to pages: filter/sort produce the view, entries stay attached.
+            return SmbStreamingSource(reader, entries, pages)
         }
 
-        private fun isZip(reader: SeekableSmbReader): Boolean {
+        private fun isZip(reader: SeekableReader): Boolean {
             if (reader.sizeBytes < MIN_ZIP_SIZE) return false
             val magic = reader.readAt(0, MIN_ZIP_SIZE)
             return magic[0] == PK_BYTE_0 && magic[1] == PK_BYTE_1 &&
                 magic[HEADER_INDEX_2] == LOCAL_FILE_SIG_2 && magic[HEADER_INDEX_3] == LOCAL_FILE_SIG_3
         }
 
-    private const val MIN_ZIP_SIZE = 4
-    private const val HEADER_INDEX_2 = 2
-    private const val HEADER_INDEX_3 = 3
-    private const val PK_BYTE_0 = 0x50.toByte()
-    private const val PK_BYTE_1 = 0x4B.toByte()
-    private const val LOCAL_FILE_SIG_2 = 0x03.toByte()
-    private const val LOCAL_FILE_SIG_3 = 0x04.toByte()
+        private const val MIN_ZIP_SIZE = 4
+        private const val HEADER_INDEX_2 = 2
+        private const val HEADER_INDEX_3 = 3
+        private const val PK_BYTE_0 = 0x50.toByte()
+        private const val PK_BYTE_1 = 0x4B.toByte()
+        private const val LOCAL_FILE_SIG_2 = 0x03.toByte()
+        private const val LOCAL_FILE_SIG_3 = 0x04.toByte()
     }
 }
 

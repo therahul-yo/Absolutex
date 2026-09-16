@@ -14,6 +14,7 @@ android {
 dependencies {
     implementation(project(":core:model"))
     implementation(project(":source:api"))
+    implementation(project(":remote:core"))
     // FTP/FTPS wire protocol. Apache-2.0, version pinned in the catalog (see its note).
     implementation(libs.commons.net)
     testImplementation(libs.junit)
