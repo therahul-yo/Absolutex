@@ -96,7 +96,7 @@ class LibraryScanner(
      */
     private suspend fun walk(dir: File, out: Channel<Candidate>, seenDirs: HashSet<String>) {
         if (!seenDirs.add(canonicalOf(dir))) return
-        val children = dir.listFiles()?.filterNot { skip(it) } ?: return
+        val children = dir.listFiles()?.filterNot { shouldSkip(it, includeHidden) } ?: return
         val (subdirs, files) = children.partition { it.isDirectory }
 
         for (file in files) {
@@ -114,25 +114,63 @@ class LibraryScanner(
         for (sub in subdirs) walk(sub, out, seenDirs)
     }
 
-    /**
-     * Everything a scan never looks at, in one place.
-     *
-     * Junk directories matter as much as junk files: filtering only names lets
-     * "__MACOSX/001.cbz" through, because that filename is perfectly innocent.
-     */
-    private fun skip(file: File): Boolean {
-        if (!includeHidden && file.name.startsWith(".")) return true
-        return if (file.isDirectory) {
-            EntryFilter.isJunkDirectory(file.name)
-        } else {
-            EntryFilter.isJunk(file.name)
-        }
-    }
-
     private fun canonicalOf(file: File): String =
         runCatching { file.canonicalPath }.getOrElse { file.absolutePath }
 
     companion object {
+        /**
+         * Parses one file exactly as a scan of its directory would: a container becomes a book,
+         * and a folder at or over the image rule becomes a folder book. Returns null for anything
+         * the scanner would not pick up — junk, hidden when those are excluded, or a plain file
+         * that is neither a container nor a book folder.
+         *
+         * Exists for the change stream: an `Added` names one path, and answering it must not
+         * re-parse its whole location.
+         */
+        fun scanFile(file: File, includeHidden: Boolean = false): ScannedBook? {
+            if (shouldSkip(file, includeHidden)) return null
+            if (file.isDirectory) {
+                val children = file.listFiles()?.filterNot { shouldSkip(it, includeHidden) }
+                    ?: return null
+                val images = children.filter { !it.isDirectory && EntryFilter.isPage(it.name) }
+                val hasSubdir = children.any { it.isDirectory }
+                if (!hasSubdir && images.size >= MIN_IMAGES_FOR_FOLDER_BOOK) {
+                    return ScannedBook(
+                        path = file.path,
+                        sizeBytes = images.sumOf { it.length() },
+                        parsed = FilenameParser.parse(file.path),
+                        isImageFolder = true,
+                        imageCount = images.size,
+                    )
+                }
+                return null
+            }
+            if (file.isFile && EntryFilter.extensionOf(file.name) in CONTAINER_EXTENSIONS) {
+                return ScannedBook(
+                    path = file.path,
+                    sizeBytes = file.length(),
+                    parsed = FilenameParser.parse(file.path),
+                )
+            }
+            return null
+        }
+
+        /**
+         * Everything a scan never looks at, in one place.
+         *
+         * Junk directories matter as much as junk files: filtering only names lets
+         * "__MACOSX/001.cbz" through, because that filename is perfectly innocent.
+         *
+         * Shared with [LibraryWatcher] so watch and scan never disagree on what to ignore.
+         */
+        fun shouldSkip(file: File, includeHidden: Boolean): Boolean {
+            if (!includeHidden && file.name.startsWith(".")) return true
+            return if (file.isDirectory) {
+                EntryFilter.isJunkDirectory(file.name)
+            } else {
+                EntryFilter.isJunk(file.name)
+            }
+        }
         /**
          * Containers worth opening (§2). Kept here rather than in FilenameParser: the parser
          * strips extensions it recognises, this decides what is a book in the first place.
