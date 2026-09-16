@@ -1,5 +1,6 @@
 package com.absolutex.feature.reader
 
+import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.Paint
 import android.graphics.Rect
@@ -27,11 +28,14 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import com.absolutex.core.decode.DecodeDispatchers
 import com.absolutex.core.decode.PageImage
 import com.absolutex.core.decode.TileCache
 import com.absolutex.core.decode.TileGrid
 import com.absolutex.core.decode.TileKey
+import com.absolutex.core.gpu.ColourParams
+import com.absolutex.core.gpu.ColourPipeline
 import com.absolutex.model.FitGeometry
 import com.absolutex.model.FitMode
 import com.absolutex.model.TapGrid
@@ -84,6 +88,11 @@ private fun floorDiv(a: Int, b: Int): Int = if (a >= 0) a / b else -(((-a) + b -
  *    frame is exactly the garbage the brief forbids in the scroll hot path.
  * 3. Tiles are drawn through nativeCanvas.drawBitmap, which accepts hardware bitmaps directly
  *    with no readback. That is what lets colour correction stay a draw-time shader later.
+ * 4. Colour correction (§4) is a RuntimeShader on the tile Paint, fed by one BitmapShader per
+ *    bitmap — never a RenderEffect on the page layer, which would force the layer's contents
+ *    through a separate offscreen pass. At neutral ([ColourParams.isNeutral]) the shader path
+ *    is not entered at all: the draw calls below are the pre-shader ones, so correction off
+ *    costs nothing by construction.
  */
 @Composable
 fun PageCanvas(
@@ -126,6 +135,12 @@ fun PageCanvas(
     onEdgeSwipe: (forward: Boolean) -> Unit = {},
     /** Which half of a two-page spread this page fills, if any. */
     spreadSide: SpreadSide = SpreadSide.NONE,
+    /**
+     * Draw-time colour correction (§4). Neutral by default, which leaves the draw calls below
+     * exactly as they were — ReaderScreen passes nothing today and needs no change until
+     * milestone 2 wires RenderingPrefs through here (TODO(lead): add that parameter then).
+     */
+    colour: ColourParams = ColourParams(),
 ) {
     var scale by remember(pageIndex) { mutableFloatStateOf(1f) }
     var offsetX by remember(pageIndex) { mutableFloatStateOf(0f) }
@@ -148,6 +163,18 @@ fun PageCanvas(
     val src = remember { Rect() }
     val dst = remember { Rect() }
     val paint = remember { Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG) }
+    // Draw-time colour state. Hoisted like Rect/Paint above: uniforms update in place per frame,
+    // nothing here allocates per frame, per tile or per draw call.
+    val colourPipeline = remember(pageIndex) { ColourPipeline() }
+    // Macrobenchmark hook: GpuBenchmark launches the reader with EXTRA_COLOUR on the intent to
+    // drive the corrected path with no settings UI. Read once per page, never per frame; the
+    // draw lambda below only reads the resolved value. TODO(lead): milestone 2 replaces this
+    // with RenderingPrefs passed as `colour` above — delete the hook then.
+    val context = LocalContext.current
+    val benchmarkColour = remember(pageIndex) {
+        (context as? Activity)?.intent?.getStringExtra(ColourParams.EXTRA_COLOUR)
+            ?.let(ColourParams::decode)
+    }
 
     fun reportLock(atScale: Float, vw: Int, vh: Int) {
         val s = FitGeometry.baseScale(fitMode, vw, vh, page.width, page.height)
@@ -435,6 +462,10 @@ fun PageCanvas(
         val ox = offsetX
         val oy = offsetY
         @Suppress("UNUSED_EXPRESSION") tileGeneration
+        // Colour resolution is a draw-phase read too: a slider drag (milestone 2) repaints without
+        // recomposing. Null means neutral — the draw calls below are then today's, untouched.
+        val activeColour = benchmarkColour ?: colour
+        val graded = if (colourPipeline.shouldApply(activeColour)) activeColour else null
 
         val bmp = base ?: return@Canvas
         if (page.width <= 0 || page.height <= 0) return@Canvas
@@ -458,7 +489,11 @@ fun PageCanvas(
                 originX.toInt(), originY.toInt(),
                 (originX + drawW).toInt(), (originY + drawH).toInt(),
             )
-            native.drawBitmap(bmp, src, dst, paint)
+            if (graded != null) {
+                drawGraded(native, colourPipeline, graded, bmp, dst.left, dst.top, dst.right, dst.bottom)
+            } else {
+                native.drawBitmap(bmp, src, dst, paint)
+            }
 
             // The base layer's own resolution decides, read off the bitmap: no allocation here.
             if (bmp.width >= page.width) return@drawIntoCanvas
@@ -492,11 +527,38 @@ fun PageCanvas(
                     if (tr < 0 || tb < 0 || tl > vw || tt > vh) continue
                     src.set(0, 0, tile.width, tile.height)
                     dst.set(tl.toInt(), tt.toInt(), max(tr.toInt(), tl.toInt() + 1), max(tb.toInt(), tt.toInt() + 1))
-                    native.drawBitmap(tile, src, dst, paint)
+                    if (graded != null) {
+                        drawGraded(native, colourPipeline, graded, tile, dst.left, dst.top, dst.right, dst.bottom)
+                    } else {
+                        native.drawBitmap(tile, src, dst, paint)
+                    }
                 }
             }
         }
     }
+}
+
+/**
+ * One bitmap through the draw-time colour shader.
+ *
+ * drawRect, not drawBitmap: Skia replaces a paint's shader with the image shader on bitmap
+ * draws, so a RuntimeShader on the paint would silently never run. The child BitmapShader
+ * instead carries the dst-to-bitmap matrix (see contentMatrix), which makes this cover exactly
+ * the pixels drawBitmap would. A top-level function, not a local one: a capturing local would
+ * allocate its closure object on every frame.
+ */
+private fun drawGraded(
+    native: android.graphics.Canvas,
+    pipeline: ColourPipeline,
+    params: ColourParams,
+    bitmap: Bitmap,
+    left: Int,
+    top: Int,
+    right: Int,
+    bottom: Int,
+) {
+    val paint = pipeline.paintFor(params, bitmap, left, top, right, bottom)
+    native.drawRect(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat(), paint)
 }
 
 /**

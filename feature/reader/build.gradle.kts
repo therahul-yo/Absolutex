@@ -19,6 +19,7 @@ dependencies {
     implementation(project(":core:ui"))
     implementation(project(":core:data"))
     implementation(project(":core:decode"))
+    implementation(project(":core:gpu"))
     implementation(project(":source:api"))
     implementation(project(":source:libarchive"))
     implementation(project(":source:pdf"))
