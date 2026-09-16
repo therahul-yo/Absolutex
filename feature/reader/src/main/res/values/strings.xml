@@ -12,6 +12,13 @@
     <string name="reader_page_indicator_desc">Page %1$d of %2$d</string>
     <string name="reader_seek_desc">Jump to a page</string>
     <string name="reader_contents">Contents</string>
+    <string name="reader_flow_ltr">L to R</string>
+    <string name="reader_flow_rtl">R to L</string>
+    <string name="reader_flow_vertical">Vertical</string>
+    <string name="reader_layout_single">Single</string>
+    <string name="reader_layout_double">Double</string>
+    <string name="reader_layout_cover">Cover+</string>
+    <string name="reader_layout_continuous">Strip</string>
     <string name="reader_fit_screen">Screen</string>
     <string name="reader_fit_width">Width</string>
     <string name="reader_fit_height">Height</string>

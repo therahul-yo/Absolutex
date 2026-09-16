@@ -1,5 +1,6 @@
 package com.absolutex.core.data.settings
 
+import com.absolutex.core.data.BookPrefs
 import com.absolutex.model.FitContext
 import com.absolutex.model.FitMode
 import com.absolutex.model.FitModeMemory
@@ -45,6 +46,18 @@ data class ReaderPrefs(
     /** The chrome carries a strip of page thumbnails (§5.2). */
     val thumbnailStrip: Boolean = true,
 )
+
+/**
+ * The global settings as this book wants them (§5.2). A field the book has not overridden, or
+ * overrode with a value this build no longer knows, keeps the global answer rather than resetting
+ * to a default nobody chose.
+ */
+fun ReaderPrefs.overriddenBy(book: BookPrefs?): ReaderPrefs {
+    if (book == null) return this
+    val flow = book.readingFlow?.let { name -> ReadingFlow.entries.firstOrNull { it.name == name } }
+    val layout = book.pageLayout?.let { name -> PageLayout.entries.firstOrNull { it.name == name } }
+    return copy(readingFlow = flow ?: readingFlow, pageLayout = layout ?: pageLayout)
+}
 
 /** The fit for this shape of screen and page: what was last chosen here, or the shape's default. */
 fun ReaderPrefs.fitFor(context: FitContext): FitMode = fitMemory.modeFor(context)

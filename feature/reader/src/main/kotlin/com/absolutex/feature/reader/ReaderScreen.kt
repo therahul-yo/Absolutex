@@ -83,6 +83,7 @@ import com.absolutex.core.decode.PageImage
 import com.absolutex.model.FitContext
 import com.absolutex.model.FitMode
 import com.absolutex.core.data.settings.fitFor
+import com.absolutex.core.data.settings.overriddenBy
 import androidx.compose.ui.platform.LocalConfiguration
 import com.absolutex.model.ReadingFlow
 import com.absolutex.model.Spreads
@@ -98,7 +99,11 @@ fun ReaderScreen(
     vm: ReaderViewModel = hiltViewModel(),
 ) {
     val ui by vm.ui.collectAsStateWithLifecycle()
-    val prefs by vm.readerPrefs.collectAsStateWithLifecycle()
+    val global by vm.readerPrefs.collectAsStateWithLifecycle()
+    // A book's own choices win over the global ones (§5.2), and only for this book.
+    val options: ReaderOptionsViewModel = hiltViewModel()
+    val book by remember(ui.bookId) { options.bookPrefs(ui.bookId) }.collectAsStateWithLifecycle(null)
+    val prefs = global.overriddenBy(book)
 
     LaunchedEffect(uri) { vm.open(uri) }
 
@@ -425,6 +430,7 @@ private fun ReaderChrome(
             if (contents) TocPanel(toc, onJump = { onSeek(it); contents = false })
             ExportRow(page, onExport)
             fitFor?.let { FitRow(prefs, it) }
+            BookOptionsRow(bookId, prefs)
             if (toc.isNotEmpty()) {
                 TextButton(onClick = { contents = !contents }) {
                     Text(stringResource(R.string.reader_contents))
