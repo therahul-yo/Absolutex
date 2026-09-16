@@ -1,7 +1,5 @@
 package com.absolutex.feature.reader
 
-import com.absolutex.model.TapGrid
-import com.absolutex.model.TapZone
 import android.view.KeyEvent
 import com.absolutex.model.TapGrid
 import com.absolutex.model.TapZone
