@@ -18,6 +18,14 @@ import android.graphics.Shader
  * ([TileCache] deliberately does not recycle on eviction, so an isRecycled sweep would not work;
  * the cap is the whole reclamation story.)
  *
+ * The cap is the visible working set, not an arbitrary headroom number: a 1240×2772 viewport
+ * shows at most ~18 512 px tiles per sample level, and one [ColourPipeline] is created per page
+ * composable. With `beyondViewportPageCount = 1` the reader composes three pages, so a 64-entry
+ * cap per pipeline would hold up to 192 strongly-referenced bitmaps — each ~1 MB at 512 px
+ * ARGB — after [TileCache] has already evicted them, which is several times §3's whole reader
+ * budget. 24 entries covers the visible set across sample levels plus the base layer with room
+ * to spare, and anything beyond it re-creates for one small alloc off budget.
+ *
  * The constructor touches no Android classes — every graphics object is created on first
  * non-neutral use — so the neutral gate below stays unit-testable on the JVM.
  */
@@ -84,10 +92,11 @@ class ColourPipeline {
         }
         val placement = contentMatrix(bitmap.width, bitmap.height, left, top, right, bottom)
         val m = matrix ?: Matrix().also { matrix = it }
-        // preTranslate, not post: the sample is scale-then-shift, M = T * S, so the shift
-        // applies unscaled after the scale.
+        // The local matrix maps bitmap → canvas: scale by dst/bitmap, then translate by the
+        // destination origin. postTranslate applies the shift AFTER the scale, so the origin
+        // lands at (left, top) unscaled.
         m.setScale(placement.scaleX, placement.scaleY)
-        m.preTranslate(placement.transX, placement.transY)
+        m.postTranslate(placement.transX, placement.transY)
         content.setLocalMatrix(m)
         rt.setInputShader(ColourShader.UNIFORM_CONTENT, content)
         return (paint ?: Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG).also { paint = it })
@@ -97,9 +106,12 @@ class ColourPipeline {
     companion object {
         /**
          * Content-shader entries held per page. A 1240×2772 viewport shows at most ~18 512 px
-         * tiles per sample level; 64 covers the visible set across levels plus the base layer
+         * tiles per sample level; 24 covers the visible set across levels plus the base layer
          * with room to spare, and anything beyond it re-creates for one small alloc off budget.
+         * Capped at the visible working set because one pipeline per page composable × three
+         * composed pages would otherwise hold 192 strongly-referenced bitmaps after TileCache
+         * evicted them — see the class KDoc.
          */
-        const val MAX_CONTENT_SHADERS = 64
+        const val MAX_CONTENT_SHADERS = 24
     }
 }

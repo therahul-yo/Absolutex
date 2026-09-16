@@ -39,8 +39,13 @@ object ColourMath {
  *
  * The shader path draws `drawRect(dst)` instead of `drawBitmap(src, dst)` — Skia replaces a
  * paint's shader with the image shader on bitmap draws, so the effect would silently never run —
- * and positions the content with a local matrix on the child BitmapShader. The matrix maps a
- * canvas coordinate to the bitmap pixel drawn there: `pixel = (frag - dst.origin) * bitmap / dst`.
+ * and positions the content with a local matrix on the child BitmapShader. The local matrix maps
+ * bitmap coordinates to canvas coordinates: `canvas = M · bitmap`, so sampling applies `M⁻¹`,
+ * which maps canvas → bitmap as `(frag - origin) * (bitmap / dst)`.
+ *
+ * The matrix is `T(origin) · S(dst/bitmap)`: scale by `dst/bitmap`, then translate by the
+ * destination origin. In Android's API that is `setScale` then `preTranslate`.
+ *
  * Pure floats, so the mapping is unit-tested here and applied to a hoisted Matrix in
  * [ColourPipeline] with no per-frame allocation.
  */
@@ -66,7 +71,7 @@ fun contentMatrix(
 ): ContentMatrix {
     val w = maxOf(1, right - left).toFloat()
     val h = maxOf(1, bottom - top).toFloat()
-    val sx = bitmapW / w
-    val sy = bitmapH / h
-    return ContentMatrix(sx, sy, -left * sx, -top * sy)
+    val sx = w / bitmapW
+    val sy = h / bitmapH
+    return ContentMatrix(sx, sy, left.toFloat(), top.toFloat())
 }

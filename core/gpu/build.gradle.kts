@@ -10,7 +10,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
     kotlin { jvmToolchain(21) }
+    // Robolectric needs android.jar resources to stand up Bitmap/Matrix under the JVM.
+    testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 dependencies {
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
 }

@@ -79,28 +79,31 @@ class ContentMatrixTest {
 
     @Test
     fun `offset placement shifts by the origin`() {
-        // Canvas (10, 20) must sample bitmap (0, 0): shift is the negated origin.
+        // Bitmap (0,0) maps to canvas (10,20): the translation is the destination origin.
         assertEquals(
-            ContentMatrix(1f, 1f, -10f, -20f),
+            ContentMatrix(1f, 1f, 10f, 20f),
             contentMatrix(100, 200, 10, 20, 110, 220),
         )
     }
 
     @Test
-    fun `upscaled placement scales down the sample`() {
-        // A 100 px bitmap across a 200 px rect: canvas 200 samples bitmap 100.
+    fun `upscaled placement scales up the sample`() {
+        // A 100 px bitmap across a 200 px rect: each canvas pixel covers 0.5 bitmap pixels,
+        // so the local matrix scales by 2 (canvas = 2 * bitmap).
         assertEquals(
-            ContentMatrix(0.5f, 0.5f, 0f, 0f),
+            ContentMatrix(2f, 2f, 0f, 0f),
             contentMatrix(100, 100, 0, 0, 200, 200),
         )
     }
 
     @Test
     fun `shift applies after scale`() {
-        // Canvas x=10 in a rect starting at 10 with 2x bitmap density samples bitmap 0:
-        // 10 * 2 - 20 = 0. The shift is the origin times the scale, not the raw origin.
+        // Bitmap 100×100 drawn at (10,0)-(60,50): scale 0.5, then translate by (10, 0).
+        // Canvas x=10 maps to bitmap x=0: 10 * 0.5 + 10 = 15... no, the matrix is
+        // M = T(10,0) · S(0.5,0.5), so canvas = M · bitmap = 0.5 * bitmap + 10.
+        // Bitmap 0 → canvas 10, bitmap 100 → canvas 60. Correct.
         assertEquals(
-            ContentMatrix(2f, 2f, -20f, 0f),
+            ContentMatrix(0.5f, 0.5f, 10f, 0f),
             contentMatrix(100, 100, 10, 0, 60, 50),
         )
     }

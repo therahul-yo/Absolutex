@@ -168,12 +168,18 @@ fun PageCanvas(
     val colourPipeline = remember(pageIndex) { ColourPipeline() }
     // Macrobenchmark hook: GpuBenchmark launches the reader with EXTRA_COLOUR on the intent to
     // drive the corrected path with no settings UI. Read once per page, never per frame; the
-    // draw lambda below only reads the resolved value. TODO(lead): milestone 2 replaces this
-    // with RenderingPrefs passed as `colour` above — delete the hook then.
+    // draw lambda below only reads the resolved value. Gated on FLAG_DEBUGGABLE so the hook is
+    // inert in release builds — no intent extra is read at all outside a debuggable build.
+    // TODO(lead): milestone 2 replaces this with RenderingPrefs passed as `colour` above.
     val context = LocalContext.current
     val benchmarkColour = remember(pageIndex) {
-        (context as? Activity)?.intent?.getStringExtra(ColourParams.EXTRA_COLOUR)
-            ?.let(ColourParams::decode)
+        val appInfo = context.applicationInfo
+        if (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE == 0) {
+            null
+        } else {
+            (context as? Activity)?.intent?.getStringExtra(ColourParams.EXTRA_COLOUR)
+                ?.let(ColourParams::decode)
+        }
     }
 
     fun reportLock(atScale: Float, vw: Int, vh: Int) {
