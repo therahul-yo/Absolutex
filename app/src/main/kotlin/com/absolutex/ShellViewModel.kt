@@ -19,6 +19,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -58,9 +60,18 @@ class ShellViewModel @Inject constructor(
         }
     }
 
-    /** Rescans every location. Cheap to call: a scan only writes rows whose content changed. */
-    fun rescanLocations(locations: Set<String>) {
-        viewModelScope.launch { locations.forEach { scan(Uri.parse(it)) } }
+    /**
+     * Rescans every stored location. Cheap to call: a scan only writes rows whose content changed,
+     * and a location whose grant is gone is dropped rather than scanned into nothing.
+     */
+    fun rescanLocations() {
+        viewModelScope.launch {
+            val stored = appPrefs.filterNotNull().first().locations
+            val held = context.contentResolver.persistedUriPermissions.map { it.uri.toString() }.toSet()
+            val (live, dead) = stored.partition { it in held }
+            if (dead.isNotEmpty()) writer.updateApp { it.copy(locations = it.locations - dead.toSet()) }
+            live.forEach { scan(Uri.parse(it)) }
+        }
     }
 
     private suspend fun scan(treeUri: Uri) {

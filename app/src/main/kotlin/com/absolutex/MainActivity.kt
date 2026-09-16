@@ -113,6 +113,9 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
     var resume by remember { mutableStateOf<Uri?>(null) }
     LaunchedEffect(Unit) {
         if (directUri == null) resume = vm.resumableBook()
+        // Once per launch, so a file added to a location since last time is there without the
+        // reader being asked to rescan. A scan only writes rows whose content changed.
+        vm.rescanLocations()
     }
 
     // A folder, not a file: a location is what the library scans, and SAF is the only way to read
