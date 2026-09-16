@@ -8,7 +8,7 @@ import java.nio.file.WatchKey
  * What one departure took with it: the directory that left, and how many watch keys pointed
  * into its subtree.
  */
-internal data class Departure(val dir: File, val cancelled: Int)
+internal data class Departure(val dirs: List<File>, val cancelled: Int)
 
 /**
  * The one shape a delta cannot express: a directory that left the tree.
@@ -26,7 +26,8 @@ internal data class Departure(val dir: File, val cancelled: Int)
 internal object DirectoryDepartures {
 
     /**
-     * Pulls the directory departures out of one coalesced batch.
+     * Pulls the directory departures out of one coalesced batch: all of them, since a burst can
+     * move several folders at once and each one left behind keys still pointing at its old path.
      *
      * An entry counts only when the batch's own effective kind for it is a delete of a directory
      * this watch knew: a create-then-delete pair — the coalescer settles those to nothing — never
@@ -36,12 +37,13 @@ internal object DirectoryDepartures {
         batch: List<LibraryWatcher.Pending>,
         state: LibraryWatcher.WatchState,
     ): Departure? {
-        val departed = batch.firstOrNull { entry ->
+        val departed = batch.filter { entry ->
             state.registered.contains(canonicalOf(entry.file)) &&
                 LibraryWatcher.resolveEffectiveKind(entry.first, entry.last) ==
                 StandardWatchEventKinds.ENTRY_DELETE
-        } ?: return null
-        return Departure(departed.file, retireAll(listOf(departed.file), state))
+        }.map { it.file }
+        if (departed.isEmpty()) return null
+        return Departure(departed, retireAll(departed, state))
     }
 
     /**
@@ -66,7 +68,9 @@ internal object DirectoryDepartures {
             val keys = state.keys.entries.iterator()
             while (keys.hasNext()) {
                 val (key, path) = keys.next()
-                if (isGone(path.toString())) {
+                // Keys hold the path as registered, which may run through a symlink (/sdcard);
+                // the roots are canonical, so compare like with like.
+                if (isGone(canonicalOf(path.toFile()))) {
                     key.cancel()
                     keys.remove()
                     cancelled++

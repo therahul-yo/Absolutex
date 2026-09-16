@@ -186,7 +186,7 @@ class LibraryWatcher(
     ) {
 
             /** Canonical paths of the directories actually registered, for departure detection. */
-        val registered: MutableSet<String> = java.util.Collections.synchronizedSet(HashSet())
+        val registered: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
         /** Directories we could not register. See [LibraryWatcher.registerOne]. */
         val failed = AtomicInteger(0)
@@ -212,7 +212,9 @@ class LibraryWatcher(
             val state = WatchState(
                 FileSystems.getDefault().newWatchService(),
                 HashMap(),
-                HashSet(),
+                // Written by the poller thread and the flush coroutine alike, and swept by
+                // retireAll while either may be registering.
+                ConcurrentHashMap.newKeySet(),
                 BookEventClassifier(includeHidden),
             )
             liveServices.add(state.service)
@@ -346,7 +348,7 @@ class LibraryWatcher(
             } else {
                 for (event in key.pollEvents()) handleEvent(event, dir, state, enqueue, emit)
                 if (!key.reset()) {
-                    synchronized(state.keys) { state.keys.remove(key) }
+                    // retireAll removes this key with the rest of its subtree, and counts it.
                     // The watched directory itself is gone, so nothing inside it can be trusted
                     // and no per-file event will name what it held. Same answer as a departure
                     // seen on the parent's key: retire the subtree and re-walk.

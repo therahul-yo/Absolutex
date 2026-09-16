@@ -287,6 +287,28 @@ class LibraryWatcherTest {
         }
     }
 
+    @Test fun `every directory that leaves in one burst is retired, not just the first`() = runBlocking {
+        val batman = mkdir("Batman")
+        write("Batman/Batman 001.cbz")
+        val superman = mkdir("Superman")
+        write("Superman/Superman 001.cbz")
+        val outside = Files.createTempDirectory("moved-out").toFile()
+        try {
+            withWatch { watcher, _ ->
+                awaitReady(watcher, 3)
+                assertTrue(batman.renameTo(File(outside, "Batman")))
+                assertTrue(superman.renameTo(File(outside, "Superman")))
+                // Only the root is left in the tree. A moved folder's inotify key survives the move,
+                // so a key not retired here would report later events at a path that is gone.
+                awaitTrue(liveTimeoutMs, "keys left: ${watcher.registeredDirectoryCount()}") {
+                    watcher.registeredDirectoryCount() == 1
+                }
+            }
+        } finally {
+            outside.deleteRecursively()
+        }
+    }
+
     @Test fun `a renamed directory never reports a book at the path that is gone`() = runBlocking {
         val dir = mkdir("Batman")
         write("Batman/Batman 001.cbz")
