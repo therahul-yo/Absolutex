@@ -1,6 +1,7 @@
 package com.absolutex.core.data.settings
 
 import com.absolutex.core.gpu.ColourParams
+import com.absolutex.core.gpu.Upscaler
 
 /**
  * Rendering behaviour the reader draws with (§5.4, Rendering group).
@@ -13,4 +14,10 @@ import com.absolutex.core.gpu.ColourParams
 data class RenderingPrefs(
     /** Draw-time colour correction (§4). Neutral by default: correction off costs nothing. */
     val colour: ColourParams = ColourParams(),
+    /**
+     * Which resampling filter magnifies a bitmap drawn above its base resolution (milestone 3).
+     * PLATFORM is the hardware bilinear sampler and the default; the MITCHELL and LANCZOS kernel
+     * choices refine the page at rest only, never mid-gesture.
+     */
+    val upscaler: Upscaler = Upscaler.PLATFORM,
 )

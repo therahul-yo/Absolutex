@@ -37,6 +37,7 @@ import com.absolutex.core.decode.TileGrid
 import com.absolutex.core.decode.TileKey
 import com.absolutex.core.gpu.ColourParams
 import com.absolutex.core.gpu.ColourPipeline
+import com.absolutex.core.gpu.Upscaler
 import com.absolutex.model.FitGeometry
 import com.absolutex.model.FitMode
 import com.absolutex.model.TapGrid
@@ -145,6 +146,14 @@ fun PageCanvas(
      * reader chrome (ColourPanel) and the settings Rendering group.
      */
     colour: State<ColourParams>? = null,
+    /**
+     * Resampling for draws above base resolution (§4, milestone 3): PLATFORM is the hardware
+     * bilinear tap, MITCHELL/LANCZOS are kernel shaders applied only when the page is at rest
+     * (see gestureActive below). A plain param, not draw-observed state: switches are rare
+     * settings edits, not 120 fps drags, so one recomposition per switch is the right trade.
+     * TODO(lead): pass RenderingPrefs.upscaler here alongside `colour` above.
+     */
+    upscaler: Upscaler = Upscaler.PLATFORM,
 ) {
     var scale by remember(pageIndex) { mutableFloatStateOf(1f) }
     var offsetX by remember(pageIndex) { mutableFloatStateOf(0f) }
@@ -163,6 +172,10 @@ fun PageCanvas(
     // mid-page cannot leave it turning pages with the old direction.
     val edgeSwipe by rememberUpdatedState(onEdgeSwipe)
     val lockChanged by rememberUpdatedState(onPagerLockChanged)
+    // True while a pinch or a claimed pan owns this page. The draw lambda reads it to pick the
+    // sampling kernel: kernel upscalers refine only at rest, so gesture frames never pay for
+    // taps. Draw-observed like scale above — no recomposition on touch down or release.
+    var gestureActive by remember(pageIndex) { mutableStateOf(false) }
 
     val src = remember { Rect() }
     val dst = remember { Rect() }
@@ -184,6 +197,11 @@ fun PageCanvas(
             (context as? Activity)?.intent?.getStringExtra(ColourParams.EXTRA_COLOUR)
                 ?.let(ColourParams::decode)
         }
+    }
+    // Upscaling rides a second extra, so each codec stays total on its own.
+    val benchmarkUpscaler = remember(pageIndex) {
+        (context as? Activity)?.intent?.getStringExtra(Upscaler.EXTRA_UPSCALER)
+            ?.let(Upscaler::decodeExtra)
     }
 
     fun reportLock(atScale: Float, vw: Int, vh: Int) {
@@ -403,6 +421,7 @@ fun PageCanvas(
 
                         if (pressed >= 2) {
                             // Pinch always belongs to us, at any scale.
+                            gestureActive = true
                             val zoom = event.calculateZoom()
                             val old = scale
                             scale = (scale * zoom).coerceIn(MIN_SCALE, MAX_SCALE)
@@ -428,6 +447,7 @@ fun PageCanvas(
                                 }
                             }
                             if (claimed) {
+                                gestureActive = true
                                 val clamped = clampOffset(
                                     Offset(offsetX + pan.x, offsetY + pan.y),
                                     size.width, size.height, page.width, page.height, fitMode, scale,
@@ -437,6 +457,8 @@ fun PageCanvas(
                             }
                         }
                     } while (!released && event.changes.any { it.pressed })
+                    // Fingers up: the next repaint refines with the kernel, if one is selected.
+                    gestureActive = false
                 }
             }
             // rightToLeft is a key: onTap mirrors the grid by it, and a flow change mid-page would
@@ -473,9 +495,13 @@ fun PageCanvas(
         val oy = offsetY
         @Suppress("UNUSED_EXPRESSION") tileGeneration
         // Colour resolution is a draw-phase read too: a slider drag (milestone 2) repaints without
-        // recomposing. Null means neutral — the draw calls below are then today's, untouched.
+        // recomposing. The branch below is the only divergence from today's path.
         val activeColour = benchmarkColour ?: colour?.value ?: ColourParams.NEUTRAL
-        val graded = if (colourPipeline.shouldApply(activeColour)) activeColour else null
+        // Sampling follows the same rule, with the gesture flag folded in: kernel upscalers
+        // refine only at rest, so a lift of the fingers is what swaps bilinear for the kernel.
+        val activeUpscaler = benchmarkUpscaler ?: upscaler
+        val atRest = !gestureActive
+        val shade = colourPipeline.shouldShade(activeColour, activeUpscaler, atRest)
 
         val bmp = base ?: return@Canvas
         if (page.width <= 0 || page.height <= 0) return@Canvas
@@ -499,8 +525,8 @@ fun PageCanvas(
                 originX.toInt(), originY.toInt(),
                 (originX + drawW).toInt(), (originY + drawH).toInt(),
             )
-            if (graded != null) {
-                drawGraded(native, colourPipeline, graded, bmp, dst.left, dst.top, dst.right, dst.bottom)
+            if (shade) {
+                drawShaded(native, colourPipeline, activeColour, bmp, src, dst, paint, activeUpscaler, atRest)
             } else {
                 native.drawBitmap(bmp, src, dst, paint)
             }
@@ -537,8 +563,8 @@ fun PageCanvas(
                     if (tr < 0 || tb < 0 || tl > vw || tt > vh) continue
                     src.set(0, 0, tile.width, tile.height)
                     dst.set(tl.toInt(), tt.toInt(), max(tr.toInt(), tl.toInt() + 1), max(tb.toInt(), tt.toInt() + 1))
-                    if (graded != null) {
-                        drawGraded(native, colourPipeline, graded, tile, dst.left, dst.top, dst.right, dst.bottom)
+                    if (shade) {
+                        drawShaded(native, colourPipeline, activeColour, tile, src, dst, paint, activeUpscaler, atRest)
                     } else {
                         native.drawBitmap(tile, src, dst, paint)
                     }
@@ -549,26 +575,33 @@ fun PageCanvas(
 }
 
 /**
- * One bitmap through the draw-time colour shader.
+ * One bitmap through the draw-time shader (colour grade, kernel upscaler, or both).
  *
  * drawRect, not drawBitmap: Skia replaces a paint's shader with the image shader on bitmap
  * draws, so a RuntimeShader on the paint would silently never run. The child BitmapShader
  * instead carries the dst-to-bitmap matrix (see contentMatrix), which makes this cover exactly
- * the pixels drawBitmap would. A top-level function, not a local one: a capturing local would
- * allocate its closure object on every frame.
+ * the pixels drawBitmap would. When the pipeline declines the draw (neutral colour on a draw
+ * that does not magnify), this falls back to the plain draw — same call today's path makes.
+ * A top-level function, not a local one: a capturing local would allocate its closure object
+ * on every frame.
  */
-private fun drawGraded(
+private fun drawShaded(
     native: android.graphics.Canvas,
     pipeline: ColourPipeline,
     params: ColourParams,
     bitmap: Bitmap,
-    left: Int,
-    top: Int,
-    right: Int,
-    bottom: Int,
+    src: Rect,
+    dst: Rect,
+    plain: Paint,
+    upscaler: Upscaler,
+    atRest: Boolean,
 ) {
-    val paint = pipeline.paintFor(params, bitmap, left, top, right, bottom)
-    native.drawRect(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat(), paint)
+    val paint = pipeline.paintFor(params, bitmap, dst.left, dst.top, dst.right, dst.bottom, upscaler, atRest)
+    if (paint != null) {
+        native.drawRect(dst.left.toFloat(), dst.top.toFloat(), dst.right.toFloat(), dst.bottom.toFloat(), paint)
+    } else {
+        native.drawBitmap(bitmap, src, dst, plain)
+    }
 }
 
 /**

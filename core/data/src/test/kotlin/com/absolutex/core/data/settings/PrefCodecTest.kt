@@ -1,6 +1,7 @@
 package com.absolutex.core.data.settings
 
 import com.absolutex.core.gpu.ColourParams
+import com.absolutex.core.gpu.Upscaler
 import com.absolutex.model.FitContext
 import com.absolutex.model.FitMode
 import com.absolutex.model.FitModeMemory
@@ -194,6 +195,7 @@ class PrefCodecTest {
                 PrefCodec.KEY_COLOUR_GAMMA_R,
                 PrefCodec.KEY_COLOUR_GAMMA_G,
                 PrefCodec.KEY_COLOUR_GAMMA_B,
+                PrefCodec.KEY_UPSCALER,
             ),
             bag.snapshot().keys,
         )
@@ -460,5 +462,27 @@ class PrefCodecTest {
         assertEquals("colour_gamma_r", PrefCodec.KEY_COLOUR_GAMMA_R)
         assertEquals("colour_gamma_g", PrefCodec.KEY_COLOUR_GAMMA_G)
         assertEquals("colour_gamma_b", PrefCodec.KEY_COLOUR_GAMMA_B)
+        assertEquals("upscaler", PrefCodec.KEY_UPSCALER)
+    }
+
+    @Test
+    fun `every upscaler survives a round-trip`() {
+        Upscaler.entries.forEach { upscaler ->
+            val bag = MapPrefBag()
+            PrefCodec.encodeRendering(RenderingPrefs(upscaler = upscaler), bag)
+            assertEquals(upscaler, PrefCodec.decodeRendering(bag).upscaler)
+        }
+    }
+
+    @Test
+    fun `an upscaler stored by name decodes, anything else falls back to platform`() {
+        val named = MapPrefBag(mapOf(PrefCodec.KEY_UPSCALER to "MITCHELL"))
+        assertEquals(Upscaler.MITCHELL, PrefCodec.decodeRendering(named).upscaler)
+
+        val wrongType = MapPrefBag(mapOf(PrefCodec.KEY_UPSCALER to 1))
+        assertEquals(Upscaler.PLATFORM, PrefCodec.decodeRendering(wrongType).upscaler)
+
+        val unknown = MapPrefBag(mapOf(PrefCodec.KEY_UPSCALER to "BILINEAR"))
+        assertEquals(Upscaler.PLATFORM, PrefCodec.decodeRendering(unknown).upscaler)
     }
 }

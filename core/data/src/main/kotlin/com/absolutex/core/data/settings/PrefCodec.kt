@@ -1,6 +1,7 @@
 package com.absolutex.core.data.settings
 
 import com.absolutex.core.gpu.ColourParams
+import com.absolutex.core.gpu.Upscaler
 import com.absolutex.model.FitMode
 import com.absolutex.model.PageTransition
 import com.absolutex.model.FitModeMemory
@@ -58,6 +59,7 @@ object PrefCodec {
     internal const val KEY_COLOUR_GAMMA_R = "colour_gamma_r"
     internal const val KEY_COLOUR_GAMMA_G = "colour_gamma_g"
     internal const val KEY_COLOUR_GAMMA_B = "colour_gamma_b"
+    internal const val KEY_UPSCALER = "upscaler"
 
     fun decodeApp(bag: PrefBag): AppPrefs {
         val defaults = AppPrefs()
@@ -135,6 +137,7 @@ object PrefCodec {
     fun decodeRendering(bag: PrefBag): RenderingPrefs {
         val defaults = ColourParams()
         return RenderingPrefs(
+            upscaler = bag.enumOr(KEY_UPSCALER, Upscaler.PLATFORM, Upscaler.entries),
             colour = ColourParams(
                 brightness = bag.gradedFloat(KEY_COLOUR_BRIGHTNESS, ColourParams.BRIGHTNESS_RANGE)
                     ?: defaults.brightness,
@@ -161,6 +164,7 @@ object PrefCodec {
     }
 
     fun encodeRendering(prefs: RenderingPrefs, bag: MutablePrefBag) {
+        bag.putString(KEY_UPSCALER, prefs.upscaler.name)
         bag.putFloat(KEY_COLOUR_BRIGHTNESS, prefs.colour.brightness)
         bag.putFloat(KEY_COLOUR_CONTRAST, prefs.colour.contrast)
         bag.putFloat(KEY_COLOUR_SATURATION, prefs.colour.saturation)

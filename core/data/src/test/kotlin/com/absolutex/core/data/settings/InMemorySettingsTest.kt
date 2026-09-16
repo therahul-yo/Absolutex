@@ -1,5 +1,6 @@
 package com.absolutex.core.data.settings
 
+import com.absolutex.core.gpu.Upscaler
 import com.absolutex.model.FitMode
 import com.absolutex.model.ReadingFlow
 import kotlinx.coroutines.flow.first
@@ -118,5 +119,18 @@ class InMemorySettingsTest {
         settings.updateRendering { it.copy(colour = it.colour.copy(vibrance = 0.7f)) }
         assertEquals(AppPrefs(), settings.appPrefs.first())
         assertEquals(ReaderPrefs(), settings.readerPrefs.first())
+    }
+
+    @Test
+    fun `an upscaler update persists and leaves colour alone`() = runTest {
+        val bag = MapPrefBag()
+        val settings = InMemorySettings(bag)
+        settings.updateRendering { it.copy(upscaler = Upscaler.LANCZOS) }
+        assertEquals(Upscaler.LANCZOS, settings.renderingPrefs.first().upscaler)
+        assertEquals(RenderingPrefs().colour, settings.renderingPrefs.first().colour)
+        // A fresh instance over the same bag is what a process restart looks like.
+        val reopened = InMemorySettings(bag)
+        assertEquals(Upscaler.LANCZOS, reopened.renderingPrefs.first().upscaler)
+        assertEquals(RenderingPrefs().colour, reopened.renderingPrefs.first().colour)
     }
 }

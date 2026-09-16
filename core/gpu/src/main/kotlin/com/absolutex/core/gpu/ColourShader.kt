@@ -18,6 +18,12 @@ package com.absolutex.core.gpu
  * ColourMathTest pins both. Combined gamma is folded into the per-channel exponents on the CPU
  * ([ColourMath.foldedGamma]), so the shader does one pow per channel, not two.
  *
+ * The sampling stage is milestone 3's upscaler: mode 0 keeps the single hardware tap, modes 1
+ * and 2 evaluate a Mitchell–Netravali or Lanczos-3 kernel (transcribed from [UpscaleMath]) and
+ * grade the result in the same pass — colour and upscale never cost two shaders. The CPU picks
+ * the mode per draw: kernel only when the draw magnifies and the page is at rest, so gesture
+ * frames never pay for taps.
+ *
  * Two deliberate choices inside:
  *
  * - The shader performs no gamut clamp and no coloursource conversion of its own: the child
@@ -38,6 +44,14 @@ object ColourShader {
     const val UNIFORM_AGGRESSION = "aggression"
     const val UNIFORM_VIBRANCE = "vibrance"
     const val UNIFORM_GAMMA_EXP = "gammaExp"
+    const val UNIFORM_UPSCALER = "upscaler"
+    const val UNIFORM_MAP_SCALE = "mapScale"
+    const val UNIFORM_MAP_TRANS = "mapTrans"
+
+    // Upscaler codes. Frozen: they cross from Upscaler.code, so append-only on both sides.
+    const val UPSCALER_PLATFORM = 0
+    const val UPSCALER_MITCHELL = 1
+    const val UPSCALER_LANCZOS = 2
 
     const val SOURCE = """uniform shader content;
 uniform float brightness;
@@ -47,12 +61,78 @@ uniform float temperature;
 uniform float aggression;
 uniform float vibrance;
 uniform vec3 gammaExp;
+uniform int upscaler;
+uniform vec2 mapScale;
+uniform vec2 mapTrans;
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 const float WB_STRENGTH = 0.25;
+// Mitchell-Netravali with B = C = 1/3, expanded (see UpscaleMath): (7x^3 - 12x^2 + 16/3) / 6
+// under 1, ((-7/3)x^3 + 12x^2 - 20x + 32/3) / 6 under 2.
+float mitchell(float x) {
+    x = abs(x);
+    if (x < 1.0) {
+        return (7.0 * x * x * x - 12.0 * x * x + 16.0 / 3.0) / 6.0;
+    }
+    if (x < 2.0) {
+        return ((-7.0 / 3.0) * x * x * x + 12.0 * x * x - 20.0 * x + 32.0 / 3.0) / 6.0;
+    }
+    return 0.0;
+}
+float sinc(float x) {
+    float pix = 3.14159265 * x;
+    return sin(pix) / pix;
+}
+float lanczos(float x) {
+    x = abs(x);
+    if (x >= 3.0) return 0.0;
+    if (x == 0.0) return 1.0;
+    return sinc(x) * sinc(x / 3.0);
+}
+// One kernel tap set at bitmap-pixel p. The child BitmapShader keeps its dst-to-bitmap matrix,
+// so each tap is inverse-mapped back through it; edge taps clamp via the shader's CLAMP tiling.
+// The accumulator renormalises, matching UpscaleMath.resampleChannel at the borders.
+vec3 sampleMitchell(vec2 p) {
+    vec2 base = floor(p) - 1.0;
+    vec3 acc = vec3(0.0);
+    float wsum = 0.0;
+    for (int j = 0; j < 4; j++) {
+        for (int i = 0; i < 4; i++) {
+            vec2 tap = base + vec2(float(i), float(j)) + 0.5;
+            float w = mitchell(tap.x - p.x) * mitchell(tap.y - p.y);
+            acc += content.eval((tap - mapTrans) / mapScale).rgb * w;
+            wsum += w;
+        }
+    }
+    return acc / wsum;
+}
+vec3 sampleLanczos(vec2 p) {
+    vec2 base = floor(p) - 2.0;
+    vec3 acc = vec3(0.0);
+    float wsum = 0.0;
+    for (int j = 0; j < 6; j++) {
+        for (int i = 0; i < 6; i++) {
+            vec2 tap = base + vec2(float(i), float(j)) + 0.5;
+            float w = lanczos(tap.x - p.x) * lanczos(tap.y - p.y);
+            acc += content.eval((tap - mapTrans) / mapScale).rgb * w;
+            wsum += w;
+        }
+    }
+    return acc / wsum;
+}
 vec4 main(vec2 fragCoord) {
     vec4 src = content.eval(fragCoord);
+    vec3 c = src.rgb;
+    // Grading a kernel sample costs the taps; the platform path keeps the single hardware tap.
+    // Branches are on uniforms, so no fragment divergence on either side.
+    if (upscaler == 1) {
+        vec2 p = fragCoord * mapScale + mapTrans;
+        c = sampleMitchell(p);
+    } else if (upscaler == 2) {
+        vec2 p = fragCoord * mapScale + mapTrans;
+        c = sampleLanczos(p);
+    }
     float shift = temperature * aggression * WB_STRENGTH;
-    vec3 c = src.rgb * vec3(1.0 + shift, 1.0, 1.0 - shift);
+    c = c * vec3(1.0 + shift, 1.0, 1.0 - shift);
     c = (c - 0.5) * contrast + 0.5 + brightness;
     c = pow(max(c, vec3(0.0)), gammaExp);
     float luma = dot(c, LUMA);

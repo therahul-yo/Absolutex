@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.data.settings.RotationLock
+import com.absolutex.core.gpu.Upscaler
 import com.absolutex.model.PageLayout
 import com.absolutex.model.PageTransition
 import com.absolutex.model.FitMode
@@ -214,4 +215,10 @@ fun rotationLockLabelRes(lock: RotationLock): Int = when (lock) {
     RotationLock.SYSTEM -> R.string.settings_rotation_system
     RotationLock.PORTRAIT -> R.string.settings_rotation_portrait
     RotationLock.LANDSCAPE -> R.string.settings_rotation_landscape
+}
+
+fun upscalerLabelRes(upscaler: Upscaler): Int = when (upscaler) {
+    Upscaler.PLATFORM -> R.string.settings_upscaler_platform
+    Upscaler.MITCHELL -> R.string.settings_upscaler_mitchell
+    Upscaler.LANCZOS -> R.string.settings_upscaler_lanczos
 }

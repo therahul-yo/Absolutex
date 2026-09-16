@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.absolutex.core.gpu.ColourParams
+import com.absolutex.core.gpu.Upscaler
 import com.absolutex.model.FitMode
 import com.absolutex.model.ReadingFlow
 import kotlinx.coroutines.CoroutineScope
@@ -234,6 +235,7 @@ class DataStoreSettingsTest {
     @Test fun `rendering colour round-trips and survives reopen`() = runBlocking {
         val f = file()
         val expected = RenderingPrefs(
+            upscaler = Upscaler.LANCZOS,
             colour = ColourParams(
                 brightness = 0.15f,
                 contrast = 1.1f,

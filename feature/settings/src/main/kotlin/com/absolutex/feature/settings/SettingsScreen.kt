@@ -26,6 +26,7 @@ import com.absolutex.core.data.settings.ReaderPrefs
 import com.absolutex.core.data.settings.RenderingPrefs
 import com.absolutex.core.data.settings.RotationLock
 import com.absolutex.core.gpu.ColourPanel
+import com.absolutex.core.gpu.Upscaler
 import com.absolutex.model.PageLayout
 import com.absolutex.model.PageTransition
 import com.absolutex.core.ui.AbsolutexTheme
@@ -107,6 +108,13 @@ fun SettingsContent(
             ColourPanel(
                 state = rendering.colour,
                 onChange = { actions.onRendering { current -> current.withColour(it) } },
+            )
+            SegmentedSettingRow(
+                options = Upscaler.entries,
+                selected = rendering.upscaler,
+                onSelect = { actions.onRendering { current -> current.copy(upscaler = it) } },
+                labelRes = ::upscalerLabelRes,
+                descriptionRes = R.string.settings_upscaler_desc,
             )
             Spacer(Modifier.height(8.dp))
 
