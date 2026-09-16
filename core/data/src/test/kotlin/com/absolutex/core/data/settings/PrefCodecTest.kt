@@ -196,6 +196,7 @@ class PrefCodecTest {
                 PrefCodec.KEY_COLOUR_GAMMA_G,
                 PrefCodec.KEY_COLOUR_GAMMA_B,
                 PrefCodec.KEY_UPSCALER,
+                PrefCodec.KEY_CROP_ENABLED,
             ),
             bag.snapshot().keys,
         )
@@ -463,6 +464,7 @@ class PrefCodecTest {
         assertEquals("colour_gamma_g", PrefCodec.KEY_COLOUR_GAMMA_G)
         assertEquals("colour_gamma_b", PrefCodec.KEY_COLOUR_GAMMA_B)
         assertEquals("upscaler", PrefCodec.KEY_UPSCALER)
+        assertEquals("crop_borders", PrefCodec.KEY_CROP_ENABLED)
     }
 
     @Test
@@ -484,5 +486,26 @@ class PrefCodecTest {
 
         val unknown = MapPrefBag(mapOf(PrefCodec.KEY_UPSCALER to "BILINEAR"))
         assertEquals(Upscaler.PLATFORM, PrefCodec.decodeRendering(unknown).upscaler)
+    }
+
+    @Test
+    fun `border crop defaults to on`() {
+        assertTrue(RenderingPrefs().cropEnabled)
+        assertTrue(PrefCodec.decodeRendering(MapPrefBag()).cropEnabled)
+    }
+
+    @Test
+    fun `border crop survives a round-trip either way`() {
+        for (enabled in listOf(true, false)) {
+            val bag = MapPrefBag()
+            PrefCodec.encodeRendering(RenderingPrefs(cropEnabled = enabled), bag)
+            assertEquals(enabled, PrefCodec.decodeRendering(bag).cropEnabled)
+        }
+    }
+
+    @Test
+    fun `a wrongly typed border crop falls back to its default`() {
+        val bag = MapPrefBag(mapOf(PrefCodec.KEY_CROP_ENABLED to "yes"))
+        assertEquals(RenderingPrefs().cropEnabled, PrefCodec.decodeRendering(bag).cropEnabled)
     }
 }

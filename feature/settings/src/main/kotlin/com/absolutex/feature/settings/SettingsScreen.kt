@@ -116,6 +116,12 @@ fun SettingsContent(
                 labelRes = ::upscalerLabelRes,
                 descriptionRes = R.string.settings_upscaler_desc,
             )
+            SwitchSettingRow(
+                titleRes = R.string.settings_crop_borders,
+                checked = rendering.cropEnabled,
+                onChange = { actions.onRendering { current -> current.copy(cropEnabled = it) } },
+                descriptionRes = R.string.settings_crop_borders_desc,
+            )
             Spacer(Modifier.height(8.dp))
 
             GroupHeader(R.string.settings_group_about)
