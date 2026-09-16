@@ -34,6 +34,8 @@ object PrefCodec {
     internal const val KEY_PAGE_LAYOUT = "page_layout"
     internal const val KEY_THUMBNAIL_STRIP = "thumbnail_strip"
     internal const val KEY_TRANSITION = "page_transition"
+    internal const val KEY_PAGE_TURN_MS = "page_turn_ms"
+    internal const val KEY_SCROLL_STEP = "scroll_step_percent"
 
     /**
      * Fits chosen per screen-and-page shape, as "SCREEN:PAGE=MODE" strings. One key holding the
@@ -77,6 +79,10 @@ object PrefCodec {
             pageLayout = bag.enumOr(KEY_PAGE_LAYOUT, defaults.pageLayout, PageLayout.entries),
             thumbnailStrip = bag.boolean(KEY_THUMBNAIL_STRIP) ?: defaults.thumbnailStrip,
             transition = bag.enumOr(KEY_TRANSITION, defaults.transition, PageTransition.entries),
+            pageTurnMs = (bag.int(KEY_PAGE_TURN_MS) ?: defaults.pageTurnMs)
+                .coerceIn(MIN_PAGE_TURN_MS, MAX_PAGE_TURN_MS),
+            scrollStepPercent = (bag.int(KEY_SCROLL_STEP) ?: defaults.scrollStepPercent)
+                .coerceIn(MIN_SCROLL_STEP_PERCENT, MAX_SCROLL_STEP_PERCENT),
             fitMemory = FitModeMemory.fromPairs(
                 bag.stringSet(KEY_FIT_BY_CONTEXT).orEmpty()
                     .mapNotNull { entry ->
@@ -97,6 +103,8 @@ object PrefCodec {
         bag.putString(KEY_PAGE_LAYOUT, prefs.pageLayout.name)
         bag.putBoolean(KEY_THUMBNAIL_STRIP, prefs.thumbnailStrip)
         bag.putString(KEY_TRANSITION, prefs.transition.name)
+        bag.putInt(KEY_PAGE_TURN_MS, prefs.pageTurnMs.coerceIn(MIN_PAGE_TURN_MS, MAX_PAGE_TURN_MS))
+        bag.putInt(KEY_SCROLL_STEP, prefs.scrollStepPercent.coerceIn(MIN_SCROLL_STEP_PERCENT, MAX_SCROLL_STEP_PERCENT))
         val fits = prefs.fitMemory.asPairs()
         if (fits.isNotEmpty()) bag.putStringSet(KEY_FIT_BY_CONTEXT, fits.map { "${it.key}=${it.value}" }.toSet())
     }

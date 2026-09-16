@@ -119,6 +119,16 @@ class PrefCodecTest {
     }
 
     @Test
+    fun `an animation setting out of range is clamped, not discarded`() {
+        val bag = MapPrefBag(
+            mapOf(PrefCodec.KEY_PAGE_TURN_MS to 5_000, PrefCodec.KEY_SCROLL_STEP to 5),
+        )
+        val decoded = PrefCodec.decodeReader(bag)
+        assertEquals(MAX_PAGE_TURN_MS, decoded.pageTurnMs)
+        assertEquals(MIN_SCROLL_STEP_PERCENT, decoded.scrollStepPercent)
+    }
+
+    @Test
     fun `every night mode survives a round-trip`() {
         for (mode in NightMode.entries) {
             val bag = MapPrefBag()
@@ -158,6 +168,8 @@ class PrefCodecTest {
                 PrefCodec.KEY_PAGE_LAYOUT,
                 PrefCodec.KEY_THUMBNAIL_STRIP,
                 PrefCodec.KEY_TRANSITION,
+                PrefCodec.KEY_PAGE_TURN_MS,
+                PrefCodec.KEY_SCROLL_STEP,
             ),
             bag.snapshot().keys,
         )
@@ -284,6 +296,8 @@ class PrefCodecTest {
         assertEquals("page_layout", PrefCodec.KEY_PAGE_LAYOUT)
         assertEquals("thumbnail_strip", PrefCodec.KEY_THUMBNAIL_STRIP)
         assertEquals("page_transition", PrefCodec.KEY_TRANSITION)
+        assertEquals("page_turn_ms", PrefCodec.KEY_PAGE_TURN_MS)
+        assertEquals("scroll_step_percent", PrefCodec.KEY_SCROLL_STEP)
     }
 
     @Test

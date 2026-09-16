@@ -20,6 +20,7 @@ import android.app.Activity
 import android.graphics.Bitmap
 import android.os.Trace
 import android.net.Uri
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -35,17 +36,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.draw.clipToBounds
 import com.absolutex.model.PageLayout
-import com.absolutex.model.PageTransition
-import com.absolutex.model.transitionLayerFor
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.key
 import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerScope
 import androidx.compose.foundation.pager.PagerState
 import androidx.activity.compose.ReportDrawnWhen
-import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -155,8 +151,7 @@ private const val ZOOM_STEP_BUFFER = 4
 
 private const val HALF = 0.5f
 
-/** A key press or edge tap in a strip moves this much of a screen, keeping a line of context. */
-private const val STRIP_STEP = 0.9f
+private const val PERCENT = 100f
 
 @Composable
 private fun Pages(
@@ -176,9 +171,7 @@ private fun Pages(
     val locks = remember(pageCount) { mutableStateMapOf<Int, Boolean>() }
     val scope = rememberCoroutineScope()
     // Edge swipes arrive in screen terms; in a mirrored right-to-left book left brings the previous page.
-    val goTo: (Int) -> Unit = { step ->
-        scope.launch { pagerState.animateScrollToPage((pagerState.currentPage + step).coerceIn(0, spreads.lastIndex)) }
-    }
+    val goTo: (Int) -> Unit = { step -> scope.launch { pagerState.turn(step, spreads.lastIndex, prefs) } }
     val turn: (Boolean) -> Unit = { forward -> goTo(if (forward != (flow == ReadingFlow.RTL)) 1 else -1) }
     var chrome by remember { mutableStateOf(false) }
     val tap: (TapZone) -> Unit = { zone -> onTapZone(zone, goTo) { chrome = !chrome } }
@@ -263,7 +256,11 @@ private fun Strip(
     val step: (Int) -> Unit = { direction ->
         scope.launch {
             val info = listState.layoutInfo
-            listState.animateScrollBy(direction * (info.viewportEndOffset - info.viewportStartOffset) * STRIP_STEP)
+            val extent = (info.viewportEndOffset - info.viewportStartOffset).toFloat()
+            listState.animateScrollBy(
+                direction * extent * prefs.scrollStepPercent / PERCENT,
+                animationSpec = tween(prefs.pageTurnMs),
+            )
         }
     }
     val jump: (Int) -> Unit = { to -> scope.launch { listState.scrollToItem(to.coerceIn(0, pageCount - 1)) } }
@@ -375,65 +372,6 @@ private fun SpreadRow(
         Box(Modifier.fillMaxWidth(HALF).fillMaxHeight().align(AbsoluteAlignment.CenterRight).clipToBounds()) {
             slot(right, SpreadSide.RIGHT)
         }
-    }
-}
-
-/**
- * A page's transition layer (§5.2). getOffsetDistanceInPages is the page's position in viewports:
- * 0 while it fills the screen, +1 waiting at the end, -1 once it has left. Read in the
- * graphicsLayer lambda, which is the draw phase:
- * the pager's offset changes every frame of a turn, and reading it in a composable body instead
- * would recompose the page — and its whole subtree — 120 times a second.
- */
-private fun Modifier.transition(
-    pagerState: PagerState,
-    index: Int,
-    transition: PageTransition,
-    vertical: Boolean,
-): Modifier = if (transition == PageTransition.SLIDE) {
-    this
-} else {
-    graphicsLayer {
-        val layer = transitionLayerFor(transition, pagerState.getOffsetDistanceInPages(index))
-        if (vertical) {
-            translationY = layer.translationFraction * size.height
-        } else {
-            translationX = layer.translationFraction * size.width
-        }
-        alpha = layer.alpha
-    }
-}
-
-/** The pager itself: same page slot either way, only the axis and direction change. */
-@Composable
-private fun ReaderPager(
-    flow: ReadingFlow,
-    pagerState: PagerState,
-    scrollable: Boolean,
-    page: @Composable PagerScope.(Int) -> Unit,
-) {
-    // TODO(phase3): beyondViewportPageCount should follow scroll velocity and the
-    // prefetch depth setting (§3). Fixed at 1 for the Phase 2 slice.
-    if (flow == ReadingFlow.VERTICAL) {
-        VerticalPager(
-            state = pagerState,
-            modifier = Modifier.fillMaxSize(),
-            userScrollEnabled = scrollable,
-            beyondViewportPageCount = 1,
-            pageContent = page,
-        )
-    } else {
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier.fillMaxSize(),
-            userScrollEnabled = scrollable,
-            beyondViewportPageCount = 1,
-            // A manga reads right to left whatever language the phone is in. The pager already
-            // mirrors under an RTL locale, so reverse only when the book and the UI disagree —
-            // otherwise an Arabic-locale phone would read every Western comic backwards.
-            reverseLayout = (flow == ReadingFlow.RTL) != (LocalLayoutDirection.current == LayoutDirection.Rtl),
-            pageContent = page,
-        )
     }
 }
 

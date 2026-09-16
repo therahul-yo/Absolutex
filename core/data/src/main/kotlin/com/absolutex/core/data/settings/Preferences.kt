@@ -48,6 +48,10 @@ data class ReaderPrefs(
     val thumbnailStrip: Boolean = true,
     /** How a page gives way to the next (§5.2). SLIDE is the pager's own, and the plainest. */
     val transition: PageTransition = PageTransition.SLIDE,
+    /** How long a page turn animates, in milliseconds (§5.2 animation tuning). */
+    val pageTurnMs: Int = DEFAULT_PAGE_TURN_MS,
+    /** How far a key press or edge tap scrolls a continuous strip, as a percentage of the screen. */
+    val scrollStepPercent: Int = DEFAULT_SCROLL_STEP_PERCENT,
 )
 
 /**
@@ -64,6 +68,16 @@ fun ReaderPrefs.overriddenBy(book: BookPrefs?): ReaderPrefs {
 
 /** The fit for this shape of screen and page: what was last chosen here, or the shape's default. */
 fun ReaderPrefs.fitFor(context: FitContext): FitMode = fitMemory.modeFor(context)
+
+/** Bounds for the animation settings: fast enough to feel instant, slow enough to see. */
+const val MIN_PAGE_TURN_MS = 80
+const val MAX_PAGE_TURN_MS = 600
+const val DEFAULT_PAGE_TURN_MS = 300
+
+/** Below half a screen a step stops being a page turn; a full screen leaves no line of context. */
+const val MIN_SCROLL_STEP_PERCENT = 50
+const val MAX_SCROLL_STEP_PERCENT = 100
+const val DEFAULT_SCROLL_STEP_PERCENT = 90
 
 /** How the reader holds its orientation. */
 enum class RotationLock { SYSTEM, PORTRAIT, LANDSCAPE }
