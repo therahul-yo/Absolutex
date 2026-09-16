@@ -42,6 +42,28 @@ smbj                 = "0.15.0"
 # was published by Gradle 9.6.1 and declares configuration-cache support. It is an alpha,
 # and that is the tradeoff: it is the only detekt built for the toolchain this repo is on.
 detekt               = "2.0.0-alpha.6"
+# commons-net: verified 2026-09-15 against live Maven Central, not from memory.
+# Version: maven-metadata.xml reports <latest>3.13.0</latest>/<release>3.13.0</release>.
+# Licence: Apache-2.0 — declared by the Central POM's Apache header plus its parent chain
+# (commons-parent:97 -> apache:37, which carries the Apache License 2.0 grant).
+# Re-check with:
+#   curl -s https://repo1.maven.org/maven2/commons-net/commons-net/maven-metadata.xml
+commonsNet           = "3.13.0"
+# ftpserver-core: test-only, an in-process real FTP server to pin CommonsNetFtpTransport's wire
+# behaviour (a fake FTPClient can't reproduce a genuine 426 reply). Verified 2026-09-15:
+#   curl -s https://repo1.maven.org/maven2/org/apache/ftpserver/ftpserver-core/maven-metadata.xml
+# reports <latest>1.2.1</latest>/<release>1.2.1</release>. Chosen over org.mockftpserver:
+# MockFtpServer 3.2.0, which was tried first and fails differently from a real server — its
+# FakeFtpServer throws on the data socket's early close and drops the control connection
+# (FTPConnectionClosedException on the client), instead of answering with 426/450/451 the way
+# pyftpdlib/vsftpd/ProFTPD do. ftpserver-core reproduces the real reply (confirmed with a spike:
+# completePendingCommand=false, reply=426, control connection still usable) — unsurprising, since
+# commons-net's own test suite depends on this same library (its POM, same groupId/version) to
+# test its FTP client. Transitive versions (also test-only, resolved from ftpserver-core 1.2.1's
+# own POM, not guessed): ftplet-api 1.2.1 (same release), mina-core 2.2.4, slf4j-api 1.7.36.
+ftpserverCore        = "1.2.1"
+minaCore             = "2.2.4"
+slf4jApiFtpTest      = "1.7.36"
 
 # SDK levels — see plan §2. minSdk 33 is the AGSL floor; costs ~0% inside our hardware class.
 compileSdk           = "37"
@@ -63,6 +85,8 @@ compose-ui-graphics          = { module = "androidx.compose.ui:ui-graphics" }
 compose-ui-tooling           = { module = "androidx.compose.ui:ui-tooling" }
 compose-ui-tooling-preview   = { module = "androidx.compose.ui:ui-tooling-preview" }
 compose-material3            = { module = "androidx.compose.material3:material3" }
+# Lists, grids and gestures for the library screens. BOM-managed, so no version to pin here.
+compose-foundation           = { module = "androidx.compose.foundation:foundation" }
 compose-material3-adaptive-nav = { module = "androidx.compose.material3:material3-adaptive-navigation-suite", version.ref = "adaptive" }
 
 hilt-android                 = { module = "com.google.dagger:hilt-android", version.ref = "hilt" }
@@ -84,6 +108,10 @@ androidx-test-ext-junit      = { module = "androidx.test.ext:junit", version.ref
 androidx-test-runner         = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
 androidx-uiautomator         = { module = "androidx.test.uiautomator:uiautomator", version.ref = "uiautomator" }
 junit                        = { module = "junit:junit", version.ref = "junit" }
+commons-net                  = { module = "commons-net:commons-net", version.ref = "commonsNet" }
+ftpserver-core                = { module = "org.apache.ftpserver:ftpserver-core", version.ref = "ftpserverCore" }
+mina-core                    = { module = "org.apache.mina:mina-core", version.ref = "minaCore" }
+slf4j-api-ftp-test            = { module = "org.slf4j:slf4j-api", version.ref = "slf4jApiFtpTest" }
 robolectric                  = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 androidx-test-core           = { module = "androidx.test:core", version.ref = "androidxTestCore" }
 room-testing                 = { module = "androidx.room:room-testing", version.ref = "room" }

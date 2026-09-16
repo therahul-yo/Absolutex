@@ -43,6 +43,11 @@ adb install -r "$(find benchmark/build/outputs/apk/benchmark -name '*.apk' | hea
 # is a different uid, so it gets EACCES without it. That was observed on the reference device.
 # 644 rather than 666: the app only needs to read.
 adb shell "mkdir -p /sdcard/Android/data/$PKG/files"
+# adb creates these directories as shell:ext_data_rw with mode 2770, and the app's uid is not in
+# ext_data_rw — so the app cannot even traverse its OWN external directory and every open fails
+# with EACCES. That is not hypothetical: it made every benchmark run to date time the reader's
+# "Couldn't open this book" screen instead of a page. Grant traverse to other on both levels.
+adb shell "chmod 755 /sdcard/Android/data/$PKG /sdcard/Android/data/$PKG/files"
 adb push "$CORPUS_SRC/$BOOK" "/sdcard/Android/data/$PKG/files/absolute-batman-001.cbr"
 adb shell "chmod 644 /sdcard/Android/data/$PKG/files/"'*.cbr'
 
@@ -52,3 +57,5 @@ adb shell am instrument -w -r \
 
 echo "--- metrics ---"
 grep -E "frameDurationCpuMs|frameOverrunMs" "$LOG" || echo "(none captured - check $LOG)"
+# am instrument exits 0 on test failure, and tee would mask it anyway: fail on the log instead.
+! grep -q "FAILURES!!!" "$LOG"

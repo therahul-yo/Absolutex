@@ -2,20 +2,30 @@ package com.absolutex.feature.reader
 
 import android.content.ComponentCallbacks2
 import android.content.Context
+import android.graphics.Bitmap
 import android.net.Uri
-import android.os.ParcelFileDescriptor
+import android.os.Trace
+import android.provider.OpenableColumns
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.absolutex.core.data.ProgressDao
 import com.absolutex.core.data.ReadingProgress
 import com.absolutex.core.data.TotalRamBytes
+import com.absolutex.core.data.settings.ReaderPrefs
+import com.absolutex.core.data.settings.ReaderPrefsSource
 import com.absolutex.core.decode.DecodeDispatchers
 import com.absolutex.core.decode.MemoryBudget
 import com.absolutex.core.decode.PageImage
+import com.absolutex.core.thumbnails.ThumbRequest
+import com.absolutex.core.thumbnails.ThumbnailPipeline
 import com.absolutex.core.decode.TileCache
+import com.absolutex.model.BookIdentity
+import com.absolutex.model.Toc
+import com.absolutex.model.TocEntry
 import com.absolutex.source.ComicSource
-import com.absolutex.source.libarchive.LibArchiveSource
+import com.absolutex.source.pdf.PdfDocument
+import java.io.Closeable
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -24,8 +34,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -35,6 +50,9 @@ import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 
 private const val TAG = "Reader"
+
+/** A page is never four times taller than it is wide; the thumbnail fits inside that box. */
+private const val THUMB_HEIGHT_LIMIT = 4
 
 data class ReaderUiState(
     val loading: Boolean = false,
@@ -51,25 +69,59 @@ class ReaderViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val progressDao: ProgressDao,
     @TotalRamBytes private val totalRamBytes: Long,
+    prefs: ReaderPrefsSource,
 ) : ViewModel() {
+
+    /**
+     * Reading flow and fit mode, live. Eager so the value is usually in hand before the first page:
+     * the archive open that gates rendering takes longer than the first DataStore read.
+     */
+    val readerPrefs: StateFlow<ReaderPrefs> =
+        prefs.readerPrefs.stateIn(viewModelScope, SharingStarted.Eagerly, ReaderPrefs())
 
     private val _ui = MutableStateFlow(ReaderUiState())
     val ui: StateFlow<ReaderUiState> = _ui.asStateFlow()
 
     // Pages whose bytes failed to decode. The UI shows a generic string for these —
     // never the raw entry name — while detail goes to logcat.
+    /** The open book's contents, empty when it has none (§5.2). */
+    private val _toc = MutableStateFlow<List<TocEntry>>(emptyList())
+    val toc: StateFlow<List<TocEntry>> = _toc.asStateFlow()
+
     private val _failedPages = MutableStateFlow<Set<Int>>(emptySet())
     val failedPages: StateFlow<Set<Int>> = _failedPages.asStateFlow()
 
     val tileCache = TileCache(MemoryBudget.defaultCacheBytes(totalRamBytes))
 
-    private var source: ComicSource? = null
+    /** The open book: a [ComicSource] whose pages are encoded images, or a [PdfDocument]. */
+    private var source: Closeable? = null
+
+    /**
+     * Page thumbnails for the chrome's strip, on their own caches and dispatcher so a strip scroll
+     * can never starve the page being read. One per book: its disk entries are keyed by book.
+     */
+    private var thumbs: ThumbnailPipeline? = null
     private var bookId: String = ""
+    /** The Uri currently open, for the same-book check. Distinct from [bookId], the book's identity. */
+    private var openedUri: String = ""
+    /** The Uri an open is in flight for, so a repeat request for it joins rather than restarts. */
+    private var openingUri: String = ""
     // Thread-safe for get-on-Main + put-on-decode-pool; bounded to a sliding window
     // around the current page (see evictFarPages). ConcurrentHashMap needs the manual
     // bound because it has no access-order eviction of its own. A plain HashMap here was
     // a data race: reads happen on Main, writes on the decode pool.
     private val pageImages = ConcurrentHashMap<Int, PageImage>()
+
+    /**
+     * Base layers, finished or still decoding, keyed by page and size. A second request for the same
+     * base awaits the first instead of starting another decode. On the reference phone the resumed
+     * page was decoded twice at once on every open, identical page, size and viewport, which cost
+     * ~150 ms of the tap-to-first-page budget; swiping back to a page also re-decoded its base.
+     * Native decodes cannot be cancelled, so a duplicate is paid for in full.
+     */
+    private val bases = ConcurrentHashMap<BaseKey, Deferred<Bitmap?>>()
+
+    private data class BaseKey(val bookId: String, val page: Int, val width: Int, val height: Int)
     private val openGeneration = AtomicInteger(0)
     private var openJob: Job? = null
     // Coalesces fling bursts into one Room write: cancel-and-relaunch around the upsert.
@@ -83,9 +135,15 @@ class ReaderViewModel @Inject constructor(
      */
     private var settledPage: Int = 0
 
+    /** The book page being read: where a reader rebuilt for a new page layout reopens. */
+    val readingPage: Int get() = settledPage
+
     companion object {
         /** Resident decoded pages. ~12 covers viewport + prefetch without ballooning native heap. */
         const val MAX_RESIDENT_PAGES = 12
+
+        /** Base layers kept around the settled page: it and two either side, ~9 MB each here. */
+        const val BASE_WINDOW = 2
 
         /** A fast fling settles dozens of pages; only the landing page should hit disk. */
         const val PROGRESS_DEBOUNCE_MS = 300L
@@ -95,7 +153,12 @@ class ReaderViewModel @Inject constructor(
     // message, and the detail is logged. Narrowing would let an unlisted failure crash instead.
     @Suppress("TooGenericExceptionCaught")
     fun open(uri: Uri) {
-        if (bookId == uri.toString() && source != null) return
+        if (openedUri == uri.toString() && source != null) return
+        // The activity starts opening a launch Uri in onCreate, before the reader composes, and the
+        // reader then asks for the same Uri. That second call must join the open in flight, not
+        // cancel and restart it — a restart would throw away the head start it exists to give.
+        if (openingUri == uri.toString() && openJob?.isActive == true) return
+        openingUri = uri.toString()
         // Cancel any in-flight open so a rapid book switch cannot land stale state.
         openJob?.cancel()
         val generation = openGeneration.incrementAndGet()
@@ -104,12 +167,12 @@ class ReaderViewModel @Inject constructor(
         tileCache.clear()
         pageImages.values.forEach { runCatching { it.close() } }
         pageImages.clear()
+        bases.clear()
         _ui.value = ReaderUiState(loading = true)
         openJob = viewModelScope.launch {
             val opened = try {
                 withContext(DecodeDispatchers.extract) {
-                    // A fresh descriptor per read — a shared SAF fd corrupts parallel reads.
-                    LibArchiveSource.open { openDescriptor(uri) }
+                    context.openBook(uri) to context.identityOf(uri)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -125,43 +188,35 @@ class ReaderViewModel @Inject constructor(
                 }
                 return@launch
             }
+            val (source0, identity) = opened
+            val count = (source0 as? PdfDocument)?.pageCount ?: (source0 as ComicSource).pages.size
             if (generation != openGeneration.get()) {
-                runCatching { opened.close() }
+                runCatching { source0.close() }
                 return@launch
             }
             // Close the old source only now, immediately before replacing, so in-flight
             // page decodes against it fail cleanly instead of racing a premature close.
             val old = source
-            source = opened
-            bookId = uri.toString()
+            source = source0
+            thumbs?.close()
+            thumbs = ThumbnailPipeline(java.io.File(context.cacheDir, "thumbs"))
+            openedUri = uri.toString()
+            bookId = identity
             runCatching { old?.close() }
             val resume = progressDao.get(bookId)?.pageIndex ?: 0
+            // The previous book's settled page would otherwise stand in until the pager settles.
+            settledPage = resume.coerceIn(0, (count - 1).coerceAtLeast(0))
             _ui.value = ReaderUiState(
                 loading = false,
                 title = uri.lastPathSegment?.substringAfterLast('/').orEmpty(),
-                pageCount = opened.pages.size,
+                pageCount = count,
                 bookId = bookId,
-                currentPage = resume.coerceIn(0, (opened.pages.size - 1).coerceAtLeast(0)),
+                currentPage = settledPage,
             )
+            // After the state that gates the first page: contents are chrome, and a PDF outline is
+            // a JNI call whose cost must not land in the tap-to-first-page budget.
+            _toc.value = withContext(DecodeDispatchers.extract) { contentsOf(source0) }
         }
-    }
-
-    /**
-     * Opens a descriptor for either a SAF document or a plain file path.
-     *
-     * §5.1 needs device-storage locations, which are real paths, not content Uris — and a
-     * file path also avoids SAF entirely where the app already has access, which is both
-     * faster and what makes the reader drivable from an instrumented benchmark.
-     */
-    private fun openDescriptor(uri: Uri): ParcelFileDescriptor = when (uri.scheme) {
-        // Messages below stay generic: the raw Uri must not reach the UI (nor be
-        // formatted into exceptions that the UI renders) — logcat gets the detail.
-        "file", null -> ParcelFileDescriptor.open(
-            java.io.File(requireNotNull(uri.path) { "file uri has no path" }),
-            ParcelFileDescriptor.MODE_READ_ONLY,
-        )
-        else -> context.contentResolver.openFileDescriptor(uri, "r")
-            ?: error("could not open document")
     }
 
     /**
@@ -175,18 +230,17 @@ class ReaderViewModel @Inject constructor(
         val src = source ?: return null
         pageImages[index]?.let { return it }
 
-        val bytes = try {
-            withContext(DecodeDispatchers.extract) { src.openPage(index).readBytes() }
+        val decoded = try {
+            if (src is PdfDocument) {
+                withContext(DecodeDispatchers.decode) { PdfPageImage.open(src, index) }
+            } else {
+                val bytes = withContext(DecodeDispatchers.extract) { (src as ComicSource).openPage(index).readBytes() }
+                withContext(DecodeDispatchers.decode) { PageImage.from(bytes) }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: IOException) {
             return failPage(index, e)
-        }
-
-        val decoded = try {
-            withContext(DecodeDispatchers.decode) { PageImage.from(bytes) }
-        } catch (e: CancellationException) {
-            throw e
         } catch (e: RuntimeException) {
             return failPage(index, e)
         }
@@ -212,7 +266,35 @@ class ReaderViewModel @Inject constructor(
     /** Clears one cached page and its failure mark so the UI retry forces a fresh decode. */
     fun invalidatePage(index: Int) {
         pageImages.remove(index)?.let { runCatching { it.close() } }
+        bases.keys.removeIf { it.page == index }
         _failedPages.value -= index
+    }
+
+    /**
+     * The page's base layer at [width]x[height], decoded once however many callers ask. The decode
+     * runs in the ViewModel's scope, so a caller leaving composition does not waste a decode someone
+     * else is about to await. A failed decode is not remembered, so a retry decodes again.
+     */
+    suspend fun baseLayer(index: Int, image: PageImage, width: Int, height: Int): Bitmap? {
+        val key = BaseKey(bookId, index, width, height)
+        val decode = bases.computeIfAbsent(key) {
+            viewModelScope.async(DecodeDispatchers.decode, start = CoroutineStart.LAZY) {
+                Trace.beginSection("absx.base p=$index ${width}x$height")
+                try {
+                    runCatching { image.decodeBase(width, height) }.getOrNull()
+                } finally {
+                    Trace.endSection()
+                }
+            }
+        }
+        val bitmap = decode.await()
+        if (bitmap == null) {
+            bases.remove(key, decode)
+        } else {
+            // Keep only the settled page's neighbourhood; a far base is cheap to decode again.
+            bases.keys.removeIf { kotlin.math.abs(it.page - settledPage) > BASE_WINDOW }
+        }
+        return bitmap
     }
 
     /** Keeps only a sliding window around the current page; closes evicted pages. */
@@ -268,18 +350,77 @@ class ReaderViewModel @Inject constructor(
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { progressDao.upsert(progress) }
         }
         openJob?.cancel()
+        _toc.value = emptyList()
         pageImages.values.forEach { runCatching { it.close() } }
         pageImages.clear()
+        bases.clear()
         tileCache.clear()
+        thumbs?.close()
+        thumbs = null
         runCatching { source?.close() }
         source = null
         super.onCleared()
+    }
+
+    /**
+     * One page thumbnail, for the chrome's strip (§5.2).
+     *
+     * An archive goes through [ThumbnailPipeline], which caches to disk, so reopening a book does
+     * not re-extract 45 pages. A PDF has no encoded bytes to cache, so PDFium renders the page
+     * small, which is already cheap.
+     */
+    suspend fun thumbnail(index: Int, width: Int): Bitmap? {
+        val src = source ?: return null
+        return runCatching {
+            if (src is PdfDocument) {
+                withContext(DecodeDispatchers.decode) {
+                    PdfPageImage.open(src, index).decodeBase(width, width * THUMB_HEIGHT_LIMIT)
+                }
+            } else {
+                thumbs?.load(src as ComicSource, ThumbRequest(bookId, index, ThumbRequest.snapWidth(width)))
+            }
+        }.getOrNull()
+    }
+
+    /**
+     * Writes the page to Pictures/Absolutex (§5.2) and returns its Uri, or null if it could not be
+     * written. An archive page is exported byte for byte: re-encoding a scan to export it would
+     * lose quality for nothing. A PDF page has no bytes of its own, so it is rendered and encoded.
+     */
+    suspend fun exportPage(index: Int): Uri? {
+        val src = source ?: return null
+        val title = _ui.value.title
+        return withContext(DecodeDispatchers.extract) {
+            runCatching {
+                if (src is PdfDocument) {
+                    val page = PdfPageImage.open(src, index)
+                    context.exportPageBitmap(title, index, page.decodeBase(EXPORT_MAX_EDGE, EXPORT_MAX_EDGE))
+                } else {
+                    val source1 = src as ComicSource
+                    val bytes = source1.openPage(index).use { it.readBytes() }
+                    context.exportPageBytes(title, index, source1.pages[index].entryName, bytes)
+                }
+            }.onFailure { Log.e(TAG, "export failed", it) }.getOrNull()
+        }
     }
 
     /** Halves the tile budget on memory pressure; called from MainActivity's callbacks. */
     fun onTrimMemory(level: Int) {
         if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
             tileCache.trimToSize(tileCache.maxBytes() / 2)
+            bases.keys.removeIf { it.page != settledPage }
         }
     }
 }
+
+/**
+ * The open book's contents: a PDF's own outline, or the folders an archive's pages sit in. A
+ * book with neither returns nothing, and the reader shows no contents button.
+ */
+private fun contentsOf(source: Closeable): List<TocEntry> = runCatching {
+    if (source is PdfDocument) {
+        source.outline().map { TocEntry(it.title, it.pageIndex, it.depth) }
+    } else {
+        Toc.fromEntryNames((source as ComicSource).pages.map { it.entryName })
+    }
+}.getOrDefault(emptyList())

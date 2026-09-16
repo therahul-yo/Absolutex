@@ -8,12 +8,19 @@ is a feature: every compromise removed is a code path that cannot rot or drop a 
 
 ## Status
 
-Phase 2 (scaffold + vertical slice) is working end to end on device: open a `.cbr`/`.cbz`
-through SAF, tiled render, single-page LTR, pinch/zoom, progress persisted, last book resumed
-on launch.
+**The reader** opens `.cbz`, `.cbr`, `.cb7`, `.cbt` and PDF through SAF or a file path, and
+renders them tiled. It has reading flows (LTR, RTL, vertical), page layouts (single, double,
+double-with-cover, continuous vertical), four fit modes, pinch and double-tap zoom, a 3x3 tap
+grid mirrored for RTL, immersive chrome with a seek bar, a thumbnail strip, bookmarks, a table
+of contents, page export, keyboard, gamepad and volume-key control, and progress that resumes
+the last book on launch.
 
-**Not yet built:** reader chrome, thumbnail strip, TOC, AGSL colour pipeline, library scanner,
-settings surface, remote sources, PDF. See [Roadmap](#roadmap).
+**Around it:** a library scanner with a filesystem watcher, a library screen, a settings surface,
+a thumbnail pipeline, and remote modules for SMB, FTP/FTPS and Komga/Kavita progress sync.
+
+**Not yet built:** the AGSL colour pipeline, GPU crop and auto background colour; transitions;
+the library as the app's home screen (it still opens a file picker); remote sources reachable
+from the UI. See [Roadmap](#roadmap).
 
 ## Platform floor
 
@@ -157,16 +164,56 @@ undo by accident:
 Do not reach for `detectTransformGestures` in the reader. It consumes every drag past touch
 slop, which stops `HorizontalPager` ever seeing a swipe.
 
+### Measured on the reference device
+
+OnePlus 11R (Snapdragon 8+ Gen 1, Android 16), display confirmed at 120 Hz, benchmark build,
+*Absolute Batman 001* (CBR, 45 × 1988×3057 JPEG). Run with `tools/run-benchmark.sh`.
+
+| Budget (§3) | Measured | Verdict |
+|---|---|---|
+| Page turn < 8.3 ms | CPU frame time P50 2.8 · P90 3.8 · P95 4.2 · P99 5.2 ms (5 iterations, 93–166 frames each) | **met** |
+| Zero dropped frames | 88 turns, 1,387 frames: **2 missed deadlines (0.14%)**, 0 missed vsync, 0 slow UI-thread frames | **not met** |
+| Cold start < 300 ms | Time to initial display, baseline profile: median 286.9 · min 256.8 · max 340.4 ms (no compilation: median 299.9; full AOT: median 302.4) | **met at the median**, not at the tail |
+| Pinch zoom, no drops | Sustained pinch open/close: frame time P50 3.3 · P90 4.8 · P95 5.6 · P99 6.5 ms, overrun P99 −0.4 ms (230–256 frames per iteration) | **met** |
+| Steady reader memory under the §3 ceiling | 150 MB PSS / 304 MB RSS after 12 page turns, against ~1.06 GiB (15% of this phone's 7.4 GB) | **met** |
+| Tap → first page < 250 ms | Warm, time to full display (base layer decoded): median 291.6 · min 266.2 · max 489.6 ms; window up at 79 ms | **not met** (was 513.6) |
+
+What the two dropped frames are, from a Perfetto trace: not the app's drawing (RenderThread
+draw commands stay under 2.5 ms). RenderThread blocks ~24 ms in `eglSwapBuffers → queueBuffer`
+waiting for SurfaceFlinger to release a buffer, and framestats show GPU completion of 22–28 ms on
+exactly those frames. The reader layer composites as `DEVICE` even in Display P3, so wide-gamut
+colour mode is not forcing GPU composition. Leading suspect: GPU frequency dropping during the
+pauses between swipes. Open.
+
+The first cold-start numbers (median 333.9 ms) were measured with R8 off in the benchmark variant: opening the
+unshrunk dex alone cost 38 ms of `bindApplication`. The variant now inherits release's shrinking, which also
+means the minified app — the one users get — runs on a device every time a benchmark runs.
+
+PSS understates the reader's graphics: hardware bitmaps are dmabuf-backed and only partly attributed to the
+process, which is why RSS is the larger number above.
+
+Tap → first page went 513.6 → 373.3 → 312.9 → 291.6 ms at the median. Neighbours stopped decoding alongside the
+page being opened; the opened page stopped being decoded twice (base layers are shared, one decode per page and
+size); and the activity starts opening a launch Uri in `onCreate` instead of after the splash and first layout.
+What remains is ~48 ms of RAR extraction and one ~174 ms decode of a 6 MP JPEG to screen size. Two ideas were
+measured and dropped: a half-resolution preview decode was barely cheaper on this decoder, and strip-parallel decode
+cannot scale for baseline JPEGs, whose entropy stream must be read from the top for any region.
+
+Two traps that made every earlier number wrong, both now guarded in the benchmark:
+`adb`-created `Android/data` directories are `2770 shell:ext_data_rw` (the app gets EACCES and
+the benchmark timed the error screen), and OxygenOS drops injected input unless *Disable
+permission monitoring* is on **and the phone has been rebooted since**.
+
 ## Roadmap
 
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Audit, licensing gates, platform decisions | done |
-| 2 | Scaffold + CBZ/CBR vertical slice | working; budgets not yet measured |
-| 3 | Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | next |
-| 4 | Library: parallel scanner, metadata, home, browse, search | |
-| 5 | Reader depth: layouts, flows, transitions, bookmarks, TOC, input devices | |
-| 6 | Formats: 7z, TAR, PDFium, image folders, full codec set | |
-| 7 | Settings surface | |
-| 8 | Remote: SMB streaming, FTP, Komga/Kavita sync | |
+| 2 | Scaffold + CBZ/CBR vertical slice | working; page turn measured (see above) |
+| 3 | Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | tiles done; colour and crop next |
+| 4 | Library: parallel scanner, metadata, home, browse, search | scanner, watcher and screen done; not yet the home screen |
+| 5 | Reader depth: layouts, flows, transitions, bookmarks, TOC, input devices | done except transitions and per-book overrides |
+| 6 | Formats: 7z, TAR, PDFium, image folders, full codec set | archives and PDF done; image folders open in the library only |
+| 7 | Settings surface | done, not yet reachable from the app shell |
+| 8 | Remote: SMB streaming, FTP, Komga/Kavita sync | FTP and sync modules merged; SMB in review; no UI yet |
 | 9 | NPU upscaling R&D, release polish | |
