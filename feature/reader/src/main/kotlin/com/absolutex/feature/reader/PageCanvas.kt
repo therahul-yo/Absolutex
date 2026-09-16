@@ -13,6 +13,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -136,11 +137,14 @@ fun PageCanvas(
     /** Which half of a two-page spread this page fills, if any. */
     spreadSide: SpreadSide = SpreadSide.NONE,
     /**
-     * Draw-time colour correction (§4). Neutral by default, which leaves the draw calls below
-     * exactly as they were — ReaderScreen passes nothing today and needs no change until
-     * milestone 2 wires RenderingPrefs through here (TODO(lead): add that parameter then).
+     * Draw-time colour correction (§4), as snapshot state. The draw lambda reads `.value` in the
+     * draw scope, so a slider drag repaints at 120 fps with no recomposition of the page — the
+     * same reason pan/zoom state lives in draw-observed state above. Null (the default) is
+     * neutral: the draw calls below are then exactly the pre-shader ones.
+     * TODO(lead): milestone 2's RenderingPrefs feed this — pass the prefs state here from the
+     * reader chrome (ColourPanel) and the settings Rendering group.
      */
-    colour: ColourParams = ColourParams(),
+    colour: State<ColourParams>? = null,
 ) {
     var scale by remember(pageIndex) { mutableFloatStateOf(1f) }
     var offsetX by remember(pageIndex) { mutableFloatStateOf(0f) }
@@ -464,7 +468,7 @@ fun PageCanvas(
         @Suppress("UNUSED_EXPRESSION") tileGeneration
         // Colour resolution is a draw-phase read too: a slider drag (milestone 2) repaints without
         // recomposing. Null means neutral — the draw calls below are then today's, untouched.
-        val activeColour = benchmarkColour ?: colour
+        val activeColour = benchmarkColour ?: colour?.value ?: ColourParams.NEUTRAL
         val graded = if (colourPipeline.shouldApply(activeColour)) activeColour else null
 
         val bmp = base ?: return@Canvas

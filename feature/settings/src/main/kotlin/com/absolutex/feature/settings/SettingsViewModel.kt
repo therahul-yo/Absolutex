@@ -7,6 +7,8 @@ import com.absolutex.core.data.settings.AppPrefsSource
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.data.settings.ReaderPrefs
 import com.absolutex.core.data.settings.ReaderPrefsSource
+import com.absolutex.core.data.settings.RenderingPrefs
+import com.absolutex.core.data.settings.RenderingPrefsSource
 import com.absolutex.core.data.settings.SettingsWriter
 import com.absolutex.model.FitMode
 import com.absolutex.model.ReadingFlow
@@ -25,6 +27,7 @@ import javax.inject.Inject
 class SettingsViewModel @Inject constructor(
     appSource: AppPrefsSource,
     readerSource: ReaderPrefsSource,
+    renderingSource: RenderingPrefsSource,
     private val writer: SettingsWriter,
 ) : ViewModel() {
 
@@ -36,6 +39,12 @@ class SettingsViewModel @Inject constructor(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
         ReaderPrefs(),
+    )
+
+    val renderingPrefs: StateFlow<RenderingPrefs> = renderingSource.renderingPrefs.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        RenderingPrefs(),
     )
 
     fun setNightMode(mode: NightMode) {
@@ -77,5 +86,9 @@ class SettingsViewModel @Inject constructor(
 
     fun updateReader(change: (ReaderPrefs) -> ReaderPrefs) {
         viewModelScope.launch { writer.updateReader(change) }
+    }
+
+    fun updateRendering(change: (RenderingPrefs) -> RenderingPrefs) {
+        viewModelScope.launch { writer.updateRendering(change) }
     }
 }

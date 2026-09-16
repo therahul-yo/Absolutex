@@ -14,6 +14,10 @@ class ColourShaderTest {
         assertTrue(src.contains("uniform float ${ColourShader.UNIFORM_BRIGHTNESS}"))
         assertTrue(src.contains("uniform float ${ColourShader.UNIFORM_CONTRAST}"))
         assertTrue(src.contains("uniform float ${ColourShader.UNIFORM_SATURATION}"))
+        assertTrue(src.contains("uniform float ${ColourShader.UNIFORM_TEMPERATURE}"))
+        assertTrue(src.contains("uniform float ${ColourShader.UNIFORM_AGGRESSION}"))
+        assertTrue(src.contains("uniform float ${ColourShader.UNIFORM_VIBRANCE}"))
+        assertTrue(src.contains("uniform vec3 ${ColourShader.UNIFORM_GAMMA_EXP}"))
     }
 
     @Test
@@ -25,11 +29,16 @@ class ColourShaderTest {
 
     @Test
     fun `shader transcribes the reference op order`() {
-        // Contrast about mid-grey, additive brightness, luma blend, explicit clamp — the same
-        // sentence as ColourMath.adjust. A reorder on either side breaks the transcription.
+        // White balance, contrast about mid-grey with additive brightness, gamma on floored
+        // values, luma-blend saturation with vibrance, explicit clamp — the same sentence as
+        // ColourMath.adjust. A reorder on either side breaks the transcription.
         val src = ColourShader.SOURCE.replace(" ", "").replace("\n", "")
-        assertTrue(src.contains("(src.rgb-0.5)*contrast+0.5+brightness"))
-        assertTrue(src.contains("mix(vec3(luma),c,saturation)"))
+        assertTrue(src.contains("temperature*aggression*WB_STRENGTH"))
+        assertTrue(src.contains("src.rgb*vec3(1.0+shift,1.0,1.0-shift)"))
+        assertTrue(src.contains("(c-0.5)*contrast+0.5+brightness"))
+        assertTrue(src.contains("pow(max(c,vec3(0.0)),gammaExp)"))
+        assertTrue(src.contains("clamp((1.0+c.r-c.b)/2.0,0.0,1.0)"))
+        assertTrue(src.contains("mix(vec3(luma),c,saturation+vibrance*selectivity)"))
         assertTrue(src.contains("clamp(c,0.0,1.0)"))
     }
 
@@ -40,6 +49,14 @@ class ColourShaderTest {
         assertEquals(0.2126f, ColourMath.LUMA_R, 0f)
         assertEquals(0.7152f, ColourMath.LUMA_G, 0f)
         assertEquals(0.0722f, ColourMath.LUMA_B, 0f)
+    }
+
+    @Test
+    fun `white-balance strength matches the JVM reference`() {
+        assertTrue(ColourShader.SOURCE.contains("const float WB_STRENGTH = 0.25;"))
+        assertEquals(0.25f, ColourMath.WB_STRENGTH, 0f)
+        assertEquals(ColourMath.WARMTH_KEEP, 0.35f, 0f)
+        assertTrue(ColourShader.SOURCE.replace(" ", "").contains("mix(1.0,0.35,warmth)"))
     }
 }
 
@@ -58,6 +75,10 @@ class ColourPipelineGateTest {
         assertTrue(pipeline.shouldApply(ColourParams(brightness = 0.15f)))
         assertTrue(pipeline.shouldApply(ColourParams(contrast = 1.1f)))
         assertTrue(pipeline.shouldApply(ColourParams(saturation = 1.25f)))
+        assertTrue(pipeline.shouldApply(ColourParams(temperature = 0.5f)))
+        assertTrue(pipeline.shouldApply(ColourParams(vibrance = 0.5f)))
+        assertTrue(pipeline.shouldApply(ColourParams(gamma = 1.1f)))
+        assertTrue(pipeline.shouldApply(ColourParams(gammaB = 0.9f)))
     }
 
     @Test(expected = IllegalArgumentException::class)

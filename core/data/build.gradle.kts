@@ -18,6 +18,7 @@ android {
 }
 dependencies {
     implementation(project(":core:model"))
+    implementation(project(":core:gpu"))
     implementation(project(":core:scan"))
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)

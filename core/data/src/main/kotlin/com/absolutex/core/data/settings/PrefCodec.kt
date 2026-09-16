@@ -1,5 +1,6 @@
 package com.absolutex.core.data.settings
 
+import com.absolutex.core.gpu.ColourParams
 import com.absolutex.model.FitMode
 import com.absolutex.model.PageLayout
 import com.absolutex.model.ReadingFlow
@@ -30,6 +31,16 @@ object PrefCodec {
     internal const val KEY_ROTATION_LOCK = "rotation_lock"
     internal const val KEY_USE_CUTOUT = "use_cutout"
     internal const val KEY_PAGE_LAYOUT = "page_layout"
+    internal const val KEY_COLOUR_BRIGHTNESS = "colour_brightness"
+    internal const val KEY_COLOUR_CONTRAST = "colour_contrast"
+    internal const val KEY_COLOUR_SATURATION = "colour_saturation"
+    internal const val KEY_COLOUR_TEMPERATURE = "colour_temperature"
+    internal const val KEY_COLOUR_AGGRESSION = "colour_wb_aggression"
+    internal const val KEY_COLOUR_VIBRANCE = "colour_vibrance"
+    internal const val KEY_COLOUR_GAMMA = "colour_gamma"
+    internal const val KEY_COLOUR_GAMMA_R = "colour_gamma_r"
+    internal const val KEY_COLOUR_GAMMA_G = "colour_gamma_g"
+    internal const val KEY_COLOUR_GAMMA_B = "colour_gamma_b"
 
     fun decodeApp(bag: PrefBag): AppPrefs {
         val defaults = AppPrefs()
@@ -78,6 +89,52 @@ object PrefCodec {
     }
 
     /**
+     * Rendering prefs (§5.4, Rendering group). Floats clamp to the slider ranges rather than
+     * rejecting: a stored 5.0 brightness is a real intent expressed out of range, following the
+     * cache-size precedent above.
+     */
+    fun decodeRendering(bag: PrefBag): RenderingPrefs {
+        val defaults = ColourParams()
+        return RenderingPrefs(
+            colour = ColourParams(
+                brightness = bag.gradedFloat(KEY_COLOUR_BRIGHTNESS, ColourParams.BRIGHTNESS_RANGE)
+                    ?: defaults.brightness,
+                contrast = bag.gradedFloat(KEY_COLOUR_CONTRAST, ColourParams.CONTRAST_RANGE)
+                    ?: defaults.contrast,
+                saturation = bag.gradedFloat(KEY_COLOUR_SATURATION, ColourParams.SATURATION_RANGE)
+                    ?: defaults.saturation,
+                temperature = bag.gradedFloat(KEY_COLOUR_TEMPERATURE, ColourParams.TEMPERATURE_RANGE)
+                    ?: defaults.temperature,
+                wbAggression = bag.gradedFloat(KEY_COLOUR_AGGRESSION, ColourParams.AGGRESSION_RANGE)
+                    ?: defaults.wbAggression,
+                vibrance = bag.gradedFloat(KEY_COLOUR_VIBRANCE, ColourParams.VIBRANCE_RANGE)
+                    ?: defaults.vibrance,
+                gamma = bag.gradedFloat(KEY_COLOUR_GAMMA, ColourParams.GAMMA_RANGE)
+                    ?: defaults.gamma,
+                gammaR = bag.gradedFloat(KEY_COLOUR_GAMMA_R, ColourParams.GAMMA_CHANNEL_RANGE)
+                    ?: defaults.gammaR,
+                gammaG = bag.gradedFloat(KEY_COLOUR_GAMMA_G, ColourParams.GAMMA_CHANNEL_RANGE)
+                    ?: defaults.gammaG,
+                gammaB = bag.gradedFloat(KEY_COLOUR_GAMMA_B, ColourParams.GAMMA_CHANNEL_RANGE)
+                    ?: defaults.gammaB,
+            ),
+        )
+    }
+
+    fun encodeRendering(prefs: RenderingPrefs, bag: MutablePrefBag) {
+        bag.putFloat(KEY_COLOUR_BRIGHTNESS, prefs.colour.brightness)
+        bag.putFloat(KEY_COLOUR_CONTRAST, prefs.colour.contrast)
+        bag.putFloat(KEY_COLOUR_SATURATION, prefs.colour.saturation)
+        bag.putFloat(KEY_COLOUR_TEMPERATURE, prefs.colour.temperature)
+        bag.putFloat(KEY_COLOUR_AGGRESSION, prefs.colour.wbAggression)
+        bag.putFloat(KEY_COLOUR_VIBRANCE, prefs.colour.vibrance)
+        bag.putFloat(KEY_COLOUR_GAMMA, prefs.colour.gamma)
+        bag.putFloat(KEY_COLOUR_GAMMA_R, prefs.colour.gammaR)
+        bag.putFloat(KEY_COLOUR_GAMMA_G, prefs.colour.gammaG)
+        bag.putFloat(KEY_COLOUR_GAMMA_B, prefs.colour.gammaB)
+    }
+
+    /**
      * Enums are stored by name, not ordinal: an ordinal silently re-points at a different value
      * the moment someone inserts a constant in the middle of the enum.
      */
@@ -92,4 +149,7 @@ object PrefCodec {
         // the nearest legal value honours it better than silently restoring 512.
         return stored.coerceIn(AppPrefs.MIN_CACHE_MIB, AppPrefs.MAX_CACHE_MIB)
     }
+
+    private fun PrefBag.gradedFloat(key: String, range: ClosedFloatingPointRange<Float>): Float? =
+        float(key)?.coerceIn(range)
 }

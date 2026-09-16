@@ -95,4 +95,28 @@ class InMemorySettingsTest {
         assertEquals("NightMode.SYSTEM", "SYSTEM", bag.snapshot()[PrefCodec.KEY_NIGHT_MODE])
         assertEquals(NightMode.SYSTEM, InMemorySettings(bag).appPrefs.first().nightMode)
     }
+
+    @Test
+    fun `rendering starts neutral and an update is visible to collectors`() = runTest {
+        val settings = InMemorySettings()
+        assertEquals(RenderingPrefs(), settings.renderingPrefs.first())
+        settings.updateRendering { it.copy(colour = it.colour.copy(brightness = 0.2f)) }
+        assertEquals(0.2f, settings.renderingPrefs.first().colour.brightness)
+    }
+
+    @Test
+    fun `a rendering update is persisted to the backing store`() = runTest {
+        val bag = MapPrefBag()
+        InMemorySettings(bag).updateRendering { it.copy(colour = it.colour.copy(temperature = 0.4f)) }
+        // A fresh instance over the same bag is what a process restart looks like.
+        assertEquals(0.4f, InMemorySettings(bag).renderingPrefs.first().colour.temperature)
+    }
+
+    @Test
+    fun `updating rendering leaves app and reader prefs alone`() = runTest {
+        val settings = InMemorySettings()
+        settings.updateRendering { it.copy(colour = it.colour.copy(vibrance = 0.7f)) }
+        assertEquals(AppPrefs(), settings.appPrefs.first())
+        assertEquals(ReaderPrefs(), settings.readerPrefs.first())
+    }
 }

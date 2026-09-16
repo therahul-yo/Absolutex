@@ -3,6 +3,8 @@ package com.absolutex.feature.settings
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.data.settings.ReaderPrefs
+import com.absolutex.core.data.settings.RenderingPrefs
+import com.absolutex.core.gpu.ColourParams
 import com.absolutex.model.FitMode
 import com.absolutex.model.ReadingFlow
 import org.junit.Assert.assertEquals
@@ -105,5 +107,18 @@ class SettingsReductionsTest {
         FitMode.entries.forEach { mode ->
             assertEquals(ReaderPrefs().copy(fitMode = mode), ReaderPrefs().withFitMode(mode))
         }
+    }
+
+    @Test
+    fun `withColour sets the grade and preserves the record`() {
+        val grade = ColourParams(temperature = 0.4f, vibrance = 0.6f)
+        assertEquals(RenderingPrefs(grade), RenderingPrefs().withColour(grade))
+    }
+
+    @Test
+    fun `withColour clamps out-of-range edits into the slider ranges`() {
+        val clamped = RenderingPrefs().withColour(ColourParams(brightness = 5f, gamma = 9f)).colour
+        assertEquals(ColourParams.BRIGHTNESS_RANGE.endInclusive, clamped.brightness)
+        assertEquals(ColourParams.GAMMA_RANGE.endInclusive, clamped.gamma)
     }
 }

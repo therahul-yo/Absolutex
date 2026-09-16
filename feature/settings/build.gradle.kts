@@ -18,6 +18,7 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:ui"))
     implementation(project(":core:data"))
+    implementation(project(":core:gpu"))
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.material3)
     implementation(libs.androidx.lifecycle.runtime.compose)
