@@ -79,6 +79,33 @@ class ZipRemoteIndexTest {
         assertEquals("page01.jpg", index.entries[0].name)
     }
 
+    @Test fun `signature with room after it is rejected by length, not bounds`() {
+        // Gap in the old coverage: the fake above sits 8 bytes from EOF, so the 22-byte
+        // bounds check rejects it first and the comment-to-end equality never runs. Here the
+        // fake has 28 bytes after it inside a 32-byte comment — bounds pass, flavour passes
+        // (zeroed disk fields), and only the length check can reject it.
+        val archive = ZipFixtures.cbz("page01.jpg" to ZipFixtures.pageBytes(1))
+        val eocdAt = archive.size - 22
+        val comment = ByteArray(32)
+        comment[0] = 0x50
+        comment[1] = 0x4B
+        comment[2] = 0x05
+        comment[3] = 0x06
+        // Disk fields zero (servable flavour), counts/sizes non-sentinel, comment length zero
+        // so base + 22 + 0 != size can only fail the equality.
+        comment[8] = 1
+        comment[10] = 1
+        comment[12] = 100
+        comment[16] = 200.toByte()
+        val out = archive.copyOf(archive.size + comment.size)
+        le16(out, eocdAt + 20, comment.size)
+        comment.copyInto(out, archive.size)
+        val reader = SeekableSmbReader(FakeSmbTransport(mapOf("b.cbz" to out)), "b.cbz", out.size.toLong())
+        val index = ZipRemoteIndex.open(reader)
+        assertEquals(1, index.entries.size)
+        assertEquals("page01.jpg", index.entries[0].name)
+    }
+
     @Test fun `untrusted name length degrades to IOException, never StringIndexOutOfBounds`() {
         // Item 2 repro: a central directory claiming a 16 KiB name in a ~100-byte directory.
         val archive = ZipFixtures.cbz("page01.jpg" to ZipFixtures.pageBytes(1))

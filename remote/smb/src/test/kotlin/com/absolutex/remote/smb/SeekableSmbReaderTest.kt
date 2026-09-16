@@ -61,11 +61,24 @@ class SeekableSmbReaderTest {
 
     @Test fun `read larger than the cache streams window by window`() {
         // Item 3: a span the cache cannot hold used to fail with "cache miss after fetch"
-        // after transferring the whole span. Windows cap each fetch at cache capacity.
+        // after transferring the whole span. Oversize spans bypass the cache and assemble
+        // straight from transport buffers instead.
         val size = 10 * 1024
         val bytes = ByteArray(size) { it.toByte() }
         val transport = FakeSmbTransport(mapOf("b" to bytes))
         val reader = SeekableSmbReader(transport, "b", size.toLong(), BlockCache(1024, 4096))
         assertTrue(reader.readAt(0, size).contentEquals(bytes))
+    }
+
+    @Test fun `non-aligned read at the cap bypasses the cache instead of evicting itself`() {
+        // Item 3, the faithful repro: offset 100 spills a cap-sized read over one block more
+        // than the cache holds (5 blocks > 4), so any cached path evicts its own head.
+        // Block-aligned offset 0 with the same length fits and stays cached.
+        val size = 8 * 1024
+        val bytes = ByteArray(size) { it.toByte() }
+        val transport = FakeSmbTransport(mapOf("b" to bytes))
+        val reader = SeekableSmbReader(transport, "b", size.toLong(), BlockCache(1024, 4096))
+        assertTrue(reader.readAt(100, 4096).contentEquals(bytes.copyOfRange(100, 4196)))
+        assertEquals(1, transport.ranges.size)
     }
 }
