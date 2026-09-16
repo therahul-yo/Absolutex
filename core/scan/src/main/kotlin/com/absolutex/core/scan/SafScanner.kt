@@ -57,6 +57,7 @@ object SafScanner {
             if (EntryFilter.extensionOf(file.name) in LibraryScanner.CONTAINER_EXTENSIONS) {
                 out += ScannedBook(
                     path = file.uri,
+                    displayName = file.name,
                     sizeBytes = file.sizeBytes,
                     parsed = FilenameParser.parse(file.name),
                 )
@@ -67,6 +68,7 @@ object SafScanner {
         if (dirs.isEmpty() && images.size >= LibraryScanner.MIN_IMAGES_FOR_FOLDER_BOOK) {
             out += ScannedBook(
                 path = dir.uri,
+                displayName = dir.name,
                 sizeBytes = images.sumOf { it.sizeBytes },
                 parsed = FilenameParser.parse(dir.name),
                 isImageFolder = true,

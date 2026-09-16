@@ -2,7 +2,10 @@ package com.absolutex.core.data
 
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import com.absolutex.core.scan.DocumentTree
 import com.absolutex.core.scan.LibraryScanner
+import com.absolutex.core.scan.TreeEntry
+import com.absolutex.model.BookIdentity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -57,6 +60,18 @@ class LibraryRepositoryTest {
         val stored = db.libraryDao().observeAll().first()
         assertEquals(2, stored.size)
         assertEquals("Batman", stored.first().series)
+    }
+
+    /**
+     * A filesystem book's contentKey is unaffected by carrying `displayName` through the scan:
+     * `File(path).name` already was the real filename here, so the fix changes nothing for it.
+     */
+    @Test fun `a filesystem-scanned book's contentKey is keyed on its filename, as before`() = runTest {
+        val book = file("Batman/Batman 001.cbz", bytes = 12_345)
+        repo().scanLocation(tmp.root)
+        val row = db.libraryDao().observeAll().first().single()
+        assertEquals(book.path, row.path)
+        assertEquals(BookIdentity.of("Batman 001.cbz", 12_345), row.contentKey)
     }
 
     @Test fun `rescanning after a delete removes the book`() = runTest {
@@ -131,5 +146,33 @@ class LibraryRepositoryTest {
         val book = db.libraryDao().observeAll().first().single()
         assertTrue(book.isImageFolder)
         assertEquals(3, book.pageCount)
+    }
+
+    /**
+     * The bug this guards: a SAF book's `path` is a `content://` document Uri whose last segment
+     * is a percent-encoded document id, e.g. `.../document/primary%3AComics%2FBatman 001.cbz`.
+     * `contentKey = BookIdentity.of(File(path).name, sizeBytes)` keyed on that segment instead of
+     * the real name, so it could never equal the key the reader computes from
+     * `OpenableColumns.DISPLAY_NAME` and writes into `ReadingProgress.bookId` — a SAF book's
+     * reading position could never join its library row.
+     */
+    @Test fun `a SAF-scanned book's contentKey matches what the reader computes`() = runTest {
+        val documentUri = "content://com.android.externalstorage.documents/tree/primary%3AComics/" +
+            "document/primary%3AComics%2FBatman%20001.cbz"
+        val root = TreeEntry(uri = "root", name = "Comics", isDirectory = true)
+        val tree = DocumentTree { parent ->
+            if (parent == "root") {
+                listOf(TreeEntry(uri = documentUri, name = "Batman 001.cbz", isDirectory = false, sizeBytes = 12_345))
+            } else {
+                emptyList()
+            }
+        }
+
+        repo().scanTree(root, tree)
+
+        val row = db.libraryDao().observeAll().first().single()
+        assertEquals(documentUri, row.path)
+        // Exactly what Context.identityOf computes from DISPLAY_NAME/SIZE for the same document.
+        assertEquals(BookIdentity.of("Batman 001.cbz", 12_345), row.contentKey)
     }
 }

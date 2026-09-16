@@ -8,7 +8,7 @@ import org.junit.Test
 class LibraryIndexTest {
 
     private fun book(path: String, size: Long = 100) =
-        ScannedBook(path, size, FilenameParser.parse(path))
+        ScannedBook(path, path.substringAfterLast('/'), size, FilenameParser.parse(path))
 
     // ---- deduplication across locations (§5.1) ----
 
