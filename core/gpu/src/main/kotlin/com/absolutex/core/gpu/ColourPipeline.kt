@@ -80,6 +80,18 @@ class ColourPipeline {
             rt.setFloatUniform(ColourShader.UNIFORM_BRIGHTNESS, params.brightness)
             rt.setFloatUniform(ColourShader.UNIFORM_CONTRAST, params.contrast)
             rt.setFloatUniform(ColourShader.UNIFORM_SATURATION, params.saturation)
+            rt.setFloatUniform(ColourShader.UNIFORM_TEMPERATURE, params.temperature)
+            rt.setFloatUniform(ColourShader.UNIFORM_AGGRESSION, params.wbAggression)
+            rt.setFloatUniform(ColourShader.UNIFORM_VIBRANCE, params.vibrance)
+            val exp = ColourMath.foldedGamma(params)
+            // Inlined, not via foldedGamma's array: params change on every slider frame while
+            // dragging, and that array would be a per-frame allocation in the draw scope.
+            rt.setFloatUniform(
+                ColourShader.UNIFORM_GAMMA_EXP,
+                params.gamma * params.gammaR,
+                params.gamma * params.gammaG,
+                params.gamma * params.gammaB,
+            )
             lastParams = params
         }
         var content = contents[bitmap]

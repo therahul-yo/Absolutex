@@ -23,7 +23,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.data.settings.ReaderPrefs
+import com.absolutex.core.data.settings.RenderingPrefs
 import com.absolutex.core.data.settings.RotationLock
+import com.absolutex.core.gpu.ColourPanel
 import com.absolutex.model.PageLayout
 import com.absolutex.model.PageTransition
 import com.absolutex.core.ui.AbsolutexTheme
@@ -37,6 +39,7 @@ fun SettingsScreen(
 ) {
     val app by vm.appPrefs.collectAsStateWithLifecycle()
     val reader by vm.readerPrefs.collectAsStateWithLifecycle()
+    val rendering by vm.renderingPrefs.collectAsStateWithLifecycle()
     // The screen previews the theme it configures: what you toggle is what you get.
     val dark = when (app.nightMode) {
         NightMode.ON -> true
@@ -47,6 +50,7 @@ fun SettingsScreen(
         SettingsContent(
             app = app,
             reader = reader,
+            rendering = rendering,
             actions = SettingsActions(
                 onNightMode = vm::setNightMode,
                 onDynamicColour = vm::setDynamicColour,
@@ -58,6 +62,7 @@ fun SettingsScreen(
                 onFitMode = vm::setFitMode,
                 onReader = vm::updateReader,
                 onCacheSize = vm::setCacheSize,
+                onRendering = vm::updateRendering,
             ),
             modifier = modifier,
         )
@@ -69,6 +74,7 @@ fun SettingsScreen(
 fun SettingsContent(
     app: AppPrefs,
     reader: ReaderPrefs,
+    rendering: RenderingPrefs,
     actions: SettingsActions,
     modifier: Modifier = Modifier,
 ) {
@@ -97,6 +103,11 @@ fun SettingsContent(
 
             GroupHeader(R.string.settings_group_rendering)
             CacheSizeRow(valueMiB = app.cacheSizeMiB, onChange = actions.onCacheSize)
+            // The same panel the reader chrome hosts: one composable, one state, no copies.
+            ColourPanel(
+                state = rendering.colour,
+                onChange = { actions.onRendering { current -> current.withColour(it) } },
+            )
             Spacer(Modifier.height(8.dp))
 
             GroupHeader(R.string.settings_group_about)

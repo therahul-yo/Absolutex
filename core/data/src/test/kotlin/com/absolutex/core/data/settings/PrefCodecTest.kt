@@ -1,5 +1,6 @@
 package com.absolutex.core.data.settings
 
+import com.absolutex.core.gpu.ColourParams
 import com.absolutex.model.FitContext
 import com.absolutex.model.FitMode
 import com.absolutex.model.FitModeMemory
@@ -162,6 +163,7 @@ class PrefCodecTest {
         val bag = MapPrefBag()
         PrefCodec.encodeApp(AppPrefs(), bag)
         PrefCodec.encodeReader(ReaderPrefs(), bag)
+        PrefCodec.encodeRendering(RenderingPrefs(), bag)
         assertEquals(
             setOf(
                 PrefCodec.KEY_NIGHT_MODE,
@@ -182,6 +184,16 @@ class PrefCodecTest {
                 PrefCodec.KEY_TRANSITION,
                 PrefCodec.KEY_PAGE_TURN_MS,
                 PrefCodec.KEY_SCROLL_STEP,
+                PrefCodec.KEY_COLOUR_BRIGHTNESS,
+                PrefCodec.KEY_COLOUR_CONTRAST,
+                PrefCodec.KEY_COLOUR_SATURATION,
+                PrefCodec.KEY_COLOUR_TEMPERATURE,
+                PrefCodec.KEY_COLOUR_AGGRESSION,
+                PrefCodec.KEY_COLOUR_VIBRANCE,
+                PrefCodec.KEY_COLOUR_GAMMA,
+                PrefCodec.KEY_COLOUR_GAMMA_R,
+                PrefCodec.KEY_COLOUR_GAMMA_G,
+                PrefCodec.KEY_COLOUR_GAMMA_B,
             ),
             bag.snapshot().keys,
         )
@@ -338,5 +350,115 @@ class PrefCodecTest {
         val bag = MapPrefBag()
         PrefCodec.encodeReader(ReaderPrefs(volumeKeysTurnPages = true), bag)
         assertEquals(true, PrefCodec.decodeReader(bag).volumeKeysTurnPages)
+    }
+
+    // ---------------------------------------------------------------- rendering (§4 colour)
+
+    @Test
+    fun `an empty store decodes rendering prefs to neutral`() {
+        assertEquals(RenderingPrefs(), PrefCodec.decodeRendering(MapPrefBag()))
+        assertTrue(PrefCodec.decodeRendering(MapPrefBag()).colour.isNeutral)
+    }
+
+    @Test
+    fun `every rendering field survives a round-trip`() {
+        val full = RenderingPrefs(
+            colour = ColourParams(
+                brightness = 0.15f,
+                contrast = 1.1f,
+                saturation = 1.25f,
+                temperature = -0.4f,
+                wbAggression = 0.8f,
+                vibrance = 0.6f,
+                gamma = 1.1f,
+                gammaR = 0.9f,
+                gammaG = 1f,
+                gammaB = 1.2f,
+            ),
+        )
+        val bag = MapPrefBag()
+        PrefCodec.encodeRendering(full, bag)
+        assertEquals(full, PrefCodec.decodeRendering(bag))
+    }
+
+    @Test
+    fun `each rendering field round-trips on its own`() {
+        val base = ColourParams()
+        val variants = listOf(
+            base.copy(brightness = 0.5f),
+            base.copy(contrast = 1.5f),
+            base.copy(saturation = 0.5f),
+            base.copy(temperature = 0.5f),
+            base.copy(wbAggression = 0.5f),
+            base.copy(vibrance = 0.5f),
+            base.copy(gamma = 1.5f),
+            base.copy(gammaR = 1.5f),
+            base.copy(gammaG = 1.5f),
+            base.copy(gammaB = 1.5f),
+        )
+        for (colour in variants) {
+            val bag = MapPrefBag()
+            PrefCodec.encodeRendering(RenderingPrefs(colour), bag)
+            assertEquals("failed on $colour", RenderingPrefs(colour), PrefCodec.decodeRendering(bag))
+        }
+    }
+
+    @Test
+    fun `a wrongly typed rendering value falls back to its default`() {
+        val bag = MapPrefBag(
+            mapOf(
+                PrefCodec.KEY_COLOUR_BRIGHTNESS to "bright",
+                PrefCodec.KEY_COLOUR_CONTRAST to true,
+                PrefCodec.KEY_COLOUR_SATURATION to listOf(1f),
+                PrefCodec.KEY_COLOUR_TEMPERATURE to 1,
+                PrefCodec.KEY_COLOUR_VIBRANCE to "some",
+                PrefCodec.KEY_COLOUR_GAMMA to listOf("1.0"),
+            )
+        )
+        assertEquals(RenderingPrefs(), PrefCodec.decodeRendering(bag))
+    }
+
+    @Test
+    fun `one broken rendering field does not cost the fields beside it`() {
+        val bag = MapPrefBag(
+            mapOf(
+                PrefCodec.KEY_COLOUR_BRIGHTNESS to "bright",
+                PrefCodec.KEY_COLOUR_CONTRAST to 1.5f,
+            )
+        )
+        val colour = PrefCodec.decodeRendering(bag).colour
+        assertEquals(0f, colour.brightness)
+        assertEquals(1.5f, colour.contrast)
+    }
+
+    @Test
+    fun `an out-of-range rendering value is clamped, not discarded`() {
+        val bag = MapPrefBag(
+            mapOf(
+                PrefCodec.KEY_COLOUR_BRIGHTNESS to 5f,
+                PrefCodec.KEY_COLOUR_CONTRAST to -1f,
+                PrefCodec.KEY_COLOUR_GAMMA to 9f,
+                PrefCodec.KEY_COLOUR_SATURATION to 1.25f,
+            )
+        )
+        val colour = PrefCodec.decodeRendering(bag).colour
+        assertEquals(1f, colour.brightness)
+        assertEquals(0f, colour.contrast)
+        assertEquals(2.5f, colour.gamma)
+        assertEquals(1.25f, colour.saturation)
+    }
+
+    @Test
+    fun `rendering key names are frozen`() {
+        assertEquals("colour_brightness", PrefCodec.KEY_COLOUR_BRIGHTNESS)
+        assertEquals("colour_contrast", PrefCodec.KEY_COLOUR_CONTRAST)
+        assertEquals("colour_saturation", PrefCodec.KEY_COLOUR_SATURATION)
+        assertEquals("colour_temperature", PrefCodec.KEY_COLOUR_TEMPERATURE)
+        assertEquals("colour_wb_aggression", PrefCodec.KEY_COLOUR_AGGRESSION)
+        assertEquals("colour_vibrance", PrefCodec.KEY_COLOUR_VIBRANCE)
+        assertEquals("colour_gamma", PrefCodec.KEY_COLOUR_GAMMA)
+        assertEquals("colour_gamma_r", PrefCodec.KEY_COLOUR_GAMMA_R)
+        assertEquals("colour_gamma_g", PrefCodec.KEY_COLOUR_GAMMA_G)
+        assertEquals("colour_gamma_b", PrefCodec.KEY_COLOUR_GAMMA_B)
     }
 }
