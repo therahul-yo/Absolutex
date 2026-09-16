@@ -9,7 +9,7 @@ package com.absolutex.remote.ftp
  */
 class FtpBlockCache(
     val blockSize: Int = BLOCK_SIZE,
-    private val maxBytes: Long = MAX_BYTES,
+    val maxBytes: Long = MAX_BYTES,
 ) {
     private data class Key(val path: String, val index: Long)
 

@@ -17,4 +17,9 @@ dependencies {
     // FTP/FTPS wire protocol. Apache-2.0, version pinned in the catalog (see its note).
     implementation(libs.commons.net)
     testImplementation(libs.junit)
+    // Real in-process FTP server for CommonsNetFtpTransportRealServerTest — see the
+    // libs.versions.toml note on ftpserverCore for why this library over MockFtpServer.
+    testImplementation(libs.ftpserver.core)
+    testImplementation(libs.mina.core)
+    testImplementation(libs.slf4j.api.ftp.test)
 }

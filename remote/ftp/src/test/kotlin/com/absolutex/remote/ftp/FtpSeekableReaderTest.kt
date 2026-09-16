@@ -80,4 +80,17 @@ class FtpSeekableReaderTest {
         assertEquals(0, live.read(bytes.size.toLong(), 0).size)
         assertEquals(0, fake.readCalls)
     }
+
+    @Test fun `read wider than the cache assembles straight from the fetched buffers`() {
+        val fake = FakeFtpTransport(bytes)
+        // A tiny cache makes a read many times its own capacity trivial to trigger: pre-fix,
+        // this evicts the read's own earliest blocks before assemble() reads them back and
+        // throws "cache miss after fetch".
+        val cache = FtpBlockCache(blockSize = 4096, maxBytes = 8192)
+        val live = FtpSeekableReader(fake, path, bytes.size.toLong(), cache)
+        val got = live.read(50_000, 20_000)
+        assertArrayEquals(bytes.copyOfRange(50_000, 70_000), got)
+        // Nothing this wide is worth caching, so it must not have polluted the cache either.
+        assertEquals(0, cache.entryCount())
+    }
 }

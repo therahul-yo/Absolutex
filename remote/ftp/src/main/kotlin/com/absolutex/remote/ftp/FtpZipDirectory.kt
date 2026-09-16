@@ -121,8 +121,13 @@ internal object FtpZipDirectory {
     private const val CD_COMMENT_OFF = 32
     private const val CD_LHO_OFF = 42
 
-    /** A central directory above this is hostile (order of a million entries); refuse first. */
-    private const val CD_MAX_BYTES = 67_108_864L
+    /**
+     * A central directory above this is hostile (order of a million entries); refuse first. Also
+     * bounded by the block cache: a directory bigger than [FtpBlockCache.MAX_BYTES] can never be
+     * assembled back out of it (its first blocks get evicted before the fetch finishes), so this
+     * must never exceed that cap.
+     */
+    private const val CD_MAX_BYTES = FtpBlockCache.MAX_BYTES
     private const val ZIP64_U16 = 0xFFFF
     private const val ZIP64_U32 = 0xFFFFFFFFL
     private const val MIN_CURSOR = 0

@@ -36,10 +36,33 @@ class FtpSeekableReader(
     fun read(offset: Long, length: Int): ByteArray {
         require(offset >= MIN_OFFSET) { "negative read offset: $offset" }
         require(length >= MIN_LENGTH) { "negative read length: $length" }
-        if (length == EMPTY_LENGTH) return ByteArray(EMPTY_LENGTH)
         if (offset > size || length > size - offset) throw IOException(pastEndMessage(offset, length))
-        fetchMissing(offset, length)
-        return assemble(offset, length)
+        return when {
+            length == EMPTY_LENGTH -> ByteArray(EMPTY_LENGTH)
+            // A read wider than the whole cache can never survive a round trip through it: its
+            // own earliest blocks get evicted (by its own later blocks) before assemble() reads
+            // them back — "cache miss after fetch". Bypass the cache for these and assemble
+            // straight from the fetched buffers instead; nothing this wide benefits from caching.
+            length > cache.maxBytes -> fetchDirect(offset, length)
+            else -> {
+                fetchMissing(offset, length)
+                assemble(offset, length)
+            }
+        }
+    }
+
+    private fun fetchDirect(offset: Long, length: Int): ByteArray {
+        val out = ByteArray(length)
+        var done = 0
+        while (done < length) {
+            val chunk = minOf(FETCH_MAX_BYTES, (length - done).toLong()).toInt()
+            val bytes = transport.readAt(path, offset + done, chunk)
+            bytesFetched += bytes.size.toLong()
+            readCalls++
+            bytes.copyInto(out, done)
+            done += bytes.size
+        }
+        return out
     }
 
     private fun fetchMissing(offset: Long, length: Int) {

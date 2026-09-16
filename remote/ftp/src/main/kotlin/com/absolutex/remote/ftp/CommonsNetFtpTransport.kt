@@ -5,6 +5,7 @@ import java.io.IOException
 import java.io.InputStream
 import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
+import org.apache.commons.net.ftp.FTPReply
 import org.apache.commons.net.ftp.FTPSClient
 
 /**
@@ -14,6 +15,11 @@ import org.apache.commons.net.ftp.FTPSClient
  * own REST offset and pulls a fresh data connection via RETR, so concurrent readers never share
  * offset state — the same argument as `LibArchiveSource`'s fresh-descriptor-per-read rule.
  * Blocking; call off the main thread.
+ *
+ * ponytail: one connection behind one lock is a hard ceiling — every page on this transport
+ * queues behind whichever RETR is in flight, so prefetch cannot overlap a foreground read.
+ * Upgrade path is a second control connection dedicated to prefetch, not a pool: FTP servers cap
+ * connections per user, and two is already the useful number.
  *
  * @param password supplies a fresh password copy per login; the transport zeroes it after use,
  * so providers must hand out a copy (as [InMemoryFtpCredentialStore.load] does), not a live
@@ -60,10 +66,17 @@ class CommonsNetFtpTransport(
         live.setRestartOffset(offset)
         val stream = live.retrieveFileStream(path) ?: fail("FTP RETR refused: $path at $offset")
         val out = readFully(stream, length, path, offset)
+        // We deliberately close the data stream once our range is in hand, without draining the
+        // rest of the file. A real server reports that early close as 426/450/451 (sometimes 226
+        // if it was fast enough), not as a plain positive completion, so completePendingCommand()
+        // legitimately returns false here even though the transfer we asked for succeeded. Only a
+        // reply outside that set (421 - control connection closing - included) is a real failure.
         stream.close()
-        // The completion reply must be consumed after the data socket drains, or later commands
-        // arrive mid-transfer and the control connection desyncs.
-        if (!live.completePendingCommand()) fail("FTP transfer did not complete: $path at $offset")
+        val completed = live.completePendingCommand()
+        val replyCode = live.replyCode
+        if (!completed && replyCode !in EARLY_CLOSE_REPLY_CODES) {
+            fail("FTP transfer did not complete: $path at $offset (reply $replyCode)")
+        }
         return out
     }
 
@@ -84,7 +97,13 @@ class CommonsNetFtpTransport(
         if (live != null && live.isConnected) return live
         val fresh = clientFactory()
         fresh.connectTimeout = CONNECT_TIMEOUT_MS
-        fresh.soTimeout = SO_TIMEOUT_MS
+        // setSoTimeout() writes straight to the live socket, which doesn't exist yet; the
+        // pre-connect idiom is setDefaultTimeout(), which SocketClient applies to the socket
+        // itself right after connect() opens it. The old `fresh.soTimeout = SO_TIMEOUT_MS` here
+        // threw a NullPointerException on every real connection — only the unit tests' fake
+        // client (which no-ops setSoTimeout) hid it; CommonsNetFtpTransportRealServerTest, which
+        // connects for real, caught it.
+        fresh.setDefaultTimeout(SO_TIMEOUT_MS)
         fresh.connect(location.host, location.port)
         val secret = password()
         try {
@@ -125,6 +144,17 @@ class CommonsNetFtpTransport(
         private const val PROTECTION_BUFFER_ZERO = 0L
         private const val DATA_CHANNEL_PRIVATE = "P"
         private const val CLEARED_CHAR = '\u0000'
+
+        // Replies a server sends for a range read that stops before EOF: the data stream
+        // closed with bytes still unsent. CLOSING_DATA_CONNECTION (226) is already a positive
+        // completion that completePendingCommand() accepts on its own; it is listed here for
+        // documentation.
+        private val EARLY_CLOSE_REPLY_CODES = setOf(
+            FTPReply.CLOSING_DATA_CONNECTION,
+            FTPReply.TRANSFER_ABORTED,
+            FTPReply.FILE_ACTION_NOT_TAKEN,
+            FTPReply.ACTION_ABORTED,
+        )
 
         private fun defaultClient(useTls: Boolean): FTPClient =
             // Explicit TLS upgrades a plain connection via AUTH; implicit FTPS is not attempted.
