@@ -21,6 +21,8 @@ import com.absolutex.core.thumbnails.ThumbRequest
 import com.absolutex.core.thumbnails.ThumbnailPipeline
 import com.absolutex.core.decode.TileCache
 import com.absolutex.model.BookIdentity
+import com.absolutex.model.Toc
+import com.absolutex.model.TocEntry
 import com.absolutex.source.ComicSource
 import com.absolutex.source.pdf.PdfDocument
 import java.io.Closeable
@@ -82,6 +84,10 @@ class ReaderViewModel @Inject constructor(
 
     // Pages whose bytes failed to decode. The UI shows a generic string for these —
     // never the raw entry name — while detail goes to logcat.
+    /** The open book's contents, empty when it has none (§5.2). */
+    private val _toc = MutableStateFlow<List<TocEntry>>(emptyList())
+    val toc: StateFlow<List<TocEntry>> = _toc.asStateFlow()
+
     private val _failedPages = MutableStateFlow<Set<Int>>(emptySet())
     val failedPages: StateFlow<Set<Int>> = _failedPages.asStateFlow()
 
@@ -207,6 +213,9 @@ class ReaderViewModel @Inject constructor(
                 bookId = bookId,
                 currentPage = settledPage,
             )
+            // After the state that gates the first page: contents are chrome, and a PDF outline is
+            // a JNI call whose cost must not land in the tap-to-first-page budget.
+            _toc.value = withContext(DecodeDispatchers.extract) { contentsOf(source0) }
         }
     }
 
@@ -361,6 +370,7 @@ class ReaderViewModel @Inject constructor(
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { progressDao.upsert(progress) }
         }
         openJob?.cancel()
+        _toc.value = emptyList()
         pageImages.values.forEach { runCatching { it.close() } }
         pageImages.clear()
         bases.clear()
@@ -400,3 +410,15 @@ class ReaderViewModel @Inject constructor(
         }
     }
 }
+
+/**
+ * The open book's contents: a PDF's own outline, or the folders an archive's pages sit in. A
+ * book with neither returns nothing, and the reader shows no contents button.
+ */
+private fun contentsOf(source: Closeable): List<TocEntry> = runCatching {
+    if (source is PdfDocument) {
+        source.outline().map { TocEntry(it.title, it.pageIndex, it.depth) }
+    } else {
+        Toc.fromEntryNames((source as ComicSource).pages.map { it.entryName })
+    }
+}.getOrDefault(emptyList())

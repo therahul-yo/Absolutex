@@ -50,6 +50,8 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import com.absolutex.model.TocEntry
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -199,6 +201,7 @@ private fun Pages(
     // long before the page is decoded. ReportDrawnWhen turns that into timeToFullDisplayMs.
     var firstPageDrawn by remember(bookId) { mutableStateOf(false) }
     ReportDrawnWhen { firstPageDrawn }
+    val toc by vm.toc.collectAsStateWithLifecycle()
 
     // A page is laid out the same way whichever pager hosts it; only the axis and direction change.
     val page: @Composable PagerScope.(Int) -> Unit = { screen ->
@@ -223,7 +226,7 @@ private fun Pages(
         ReaderPager(flow, pagerState, scrollable, page)
         ReaderChrome(
             visible = chrome, page = spreads[pagerState.currentPage].first, pageCount = pageCount, onSeek = jump,
-            bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip },
+            bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip }, toc = toc,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
@@ -265,6 +268,7 @@ private fun Strip(pageCount: Int, startPage: Int, bookId: String, prefs: ReaderP
     }
     var firstPageDrawn by remember(bookId) { mutableStateOf(false) }
     ReportDrawnWhen { firstPageDrawn }
+    val toc by vm.toc.collectAsStateWithLifecycle()
     val aspects = remember(bookId) { mutableStateMapOf<Int, Float>() }
 
     Box(Modifier.fillMaxSize().then(keys)) {
@@ -285,7 +289,7 @@ private fun Strip(pageCount: Int, startPage: Int, bookId: String, prefs: ReaderP
         }
         ReaderChrome(
             visible = chrome, page = listState.firstVisibleItemIndex, pageCount = pageCount, onSeek = jump,
-            bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip },
+            bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip }, toc = toc,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
@@ -407,6 +411,7 @@ private fun ReaderChrome(
     onSeek: (Int) -> Unit,
     bookId: String,
     strip: (suspend (index: Int, width: Int) -> Bitmap?)?,
+    toc: List<TocEntry>,
     modifier: Modifier = Modifier,
 ) {
     if (!visible || pageCount <= 0) return
@@ -414,6 +419,7 @@ private fun ReaderChrome(
     // release. Seeking through the pager on every drag tick launched an animated scroll per tick,
     // each cancelling the last, and the page stuttered behind the thumb.
     var dragging by remember { mutableStateOf<Float?>(null) }
+    var contents by remember { mutableStateOf(false) }
     val shown = (dragging?.roundToInt() ?: page) + 1
     val indicator = stringResource(R.string.reader_page_indicator_desc, shown, pageCount)
     val seekLabel = stringResource(R.string.reader_seek_desc)
@@ -422,6 +428,12 @@ private fun ReaderChrome(
         modifier = modifier.fillMaxWidth().navigationBarsPadding(),
     ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+            if (contents) TocPanel(toc, onJump = { onSeek(it); contents = false })
+            if (toc.isNotEmpty()) {
+                TextButton(onClick = { contents = !contents }) {
+                    Text(stringResource(R.string.reader_contents))
+                }
+            }
             Text(
                 text = stringResource(R.string.reader_page_indicator, shown, pageCount),
                 color = MaterialTheme.colorScheme.onSurface,
