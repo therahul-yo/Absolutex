@@ -5,6 +5,7 @@ import com.absolutex.model.FitContext
 import com.absolutex.model.FitMode
 import com.absolutex.model.FitModeMemory
 import com.absolutex.model.PageLayout
+import com.absolutex.model.PageTransition
 import com.absolutex.model.ReadingFlow
 
 /** Night mode, as §5.4 groups it under General. */
@@ -45,6 +46,8 @@ data class ReaderPrefs(
     val pageLayout: PageLayout = PageLayout.SINGLE,
     /** The chrome carries a strip of page thumbnails (§5.2). */
     val thumbnailStrip: Boolean = true,
+    /** How a page gives way to the next (§5.2). SLIDE is the pager's own, and the plainest. */
+    val transition: PageTransition = PageTransition.SLIDE,
 )
 
 /**

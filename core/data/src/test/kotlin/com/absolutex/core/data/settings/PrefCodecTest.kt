@@ -157,6 +157,7 @@ class PrefCodecTest {
                 PrefCodec.KEY_USE_CUTOUT,
                 PrefCodec.KEY_PAGE_LAYOUT,
                 PrefCodec.KEY_THUMBNAIL_STRIP,
+                PrefCodec.KEY_TRANSITION,
             ),
             bag.snapshot().keys,
         )
@@ -282,6 +283,7 @@ class PrefCodecTest {
         assertEquals("use_cutout", PrefCodec.KEY_USE_CUTOUT)
         assertEquals("page_layout", PrefCodec.KEY_PAGE_LAYOUT)
         assertEquals("thumbnail_strip", PrefCodec.KEY_THUMBNAIL_STRIP)
+        assertEquals("page_transition", PrefCodec.KEY_TRANSITION)
     }
 
     @Test

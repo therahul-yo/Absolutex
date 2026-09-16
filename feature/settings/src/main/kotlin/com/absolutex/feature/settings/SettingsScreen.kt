@@ -25,6 +25,7 @@ import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.data.settings.ReaderPrefs
 import com.absolutex.core.data.settings.RotationLock
 import com.absolutex.model.PageLayout
+import com.absolutex.model.PageTransition
 import com.absolutex.core.ui.AbsolutexTheme
 import com.absolutex.model.FitMode
 import com.absolutex.model.ReadingFlow
@@ -172,14 +173,7 @@ private fun ReaderGroup(reader: ReaderPrefs, actions: SettingsActions) {
                 onClick = { actions.onFitMode(mode) },
             )
         }
-        // Four layouts, like the four fit modes, need radio rows on a narrow phone.
-        PageLayout.entries.forEach { layout ->
-            RadioSettingRow(
-                titleRes = pageLayoutLabelRes(layout),
-                selected = reader.pageLayout == layout,
-                onClick = { actions.onReader { it.copy(pageLayout = layout) } },
-            )
-        }
+        LayoutRows(reader, actions)
         SegmentedSettingRow(
             options = RotationLock.entries,
             selected = reader.rotationLock,
@@ -210,6 +204,28 @@ private fun ReaderGroup(reader: ReaderPrefs, actions: SettingsActions) {
             checked = reader.volumeKeysTurnPages,
             onChange = { on -> actions.onReader { it.copy(volumeKeysTurnPages = on) } },
             descriptionRes = R.string.settings_volume_keys_desc,
+        )
+    }
+}
+
+/**
+ * Page layout and transition. Radio rows, like the fit modes: four of each will not fit a
+ * segmented row on a narrow phone.
+ */
+@Composable
+private fun LayoutRows(reader: ReaderPrefs, actions: SettingsActions) {
+    PageLayout.entries.forEach { layout ->
+        RadioSettingRow(
+            titleRes = pageLayoutLabelRes(layout),
+            selected = reader.pageLayout == layout,
+            onClick = { actions.onReader { it.copy(pageLayout = layout) } },
+        )
+    }
+    PageTransition.entries.forEach { transition ->
+        RadioSettingRow(
+            titleRes = transitionLabelRes(transition),
+            selected = reader.transition == transition,
+            onClick = { actions.onReader { it.copy(transition = transition) } },
         )
     }
 }

@@ -35,6 +35,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.draw.clipToBounds
 import com.absolutex.model.PageLayout
+import com.absolutex.model.PageTransition
+import com.absolutex.model.transitionLayerFor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.key
 import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.foundation.layout.padding
@@ -181,6 +184,7 @@ private fun Pages(
     val zoomSteps = remember { MutableSharedFlow<Float>(extraBufferCapacity = ZOOM_STEP_BUFFER) }
     val jump: (Int) -> Unit = { to -> scope.launch { pagerState.scrollToPage(Spreads.indexOf(spreads, to)) } }
     val rtl = flow == ReadingFlow.RTL
+    val vertical = flow == ReadingFlow.VERTICAL
     val keys = readerKeys(
         rtl, prefs.volumeKeysTurnPages, goTo, jump, pageCount - 1, zoomSteps::tryEmit,
     ) { chrome = !chrome }
@@ -202,10 +206,10 @@ private fun Pages(
     val page: @Composable PagerScope.(Int) -> Unit = { screen ->
         val spread = spreads[screen]
         val current = screen == pagerState.currentPage
-        SpreadRow(spread, rtl) { index, side ->
+        SpreadRow(spread, rtl, Modifier.transition(pagerState, screen, prefs.transition, vertical)) { index, side ->
             PageSlot(
                 index = index, bookId = bookId, vm = vm, fitMode = null, prefs = prefs, rightToLeft = rtl,
-                pagerVertical = flow == ReadingFlow.VERTICAL,
+                pagerVertical = vertical,
                 onLoaded = { if (current) landscapePage = it.width > it.height },
                 onBaseReady = { if (current && index == spread.first) firstPageDrawn = true },
                 // Neighbours wait for the page on screen: decoded together, it finished last (see PageSlot).
@@ -343,14 +347,15 @@ private fun readerKeys(
 private fun SpreadRow(
     spread: IntRange,
     rightToLeft: Boolean,
+    modifier: Modifier = Modifier,
     slot: @Composable (index: Int, side: SpreadSide) -> Unit,
 ) {
     if (spread.first == spread.last) {
-        slot(spread.first, SpreadSide.NONE)
+        Box(modifier.fillMaxSize()) { slot(spread.first, SpreadSide.NONE) }
         return
     }
     val (left, right) = if (rightToLeft) spread.last to spread.first else spread.first to spread.last
-    Box(Modifier.fillMaxSize()) {
+    Box(modifier.fillMaxSize()) {
         // Clipped: a canvas draws outside its bounds, and a zoomed page would cover its neighbour.
         Box(Modifier.fillMaxWidth(HALF).fillMaxHeight().align(AbsoluteAlignment.CenterLeft).clipToBounds()) {
             slot(left, SpreadSide.LEFT)
@@ -358,6 +363,32 @@ private fun SpreadRow(
         Box(Modifier.fillMaxWidth(HALF).fillMaxHeight().align(AbsoluteAlignment.CenterRight).clipToBounds()) {
             slot(right, SpreadSide.RIGHT)
         }
+    }
+}
+
+/**
+ * A page's transition layer (§5.2). getOffsetDistanceInPages is the page's position in viewports:
+ * 0 while it fills the screen, +1 waiting at the end, -1 once it has left. Read in the
+ * graphicsLayer lambda, which is the draw phase:
+ * the pager's offset changes every frame of a turn, and reading it in a composable body instead
+ * would recompose the page — and its whole subtree — 120 times a second.
+ */
+private fun Modifier.transition(
+    pagerState: PagerState,
+    index: Int,
+    transition: PageTransition,
+    vertical: Boolean,
+): Modifier = if (transition == PageTransition.SLIDE) {
+    this
+} else {
+    graphicsLayer {
+        val layer = transitionLayerFor(transition, pagerState.getOffsetDistanceInPages(index))
+        if (vertical) {
+            translationY = layer.translationFraction * size.height
+        } else {
+            translationX = layer.translationFraction * size.width
+        }
+        alpha = layer.alpha
     }
 }
 

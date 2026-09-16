@@ -35,6 +35,7 @@ import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.data.settings.RotationLock
 import com.absolutex.model.PageLayout
+import com.absolutex.model.PageTransition
 import com.absolutex.model.FitMode
 import com.absolutex.model.ReadingFlow
 import kotlin.math.roundToInt
@@ -201,6 +202,12 @@ fun pageLayoutLabelRes(layout: PageLayout): Int = when (layout) {
     PageLayout.DOUBLE -> R.string.settings_layout_double
     PageLayout.DOUBLE_WITH_COVER -> R.string.settings_layout_cover
     PageLayout.CONTINUOUS_VERTICAL -> R.string.settings_layout_continuous
+}
+
+fun transitionLabelRes(transition: PageTransition): Int = when (transition) {
+    PageTransition.SLIDE -> R.string.settings_transition_slide
+    PageTransition.PAGE_OVER -> R.string.settings_transition_page_over
+    PageTransition.REVEAL -> R.string.settings_transition_reveal
 }
 
 fun rotationLockLabelRes(lock: RotationLock): Int = when (lock) {
