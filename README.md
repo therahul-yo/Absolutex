@@ -171,12 +171,12 @@ OnePlus 11R (Snapdragon 8+ Gen 1, Android 16), display confirmed at 120 Hz, benc
 
 | Budget (§3) | Measured | Verdict |
 |---|---|---|
-| Page turn < 8.3 ms | CPU frame time P50 2.8 · P90 3.8 · P95 4.2 · P99 5.2 ms (5 iterations, 93–166 frames each) | **met** |
+| Page turn < 8.3 ms | CPU frame time P50 2.8 · P90 3.8 · P95 4.2 · P99 5.2 ms (5 iterations, 93–166 frames each) | **met**, last measured before the reader gained layouts, strip and chrome |
 | Zero dropped frames | 88 turns, 1,387 frames: **2 missed deadlines (0.14%)**, 0 missed vsync, 0 slow UI-thread frames | **not met** |
-| Cold start < 300 ms | Time to initial display, baseline profile: median 286.9 · min 256.8 · max 340.4 ms (no compilation: median 299.9; full AOT: median 302.4) | **met at the median**, not at the tail |
+| Cold start < 300 ms | Time to initial display, partial compilation: median 281.4 · min 256.9 · max 308.4 ms on an idle phone; median 317.3 ms measured again minutes later in the same session (no compilation: median 382.2; full AOT: median 351.6) | **met at the median on an idle phone**, not at the tail, and not while the device is warm |
 | Pinch zoom, no drops | Sustained pinch open/close: frame time P50 3.3 · P90 4.8 · P95 5.6 · P99 6.5 ms, overrun P99 −0.4 ms (230–256 frames per iteration) | **met** |
 | Steady reader memory under the §3 ceiling | 150 MB PSS / 304 MB RSS after 12 page turns, against ~1.06 GiB (15% of this phone's 7.4 GB) | **met** |
-| Tap → first page < 250 ms | Warm, time to full display (base layer decoded): median 291.6 · min 266.2 · max 489.6 ms; window up at 79 ms | **not met** (was 513.6) |
+| Tap → first page < 250 ms | Warm, time to full display (base layer decoded): median 329.8 · min 304.5 · max 443.2 ms; window up at 93 ms | **not met** (was 513.6, then 291.6 before the library and navigation joined the startup path) |
 
 What the two dropped frames are, from a Perfetto trace: not the app's drawing (RenderThread
 draw commands stay under 2.5 ms). RenderThread blocks ~24 ms in `eglSwapBuffers → queueBuffer`
@@ -198,6 +198,16 @@ size); and the activity starts opening a launch Uri in `onCreate` instead of aft
 What remains is ~48 ms of RAR extraction and one ~174 ms decode of a 6 MP JPEG to screen size. Two ideas were
 measured and dropped: a half-resolution preview decode was barely cheaper on this decoder, and strip-parallel decode
 cannot scale for baseline JPEGs, whose entropy stream must be read from the top for any region.
+
+A caution about all of the above: on this phone the same build measured 281 ms of cold start right
+after a reboot and 353–378 ms an hour into a working session, with nothing changed but the device.
+Numbers taken while the phone is warm are not comparable to numbers taken cold, and a regression
+should be confirmed against a fresh reboot before it is believed — which is how the "regression"
+the library and navigation appeared to cause turned out to be the phone, not the code.
+
+The frame-time budgets (page turn, zoom, pinch) could not be re-measured today: injected input
+from the instrumentation is being dropped again, which is the *Disable permission monitoring*
+trap below. `adb shell input` still works, so the reader itself was verified by hand.
 
 Two traps that made every earlier number wrong, both now guarded in the benchmark:
 `adb`-created `Android/data` directories are `2770 shell:ext_data_rw` (the app gets EACCES and
