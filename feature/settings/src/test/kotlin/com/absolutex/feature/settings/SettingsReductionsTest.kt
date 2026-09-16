@@ -6,6 +6,7 @@ import com.absolutex.core.data.settings.ReaderPrefs
 import com.absolutex.core.data.settings.RenderingPrefs
 import com.absolutex.core.data.settings.fitFor
 import com.absolutex.core.gpu.ColourParams
+import com.absolutex.model.FitContext
 import com.absolutex.model.FitMode
 import com.absolutex.model.FitModeMemory
 import com.absolutex.model.PageOrientation

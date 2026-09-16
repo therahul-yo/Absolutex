@@ -75,3 +75,45 @@ object ColourMath {
 
     fun luma(r: Float, g: Float, b: Float): Float = LUMA_R * r + LUMA_G * g + LUMA_B * b
 }
+
+/**
+ * How a bitmap lands in the corrected draw.
+     *
+     * The shader path draws `drawRect(dst)` instead of `drawBitmap(src, dst)` — Skia replaces a
+     * paint's shader with the image shader on bitmap draws, so the effect would silently never run —
+     * and positions the content with a local matrix on the child BitmapShader. The local matrix maps
+     * bitmap coordinates to canvas coordinates: `canvas = M · bitmap`, so sampling applies `M⁻¹`,
+     * which maps canvas → bitmap as `(frag - origin) * (bitmap / dst)`.
+     *
+     * The matrix is `T(origin) · S(dst/bitmap)`: scale by `dst/bitmap`, then translate by the
+     * destination origin. In Android's API that is `setScale` then `postTranslate`.
+     *
+     * Pure floats, so the mapping is unit-tested here and applied to a hoisted Matrix in
+     * [ColourPipeline] with no per-frame allocation.
+     */
+    data class ContentMatrix(
+        val scaleX: Float,
+        val scaleY: Float,
+        val transX: Float,
+        val transY: Float,
+    )
+
+    /**
+     * Matrix for a bitmap of [bitmapW]×[bitmapH] drawn in full into the integer rect
+     * ([left], [top], [right], [bottom]). Degenerate rects coerce to 1 px: the draw call sites
+     * already guarantee non-empty rects, and a zero divisor here would NaN the whole page.
+     */
+    fun contentMatrix(
+        bitmapW: Int,
+        bitmapH: Int,
+        left: Int,
+        top: Int,
+        right: Int,
+        bottom: Int,
+    ): ContentMatrix {
+        val w = maxOf(1, right - left).toFloat()
+        val h = maxOf(1, bottom - top).toFloat()
+        val sx = w / bitmapW
+        val sy = h / bitmapH
+        return ContentMatrix(sx, sy, left.toFloat(), top.toFloat())
+    }
