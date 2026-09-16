@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Trace
+import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -20,8 +21,7 @@ import com.absolutex.core.decode.PageImage
 import com.absolutex.core.decode.TileCache
 import com.absolutex.model.BookIdentity
 import com.absolutex.source.ComicSource
-import com.absolutex.source.pdf.PdfDocument
-import java.io.Closeable
+import com.absolutex.source.libarchive.LibArchiveSource
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -82,8 +82,7 @@ class ReaderViewModel @Inject constructor(
 
     val tileCache = TileCache(MemoryBudget.defaultCacheBytes(totalRamBytes))
 
-    /** The open book: a [ComicSource] whose pages are encoded images, or a [PdfDocument]. */
-    private var source: Closeable? = null
+    private var source: ComicSource? = null
     private var bookId: String = ""
     /** The Uri currently open, for the same-book check. Distinct from [bookId], the book's identity. */
     private var openedUri: String = ""
@@ -155,7 +154,8 @@ class ReaderViewModel @Inject constructor(
         openJob = viewModelScope.launch {
             val opened = try {
                 withContext(DecodeDispatchers.extract) {
-                    context.openBook(uri) to identityOf(uri)
+                    // A fresh descriptor per read — a shared SAF fd corrupts parallel reads.
+                    LibArchiveSource.open { openDescriptor(uri) } to identityOf(uri)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -172,7 +172,6 @@ class ReaderViewModel @Inject constructor(
                 return@launch
             }
             val (source0, identity) = opened
-            val count = (source0 as? PdfDocument)?.pageCount ?: (source0 as ComicSource).pages.size
             if (generation != openGeneration.get()) {
                 runCatching { source0.close() }
                 return@launch
@@ -186,11 +185,11 @@ class ReaderViewModel @Inject constructor(
             runCatching { old?.close() }
             val resume = progressDao.get(bookId)?.pageIndex ?: 0
             // The previous book's settled page would otherwise stand in until the pager settles.
-            settledPage = resume.coerceIn(0, (count - 1).coerceAtLeast(0))
+            settledPage = resume.coerceIn(0, (source0.pages.size - 1).coerceAtLeast(0))
             _ui.value = ReaderUiState(
                 loading = false,
                 title = uri.lastPathSegment?.substringAfterLast('/').orEmpty(),
-                pageCount = count,
+                pageCount = source0.pages.size,
                 bookId = bookId,
                 currentPage = settledPage,
             )
@@ -218,6 +217,24 @@ class ReaderViewModel @Inject constructor(
     }
 
     /**
+     * Opens a descriptor for either a SAF document or a plain file path.
+     *
+     * §5.1 needs device-storage locations, which are real paths, not content Uris — and a
+     * file path also avoids SAF entirely where the app already has access, which is both
+     * faster and what makes the reader drivable from an instrumented benchmark.
+     */
+    private fun openDescriptor(uri: Uri): ParcelFileDescriptor = when (uri.scheme) {
+        // Messages below stay generic: the raw Uri must not reach the UI (nor be
+        // formatted into exceptions that the UI renders) — logcat gets the detail.
+        "file", null -> ParcelFileDescriptor.open(
+            java.io.File(requireNotNull(uri.path) { "file uri has no path" }),
+            ParcelFileDescriptor.MODE_READ_ONLY,
+        )
+        else -> context.contentResolver.openFileDescriptor(uri, "r")
+            ?: error("could not open document")
+    }
+
+    /**
      * Decoded page, cached. Called off the main thread by the reader.
      *
      * Staged across two pools: archive I/O on [DecodeDispatchers.extract], pixel decode on
@@ -228,17 +245,18 @@ class ReaderViewModel @Inject constructor(
         val src = source ?: return null
         pageImages[index]?.let { return it }
 
-        val decoded = try {
-            if (src is PdfDocument) {
-                withContext(DecodeDispatchers.decode) { PdfPageImage.open(src, index) }
-            } else {
-                val bytes = withContext(DecodeDispatchers.extract) { (src as ComicSource).openPage(index).readBytes() }
-                withContext(DecodeDispatchers.decode) { PageImage.from(bytes) }
-            }
+        val bytes = try {
+            withContext(DecodeDispatchers.extract) { src.openPage(index).readBytes() }
         } catch (e: CancellationException) {
             throw e
         } catch (e: IOException) {
             return failPage(index, e)
+        }
+
+        val decoded = try {
+            withContext(DecodeDispatchers.decode) { PageImage.from(bytes) }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: RuntimeException) {
             return failPage(index, e)
         }
