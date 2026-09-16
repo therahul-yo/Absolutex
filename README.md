@@ -8,12 +8,19 @@ is a feature: every compromise removed is a code path that cannot rot or drop a 
 
 ## Status
 
-Phase 2 (scaffold + vertical slice) is working end to end on device: open a `.cbr`/`.cbz`
-through SAF, tiled render, single-page LTR, pinch/zoom, progress persisted, last book resumed
-on launch.
+**The reader** opens `.cbz`, `.cbr`, `.cb7`, `.cbt` and PDF through SAF or a file path, and
+renders them tiled. It has reading flows (LTR, RTL, vertical), page layouts (single, double,
+double-with-cover, continuous vertical), four fit modes, pinch and double-tap zoom, a 3x3 tap
+grid mirrored for RTL, immersive chrome with a seek bar, a thumbnail strip, bookmarks, a table
+of contents, page export, keyboard, gamepad and volume-key control, and progress that resumes
+the last book on launch.
 
-**Not yet built:** reader chrome, thumbnail strip, TOC, AGSL colour pipeline, library scanner,
-settings surface, remote sources, PDF. See [Roadmap](#roadmap).
+**Around it:** a library scanner with a filesystem watcher, a library screen, a settings surface,
+a thumbnail pipeline, and remote modules for SMB, FTP/FTPS and Komga/Kavita progress sync.
+
+**Not yet built:** the AGSL colour pipeline, GPU crop and auto background colour; transitions;
+the library as the app's home screen (it still opens a file picker); remote sources reachable
+from the UI. See [Roadmap](#roadmap).
 
 ## Platform floor
 
@@ -203,10 +210,10 @@ permission monitoring* is on **and the phone has been rebooted since**.
 |---|---|---|
 | 1 | Audit, licensing gates, platform decisions | done |
 | 2 | Scaffold + CBZ/CBR vertical slice | working; page turn measured (see above) |
-| 3 | Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | next |
-| 4 | Library: parallel scanner, metadata, home, browse, search | |
-| 5 | Reader depth: layouts, flows, transitions, bookmarks, TOC, input devices | |
-| 6 | Formats: 7z, TAR, PDFium, image folders, full codec set | |
-| 7 | Settings surface | |
-| 8 | Remote: SMB streaming, FTP, Komga/Kavita sync | |
+| 3 | Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | tiles done; colour and crop next |
+| 4 | Library: parallel scanner, metadata, home, browse, search | scanner, watcher and screen done; not yet the home screen |
+| 5 | Reader depth: layouts, flows, transitions, bookmarks, TOC, input devices | done except transitions and per-book overrides |
+| 6 | Formats: 7z, TAR, PDFium, image folders, full codec set | archives and PDF done; image folders open in the library only |
+| 7 | Settings surface | done, not yet reachable from the app shell |
+| 8 | Remote: SMB streaming, FTP, Komga/Kavita sync | FTP and sync modules merged; SMB in review; no UI yet |
 | 9 | NPU upscaling R&D, release polish | |
