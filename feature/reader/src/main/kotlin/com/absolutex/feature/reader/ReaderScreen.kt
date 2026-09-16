@@ -22,6 +22,9 @@ import android.os.Trace
 import android.net.Uri
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -59,6 +62,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -144,6 +148,9 @@ fun ReaderScreen(
 }
 
 internal const val CHROME_ALPHA = 0.9f
+
+/** The most of the screen the chrome may take, so a page is always partly visible behind it. */
+private const val CHROME_MAX_HEIGHT = 0.7f
 
 /** One + or − press scales by a quarter; eight presses cross the whole zoom range. */
 private const val KEY_ZOOM_STEP = 1.25f
@@ -404,27 +411,41 @@ private fun ReaderChrome(
     // each cancelling the last, and the page stuttered behind the thumb.
     var dragging by remember { mutableStateOf<Float?>(null) }
     var contents by remember { mutableStateOf(false) }
+    // Landscape has ~1200 px of height and the chrome had grown past it, so the options moved
+    // behind a toggle: what is always shown is what a reader looks at every page.
+    var options by remember { mutableStateOf(false) }
     val shown = (dragging?.roundToInt() ?: page) + 1
     val indicator = stringResource(R.string.reader_page_indicator_desc, shown, pageCount)
     val seekLabel = stringResource(R.string.reader_seek_desc)
+    // Capped and scrollable: with the options open, landscape has ~1200 px of height and the
+    // chrome would otherwise grow over its own top bar and the page entirely.
+    val maxChrome = (LocalConfiguration.current.screenHeightDp * CHROME_MAX_HEIGHT).dp
+    val chromeScroll = rememberScrollState()
+    // Opening the options scrolls to them: they sit below the seek bar, which in landscape is past
+    // the cap, and a control that appears to do nothing is worse than no control.
+    LaunchedEffect(options) {
+        if (options) {
+            withFrameNanos { }
+            chromeScroll.animateScrollTo(chromeScroll.maxValue)
+        }
+    }
     Surface(
         color = MaterialTheme.colorScheme.surface.copy(alpha = CHROME_ALPHA),
-        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding(),
+        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+            .heightIn(max = maxChrome).navigationBarsPadding(),
     ) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Column(
+            Modifier.verticalScroll(chromeScroll).padding(horizontal = 16.dp, vertical = 8.dp),
+        ) {
             if (contents) TocPanel(toc, onJump = { onSeek(it); contents = false })
-            ExportRow(page, onExport)
-            fitFor?.let { FitRow(prefs, it) }
-            BookOptionsRow(bookId, prefs)
-            if (toc.isNotEmpty()) {
-                TextButton(onClick = { contents = !contents }) {
-                    Text(stringResource(R.string.reader_contents))
-                }
-            }
-            Text(
-                text = stringResource(R.string.reader_page_indicator, shown, pageCount),
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.semantics { contentDescription = indicator },
+            ChromeActions(
+                indicator = stringResource(R.string.reader_page_indicator, shown, pageCount),
+                indicatorDescription = indicator,
+                hasContents = toc.isNotEmpty(),
+                onContents = { contents = !contents },
+                onOptions = { options = !options },
+                page = page,
+                onExport = onExport,
             )
             strip?.let { ThumbnailStrip(pageCount, page, bookId, onSeek, it) }
             BookmarkBar(bookId, page, pageCount, onJump = onSeek)
@@ -444,6 +465,12 @@ private fun ReaderChrome(
                     stateDescription = indicator
                 },
             )
+            // Last, not first: the seek bar and the strip are what a reader reaches for on every
+            // page, so they keep the top of the capped box and the options open below them.
+            if (options) {
+                fitFor?.let { FitRow(prefs, it) }
+                BookOptionsRow(bookId, prefs)
+            }
         }
     }
     }
