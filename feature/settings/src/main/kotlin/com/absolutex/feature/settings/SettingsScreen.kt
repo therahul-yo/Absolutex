@@ -22,6 +22,10 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.NightMode
+import com.absolutex.core.data.settings.MAX_PAGE_TURN_MS
+import com.absolutex.core.data.settings.MAX_SCROLL_STEP_PERCENT
+import com.absolutex.core.data.settings.MIN_PAGE_TURN_MS
+import com.absolutex.core.data.settings.MIN_SCROLL_STEP_PERCENT
 import com.absolutex.core.data.settings.ReaderPrefs
 import com.absolutex.core.data.settings.RotationLock
 import com.absolutex.model.PageLayout
@@ -174,6 +178,7 @@ private fun ReaderGroup(reader: ReaderPrefs, actions: SettingsActions) {
             )
         }
         LayoutRows(reader, actions)
+        AnimationRows(reader, actions)
         SegmentedSettingRow(
             options = RotationLock.entries,
             selected = reader.rotationLock,
@@ -206,6 +211,25 @@ private fun ReaderGroup(reader: ReaderPrefs, actions: SettingsActions) {
             descriptionRes = R.string.settings_volume_keys_desc,
         )
     }
+}
+
+/** §5.2's animation tuning: how long a page turn takes, and how far a strip scrolls per step. */
+@Composable
+private fun AnimationRows(reader: ReaderPrefs, actions: SettingsActions) {
+    NumberSliderRow(
+        valueLabelRes = R.string.settings_page_turn_value,
+        value = reader.pageTurnMs,
+        range = MIN_PAGE_TURN_MS..MAX_PAGE_TURN_MS,
+        onChange = { ms -> actions.onReader { it.copy(pageTurnMs = ms) } },
+        descriptionRes = R.string.settings_page_turn_desc,
+    )
+    NumberSliderRow(
+        valueLabelRes = R.string.settings_scroll_step_value,
+        value = reader.scrollStepPercent,
+        range = MIN_SCROLL_STEP_PERCENT..MAX_SCROLL_STEP_PERCENT,
+        onChange = { percent -> actions.onReader { it.copy(scrollStepPercent = percent) } },
+        descriptionRes = R.string.settings_scroll_step_desc,
+    )
 }
 
 /**
