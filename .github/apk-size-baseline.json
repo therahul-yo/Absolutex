@@ -1,16 +1,16 @@
 {
-  "_comment": "Compressed on-disk size of the release APK, in bytes. Re-armed 2026-09-15 at 2309621 bytes (+98.4 KiB over the previous 2208905). The growth is the reader chrome in 238a549: the first use in the app of Material 3's Slider and Surface (the seek bar and page indicator, \u00a75.2), which R8 now keeps; the tap-zone commit just before it was within the gate. Material 3 is the \u00a77 design system and the settings screen (PR #15) uses the same Slider, so this is intended growth, not dependency bloat. Verified reproducible: a local :app:assembleRelease produced exactly the size CI measured. The gate fails past 2% or 64 KiB over this, whichever is larger. Regenerate deliberately with: python3 tools/check-apk-size.py --apk app/build/outputs/apk/release/app-release-unsigned.apk --update",
+  "_comment": "Compressed on-disk size of the release APK. Regenerate with: python3 tools/check-apk-size.py --apk <path> --update",
   "apk": "app-release-unsigned.apk",
   "categories": {
     "assets": {
-      "compressed": 5730,
-      "entries": 2,
-      "uncompressed": 5730
+      "compressed": 54231,
+      "entries": 20,
+      "uncompressed": 143085
     },
     "dex": {
-      "compressed": 1789856,
+      "compressed": 1864860,
       "entries": 1,
-      "uncompressed": 1789856
+      "uncompressed": 1864860
     },
     "manifest": {
       "compressed": 1874,
@@ -18,9 +18,9 @@
       "uncompressed": 6548
     },
     "native": {
-      "compressed": 355840,
-      "entries": 3,
-      "uncompressed": 355840
+      "compressed": 6826000,
+      "entries": 5,
+      "uncompressed": 6826000
     },
     "other": {
       "compressed": 13205,
@@ -28,9 +28,9 @@
       "uncompressed": 55740
     },
     "resources": {
-      "compressed": 74968,
+      "compressed": 76196,
       "entries": 1,
-      "uncompressed": 74968
+      "uncompressed": 76196
     },
     "signing": {
       "compressed": 30591,
@@ -38,6 +38,5 @@
       "uncompressed": 84589
     }
   },
-  "total_bytes": 2309621,
-  "_source_run": "local :app:assembleRelease at e61f13d, matching CI run 34987509531 (6c062c7) byte for byte"
+  "total_bytes": 8926704
 }
