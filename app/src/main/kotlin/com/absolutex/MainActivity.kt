@@ -100,20 +100,17 @@ private fun readerRoute(uri: Uri) = "reader/${Uri.encode(uri.toString())}"
 private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
     val nav = rememberNavController()
     val context = androidx.compose.ui.platform.LocalContext.current
-    var restored by remember { mutableStateOf(directUri != null) }
-
-    // Resume the last book on launch (§5.2), on top of the library, so back returns to it. The
-    // persisted grant is what makes this survive process death; without takePersistableUriPermission
-    // the saved Uri would be dead on relaunch.
+    // The book to resume (§5.2), once the store has been read. Navigation happens in the effect
+    // below, never here: a NavController cannot navigate until its graph is set, which is what
+    // composing the NavHost does — resuming from this effect crashed on every launch with a saved
+    // book, and only a device showed it.
+    var resume by remember { mutableStateOf<Uri?>(null) }
     LaunchedEffect(Unit) {
         if (directUri != null) return@LaunchedEffect
-        val saved = vm.lastBook()
-        if (saved != null) {
-            val held = context.contentResolver.persistedUriPermissions.any { it.uri.toString() == saved }
-            // Pass the stale Uri so the grant (if half-held) is released, not leaked.
-            if (held) nav.navigate(readerRoute(Uri.parse(saved))) else vm.clearLastBook(saved)
-        }
-        restored = true
+        val saved = vm.lastBook() ?: return@LaunchedEffect
+        val held = context.contentResolver.persistedUriPermissions.any { it.uri.toString() == saved }
+        // Pass the stale Uri so the grant (if half-held) is released, not leaked.
+        if (held) resume = Uri.parse(saved) else vm.clearLastBook(saved)
     }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { picked ->
@@ -137,7 +134,6 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
         }
     }
 
-    if (!restored) return
     NavHost(nav, startDestination = if (directUri != null) readerRoute(directUri) else LIBRARY_ROUTE) {
         composable(LIBRARY_ROUTE) {
             LibraryRoute(
@@ -159,4 +155,7 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
         }
         settingsDestination()
     }
+    // After the NavHost: effects run in composition order, so the graph is set by the time this
+    // one does. Resuming lands on top of the library, so back returns to it.
+    LaunchedEffect(resume) { resume?.let { nav.navigate(readerRoute(it)) } }
 }
