@@ -172,7 +172,7 @@ class ReaderViewModel @Inject constructor(
         openJob = viewModelScope.launch {
             val opened = try {
                 withContext(DecodeDispatchers.extract) {
-                    context.openBook(uri) to identityOf(uri)
+                    context.openBook(uri) to context.identityOf(uri)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -217,26 +217,6 @@ class ReaderViewModel @Inject constructor(
             // a JNI call whose cost must not land in the tap-to-first-page budget.
             _toc.value = withContext(DecodeDispatchers.extract) { contentsOf(source0) }
         }
-    }
-
-    /**
-     * The book's identity, however it was reached — see BookIdentity. Keying progress by the Uri
-     * string gave one comic a different identity per route, so the library could never match a
-     * shelf entry to its reading position.
-     */
-    private fun identityOf(uri: Uri): String = when (uri.scheme) {
-        "file", null -> uri.path?.let { java.io.File(it) }
-            ?.let { BookIdentity.ofOrFallback(it.name, it.length(), uri.toString()) }
-            ?: uri.toString()
-        else -> context.contentResolver.query(
-            uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null,
-        )?.use { c ->
-            if (!c.moveToFirst()) return@use null
-            val name = c.getColumnIndex(OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let(c::getString)
-            val size = c.getColumnIndex(OpenableColumns.SIZE)
-                .takeIf { it >= 0 && !c.isNull(it) }?.let(c::getLong)
-            BookIdentity.ofOrFallback(name, size, uri.toString())
-        } ?: uri.toString()
     }
 
     /**
@@ -400,6 +380,28 @@ class ReaderViewModel @Inject constructor(
                 thumbs?.load(src as ComicSource, ThumbRequest(bookId, index, ThumbRequest.snapWidth(width)))
             }
         }.getOrNull()
+    }
+
+    /**
+     * Writes the page to Pictures/Absolutex (§5.2) and returns its Uri, or null if it could not be
+     * written. An archive page is exported byte for byte: re-encoding a scan to export it would
+     * lose quality for nothing. A PDF page has no bytes of its own, so it is rendered and encoded.
+     */
+    suspend fun exportPage(index: Int): Uri? {
+        val src = source ?: return null
+        val title = _ui.value.title
+        return withContext(DecodeDispatchers.extract) {
+            runCatching {
+                if (src is PdfDocument) {
+                    val page = PdfPageImage.open(src, index)
+                    context.exportPageBitmap(title, index, page.decodeBase(EXPORT_MAX_EDGE, EXPORT_MAX_EDGE))
+                } else {
+                    val source1 = src as ComicSource
+                    val bytes = source1.openPage(index).use { it.readBytes() }
+                    context.exportPageBytes(title, index, source1.pages[index].entryName, bytes)
+                }
+            }.onFailure { Log.e(TAG, "export failed", it) }.getOrNull()
+        }
     }
 
     /** Halves the tile budget on memory pressure; called from MainActivity's callbacks. */

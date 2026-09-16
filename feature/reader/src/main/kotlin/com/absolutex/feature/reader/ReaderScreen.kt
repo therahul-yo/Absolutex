@@ -227,6 +227,7 @@ private fun Pages(
         ReaderChrome(
             visible = chrome, page = spreads[pagerState.currentPage].first, pageCount = pageCount, onSeek = jump,
             bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip }, toc = toc,
+            onExport = { vm.exportPage(spreads[pagerState.currentPage].first) },
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
@@ -290,6 +291,7 @@ private fun Strip(pageCount: Int, startPage: Int, bookId: String, prefs: ReaderP
         ReaderChrome(
             visible = chrome, page = listState.firstVisibleItemIndex, pageCount = pageCount, onSeek = jump,
             bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip }, toc = toc,
+            onExport = { vm.exportPage(listState.firstVisibleItemIndex) },
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
@@ -412,6 +414,7 @@ private fun ReaderChrome(
     bookId: String,
     strip: (suspend (index: Int, width: Int) -> Bitmap?)?,
     toc: List<TocEntry>,
+    onExport: suspend () -> Uri?,
     modifier: Modifier = Modifier,
 ) {
     if (!visible || pageCount <= 0) return
@@ -429,6 +432,7 @@ private fun ReaderChrome(
     ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
             if (contents) TocPanel(toc, onJump = { onSeek(it); contents = false })
+            ExportRow(page, onExport)
             if (toc.isNotEmpty()) {
                 TextButton(onClick = { contents = !contents }) {
                     Text(stringResource(R.string.reader_contents))

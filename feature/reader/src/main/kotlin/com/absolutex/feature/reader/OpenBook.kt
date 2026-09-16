@@ -1,6 +1,8 @@
 package com.absolutex.feature.reader
 
 import android.content.Context
+import android.provider.OpenableColumns
+import com.absolutex.model.BookIdentity
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import com.absolutex.source.libarchive.LibArchiveSource
@@ -49,4 +51,24 @@ internal fun Context.openDescriptor(uri: Uri): ParcelFileDescriptor = when (uri.
     )
     else -> contentResolver.openFileDescriptor(uri, "r")
         ?: error("could not open document")
+}
+
+/**
+ * The book's identity, however it was reached — see BookIdentity. Keying progress by the Uri
+ * string gave one comic a different identity per route, so the library could never match a
+ * shelf entry to its reading position.
+ */
+internal fun Context.identityOf(uri: Uri): String = when (uri.scheme) {
+    "file", null -> uri.path?.let { java.io.File(it) }
+        ?.let { BookIdentity.ofOrFallback(it.name, it.length(), uri.toString()) }
+        ?: uri.toString()
+    else -> contentResolver.query(
+        uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null,
+    )?.use { c ->
+        if (!c.moveToFirst()) return@use null
+        val name = c.getColumnIndex(OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let(c::getString)
+        val size = c.getColumnIndex(OpenableColumns.SIZE)
+            .takeIf { it >= 0 && !c.isNull(it) }?.let(c::getLong)
+        BookIdentity.ofOrFallback(name, size, uri.toString())
+    } ?: uri.toString()
 }
