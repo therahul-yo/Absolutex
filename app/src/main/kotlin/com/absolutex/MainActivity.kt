@@ -113,9 +113,6 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
     var resume by remember { mutableStateOf<Uri?>(null) }
     LaunchedEffect(Unit) {
         if (directUri == null) resume = vm.resumableBook()
-        // Once per launch, so a file added to a location since last time is there without the
-        // reader being asked to rescan. A scan only writes rows whose content changed.
-        vm.rescanLocations()
     }
 
     // A folder, not a file: a location is what the library scans, and SAF is the only way to read
@@ -147,6 +144,10 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
 
     NavHost(nav, startDestination = if (directUri != null) readerRoute(directUri) else LIBRARY_ROUTE) {
         composable(LIBRARY_ROUTE) {
+            // Rescanning belongs to the screen that shows the result, not to launch: a book opened
+            // from a file manager never reaches here, and §3 measures its first page from the tap.
+            // Scanning during that window cost ~90 ms of cold start on the reference phone.
+            LaunchedEffect(Unit) { vm.rescanLocations() }
             LibraryRoute(
                 // A library row holds whatever the scan found it by: a document Uri from a SAF
                 // location, or a device path from a filesystem one. The reader opens either.
