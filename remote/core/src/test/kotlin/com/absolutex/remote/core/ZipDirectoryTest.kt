@@ -51,6 +51,30 @@ class ZipDirectoryTest {
         assertEquals("page01.jpg", entries[0].name)
     }
 
+    @Test fun `signature with room after it is rejected by length, not bounds`() {
+        // The fake above sits 8 bytes from EOF, so the 22-byte bounds check rejects it first
+        // and the comment-to-end equality never runs. Here the fake has 28 bytes after it
+        // inside a 32-byte comment — bounds pass, servable flavour passes, and only the
+        // length check can reject it.
+        val archive = ZipBytes.cbz("page01.jpg" to ZipBytes.pageBytes(1))
+        val eocdAt = ZipBytes.eocdStart(archive)
+        val comment = ByteArray(32)
+        comment[0] = 0x50
+        comment[1] = 0x4B
+        comment[2] = 0x05
+        comment[3] = 0x06
+        comment[8] = 1
+        comment[10] = 1
+        comment[12] = 100
+        comment[16] = 200.toByte()
+        val out = archive.copyOf(archive.size + comment.size)
+        ZipBytes.le16(out, eocdAt + 20, comment.size)
+        comment.copyInto(out, archive.size)
+        val entries = openOf(out)
+        assertEquals(1, entries.size)
+        assertEquals("page01.jpg", entries[0].name)
+    }
+
     @Test fun `oversized central directory is rejected before transfer`() {
         val archive = ZipBytes.cbz("page01.jpg" to ZipBytes.pageBytes(1))
         val patched = archive.copyOf()
