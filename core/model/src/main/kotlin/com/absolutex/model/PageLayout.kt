@@ -12,6 +12,9 @@ enum class PageLayout {
      * bound this way, so the facing pages of a spread only line up when the cover is on its own.
      */
     DOUBLE_WITH_COVER,
+
+    /** Pages stacked top to bottom and scrolled freely, fit to width: webtoons and long strips. */
+    CONTINUOUS_VERTICAL,
 }
 
 /**
@@ -29,7 +32,9 @@ object Spreads {
 
     fun of(pageCount: Int, layout: PageLayout): List<IntRange> {
         if (pageCount <= 0) return emptyList()
-        if (layout == PageLayout.SINGLE) return (0 until pageCount).map { it..it }
+        if (layout == PageLayout.SINGLE || layout == PageLayout.CONTINUOUS_VERTICAL) {
+            return (0 until pageCount).map { it..it }
+        }
         val spreads = ArrayList<IntRange>((pageCount + 1) / 2 + 1)
         var first = 0
         if (layout == PageLayout.DOUBLE_WITH_COVER) {

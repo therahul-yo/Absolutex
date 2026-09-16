@@ -200,6 +200,7 @@ fun pageLayoutLabelRes(layout: PageLayout): Int = when (layout) {
     PageLayout.SINGLE -> R.string.settings_layout_single
     PageLayout.DOUBLE -> R.string.settings_layout_double
     PageLayout.DOUBLE_WITH_COVER -> R.string.settings_layout_cover
+    PageLayout.CONTINUOUS_VERTICAL -> R.string.settings_layout_continuous
 }
 
 fun rotationLockLabelRes(lock: RotationLock): Int = when (lock) {

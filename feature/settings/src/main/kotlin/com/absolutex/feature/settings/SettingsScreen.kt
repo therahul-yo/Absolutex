@@ -172,13 +172,14 @@ private fun ReaderGroup(reader: ReaderPrefs, actions: SettingsActions) {
                 onClick = { actions.onFitMode(mode) },
             )
         }
-        SegmentedSettingRow(
-            options = PageLayout.entries,
-            selected = reader.pageLayout,
-            onSelect = { layout -> actions.onReader { it.copy(pageLayout = layout) } },
-            labelRes = ::pageLayoutLabelRes,
-            descriptionRes = R.string.settings_page_layout_desc,
-        )
+        // Four layouts, like the four fit modes, need radio rows on a narrow phone.
+        PageLayout.entries.forEach { layout ->
+            RadioSettingRow(
+                titleRes = pageLayoutLabelRes(layout),
+                selected = reader.pageLayout == layout,
+                onClick = { actions.onReader { it.copy(pageLayout = layout) } },
+            )
+        }
         SegmentedSettingRow(
             options = RotationLock.entries,
             selected = reader.rotationLock,

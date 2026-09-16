@@ -27,6 +27,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.draw.clipToBounds
+import com.absolutex.model.PageLayout
 import androidx.compose.runtime.key
 import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.foundation.layout.padding
@@ -113,7 +120,13 @@ fun ReaderScreen(
                 color = Color.White,
             )
             // A layout change regroups the pages, so the pager restarts on the page being read.
-            else -> key(prefs.pageLayout) { Pages(ui.pageCount, vm.readingPage, ui.bookId, prefs, vm) }
+            else -> key(prefs.pageLayout) {
+                if (prefs.pageLayout == PageLayout.CONTINUOUS_VERTICAL) {
+                    Strip(ui.pageCount, vm.readingPage, ui.bookId, prefs, vm)
+                } else {
+                    Pages(ui.pageCount, vm.readingPage, ui.bookId, prefs, vm)
+                }
+            }
         }
     }
 }
@@ -129,6 +142,9 @@ private const val FIRST_COLUMN = 0
 private const val LAST_COLUMN = 2
 
 private const val HALF = 0.5f
+
+/** A key press or edge tap in a strip moves this much of a screen, keeping a line of context. */
+private const val STRIP_STEP = 0.9f
 
 @Composable
 private fun Pages(
@@ -212,6 +228,67 @@ private fun Pages(
 }
 
 /**
+ * Continuous vertical reading (§5.2): every page fit to width in one scrolling column, for webtoons
+ * and strips whose "pages" are cut wherever the scanner felt like it.
+ *
+ * Each page's height is unknown until its header is read, so it holds a screen until then; the
+ * ratio is remembered for the book, so scrolling back never resizes what is above the reader.
+ * Keys and edge taps move by most of a screen, not by an item: one item can be many screens tall.
+ */
+@Composable
+private fun Strip(pageCount: Int, startPage: Int, bookId: String, prefs: ReaderPrefs, vm: ReaderViewModel) {
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = startPage)
+    val scope = rememberCoroutineScope()
+    var chrome by remember { mutableStateOf(false) }
+    ReaderWindow(prefs, immersive = !chrome)
+    val step: (Int) -> Unit = { direction ->
+        scope.launch {
+            val info = listState.layoutInfo
+            listState.animateScrollBy(direction * (info.viewportEndOffset - info.viewportStartOffset) * STRIP_STEP)
+        }
+    }
+    val jump: (Int) -> Unit = { to -> scope.launch { listState.scrollToItem(to.coerceIn(0, pageCount - 1)) } }
+    val tap: (TapZone) -> Unit = { zone ->
+        when (zone.column) {
+            LAST_COLUMN -> step(1)
+            FIRST_COLUMN -> step(-1)
+            else -> chrome = !chrome
+        }
+    }
+    val rtl = prefs.readingFlow == ReadingFlow.RTL
+    // ponytail: no keyboard zoom in a strip; pinch zooms a page in place. Add when a strip has a focus page.
+    val keys = readerKeys(rtl, prefs.volumeKeysTurnPages, step, jump, pageCount - 1, { false }) { chrome = !chrome }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex }.collect { vm.onPageChanged(it) }
+    }
+    var firstPageDrawn by remember(bookId) { mutableStateOf(false) }
+    ReportDrawnWhen { firstPageDrawn }
+    val aspects = remember(bookId) { mutableStateMapOf<Int, Float>() }
+
+    Box(Modifier.fillMaxSize().then(keys)) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+            items(pageCount) { index ->
+                val aspect = aspects[index]
+                val size = aspect?.let { Modifier.fillMaxWidth().aspectRatio(it) } ?: Modifier.fillParentMaxSize()
+                Box(size.clipToBounds()) {
+                    PageSlot(
+                        index = index, bookId = bookId, vm = vm, fitMode = FitMode.FIT_WIDTH, rightToLeft = rtl,
+                        pagerVertical = true, onPagerLockChanged = {}, onEdgeSwipe = {}, onTapZone = tap,
+                        spreadSide = SpreadSide.NONE, onBaseReady = { if (index == startPage) firstPageDrawn = true },
+                        decodeNow = true, zoomSteps = null,
+                        onLoaded = { aspects[index] = it.width.toFloat() / it.height },
+                    )
+                }
+            }
+        }
+        ReaderChrome(
+            visible = chrome, page = listState.firstVisibleItemIndex, pageCount = pageCount, onSeek = jump,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+    }
+}
+
+/**
  * Focus plus key handling for the reader surface. Focus is requested on entry: without it no key
  * reaches the reader and a keyboard or gamepad user cannot even start. Key-down only, so a held key
  * repeats through the system's own key repeat rather than firing twice per press.
@@ -272,10 +349,11 @@ private fun SpreadRow(
     }
     val (left, right) = if (rightToLeft) spread.last to spread.first else spread.first to spread.last
     Box(Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxWidth(HALF).fillMaxHeight().align(AbsoluteAlignment.CenterLeft)) {
+        // Clipped: a canvas draws outside its bounds, and a zoomed page would cover its neighbour.
+        Box(Modifier.fillMaxWidth(HALF).fillMaxHeight().align(AbsoluteAlignment.CenterLeft).clipToBounds()) {
             slot(left, SpreadSide.LEFT)
         }
-        Box(Modifier.fillMaxWidth(HALF).fillMaxHeight().align(AbsoluteAlignment.CenterRight)) {
+        Box(Modifier.fillMaxWidth(HALF).fillMaxHeight().align(AbsoluteAlignment.CenterRight).clipToBounds()) {
             slot(right, SpreadSide.RIGHT)
         }
     }
@@ -441,6 +519,8 @@ private fun PageSlot(
      */
     decodeNow: Boolean,
     zoomSteps: Flow<Float>?,
+    /** The page's header is read: its dimensions are known. Only valid (non-empty) pages. */
+    onLoaded: (PageImage) -> Unit = {},
 ) {
     var image by remember(index) { mutableStateOf<PageImage?>(null) }
     var attempts by remember(index) { mutableIntStateOf(0) }
@@ -450,6 +530,7 @@ private fun PageSlot(
         loading = true
         Trace.beginAsyncSection("absx.pageImage p=$index", index)
         image = vm.pageImage(index)
+        image?.takeIf { it.width > 0 && it.height > 0 }?.let(onLoaded)
         Trace.endAsyncSection("absx.pageImage p=$index", index)
         loading = false
     }
