@@ -33,17 +33,17 @@ class SmbStreamingSource private constructor(
         if (entry.compressedSize > MAX_REMOTE_ENTRY_BYTES) {
             throw IOException("entry too large: ${entry.compressedSize} bytes")
         }
+        // Local header offsets resolve here, per opened page — indexing never pays a
+        // ranged read per entry (item 6: ~600 round trips for a 200-page CBZ).
+        val dataOffset = ZipRemoteIndex.dataOffsetOf(reader, entry)
         return when (entry.method) {
             ZipRemoteIndex.METHOD_STORED ->
-                reader.openStream(entry.dataOffset, entry.compressedSize)
+                reader.openStream(dataOffset, entry.compressedSize)
             else ->
                 // nowrap=true: ZIP stores raw DEFLATE (RFC 1951); the default Inflater expects
                 // a zlib wrapper (RFC 1950) and fails every entry with "incorrect header check".
-                InflaterInputStream(
-                    ByteArrayInputStream(
-                        reader.readAt(entry.dataOffset, entry.compressedSize.toInt()),
-                    ),
-                    Inflater(true),
+                DeflateStream(
+                    reader.readAt(dataOffset, entry.compressedSize.toInt()),
                 )
         }
     }
@@ -57,7 +57,6 @@ class SmbStreamingSource private constructor(
     companion object {
         // A page is a few megabytes; larger means hostile input, not a scan (§2 degrade rule).
         const val MAX_REMOTE_ENTRY_BYTES = 32L * 1024 * 1024
-
         @Throws(IOException::class)
         fun open(transport: SmbTransport, remotePath: String): SmbStreamingSource {
             val size = transport.sizeBytes(remotePath)
@@ -84,12 +83,39 @@ class SmbStreamingSource private constructor(
                 magic[HEADER_INDEX_2] == LOCAL_FILE_SIG_2 && magic[HEADER_INDEX_3] == LOCAL_FILE_SIG_3
         }
 
-        private const val MIN_ZIP_SIZE = 4
-        private const val HEADER_INDEX_2 = 2
-        private const val HEADER_INDEX_3 = 3
-        private const val PK_BYTE_0 = 0x50.toByte()
-        private const val PK_BYTE_1 = 0x4B.toByte()
-        private const val LOCAL_FILE_SIG_2 = 0x03.toByte()
-        private const val LOCAL_FILE_SIG_3 = 0x04.toByte()
+    private const val MIN_ZIP_SIZE = 4
+    private const val HEADER_INDEX_2 = 2
+    private const val HEADER_INDEX_3 = 3
+    private const val PK_BYTE_0 = 0x50.toByte()
+    private const val PK_BYTE_1 = 0x4B.toByte()
+    private const val LOCAL_FILE_SIG_2 = 0x03.toByte()
+    private const val LOCAL_FILE_SIG_3 = 0x04.toByte()
+    }
+}
+
+/**
+ * Raw-DEFLATE entry bytes with an owned [Inflater]. InflaterInputStream does not end a
+ * caller-supplied inflater on close, which leaks native zlib state per DEFLATED page —
+ * so this stream owns it and ends it, whatever path close takes.
+ */
+internal class DeflateStream(
+    data: ByteArray,
+    private val inflater: Inflater = Inflater(true),
+) : InputStream() {
+    private val inner = InflaterInputStream(ByteArrayInputStream(data), inflater)
+    private var closed = false
+
+    override fun read(): Int = inner.read()
+
+    override fun read(buffer: ByteArray, off: Int, len: Int): Int = inner.read(buffer, off, len)
+
+    override fun close() {
+        if (closed) return
+        closed = true
+        try {
+            inner.close()
+        } finally {
+            inflater.end()
+        }
     }
 }

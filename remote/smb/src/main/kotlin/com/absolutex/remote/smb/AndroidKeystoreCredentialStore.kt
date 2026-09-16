@@ -61,9 +61,11 @@ class AndroidKeystoreCredentialStore(private val storageDir: File) : SmbCredenti
     }
 
     private fun fileFor(alias: String): File {
-        // Alias is caller-chosen (e.g. location id), not a path — strip separators, never traverse.
-        val safe = alias.replace('/', '_').replace('\\', '_')
-        return File(storageDir, "$safe$SUFFIX")
+        // Alias is caller-chosen (e.g. location id), not a path — encode separators, never
+        // traverse. Percent-encoding is injective where stripping was not: "a/b" and "a\b"
+        // both became "a_b" and shared one credential file, sending one server's password
+        // to another host.
+        return File(storageDir, "${sanitiseAlias(alias)}$SUFFIX")
     }
 
     private fun key(): SecretKey {
@@ -90,5 +92,12 @@ class AndroidKeystoreCredentialStore(private val storageDir: File) : SmbCredenti
         private const val GCM_TAG_BITS = 128
         private const val INT_BYTES = 4
         private const val SUFFIX = ".smbcred"
+
+        /**
+         * Reversible separator encoding for credential filenames. Percent first, or the
+         * escapes themselves collide ("a%2F" must not equal "a/").
+         */
+        internal fun sanitiseAlias(alias: String): String =
+            alias.replace("%", "%25").replace("/", "%2F").replace("\\", "%5C")
     }
 }

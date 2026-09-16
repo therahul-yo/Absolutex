@@ -16,3 +16,30 @@ interface SmbTransport : AutoCloseable {
     @Throws(IOException::class)
     fun readAt(remotePath: String, offset: Long, length: Int): ByteArray
 }
+
+/**
+ * Establishes one authenticated share. Whatever it opens, it closes on failure — a failed
+ * logon must not leak the client, socket and reader thread.
+ */
+interface SmbConnector {
+    @Throws(IOException::class)
+    fun connect(password: CharArray): SmbConnection
+}
+
+/** One open share. The transport opens one file handle per read; handles never escape it. */
+interface SmbConnection : AutoCloseable {
+    @Throws(IOException::class)
+    fun openFile(remotePath: String): RemoteFileHandle
+}
+
+/** A single open remote file: length plus pread-style reads. */
+interface RemoteFileHandle : AutoCloseable {
+    val length: Long
+
+    /**
+     * Up to [length] bytes from [fileOffset] into [buffer] at [bufferOffset]; -1 or 0 only
+     * at end of file, like InputStream.read.
+     */
+    @Throws(IOException::class)
+    fun read(buffer: ByteArray, fileOffset: Long, bufferOffset: Int, length: Int): Int
+}

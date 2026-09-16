@@ -58,4 +58,14 @@ class SeekableSmbReaderTest {
         assertEquals(200.toByte(), bytes[0])
         assertTrue(transport.bytesServed < 256)
     }
+
+    @Test fun `read larger than the cache streams window by window`() {
+        // Item 3: a span the cache cannot hold used to fail with "cache miss after fetch"
+        // after transferring the whole span. Windows cap each fetch at cache capacity.
+        val size = 10 * 1024
+        val bytes = ByteArray(size) { it.toByte() }
+        val transport = FakeSmbTransport(mapOf("b" to bytes))
+        val reader = SeekableSmbReader(transport, "b", size.toLong(), BlockCache(1024, 4096))
+        assertTrue(reader.readAt(0, size).contentEquals(bytes))
+    }
 }

@@ -13,9 +13,11 @@ object RemoteThumbnails {
         source: RemoteComicSource,
         maxBytes: Long = DEFAULT_COVER_MAX_BYTES,
     ): ByteArray {
-        val size = source.pages.getOrNull(0)?.sizeBytes ?: -1
-        if (size > maxBytes) throw IOException("cover too large: $size bytes")
-        // The stream is already ranged; cap guards a lying central directory, not the network.
+        // Empty archive: openCover would throw IndexOutOfBounds, which is a bug report,
+        // not a book. Fail with a message like every other unreadable book.
+        if (source.pages.isEmpty()) throw IOException("archive has no pages")
+        // The stream is already ranged and readNBytes caps the transfer: the cap guards a
+        // lying central directory, not the network.
         return source.openCover().use { it.readNBytes(maxBytes.plus(1).toInt()) }
             .also { if (it.size.toLong() > maxBytes) throw IOException("cover too large") }
     }

@@ -85,4 +85,42 @@ class SmbStreamingSourceTest {
             assertTrue(source.openPage(0).use { it.readBytes() }.contentEquals(first))
         }
     }
+
+    @Test fun `cover on an empty archive fails with a message, not IndexOutOfBounds`() {
+        val archive = ZipFixtures.cbz("Thumbs.db" to ByteArray(8))
+        val transport = FakeSmbTransport(mapOf("book.cbz" to archive))
+        sourceOf(transport, archive).use { source ->
+            assertTrue(source.pages.isEmpty())
+            try {
+                RemoteThumbnails.coverBytes(source)
+                fail("expected IOException")
+            } catch (expected: IOException) {
+                assertTrue(expected.message?.contains("no pages") == true)
+            }
+        }
+    }
+
+    @Test fun `closing a deflated page ends its inflater`() {
+        val raw = ZipFixtures.pageBytes(7, 2048)
+        val deflater = java.util.zip.Deflater(java.util.zip.Deflater.DEFAULT_COMPRESSION, true)
+        deflater.setInput(raw)
+        deflater.finish()
+        val compressed = ByteArray(4096)
+        val compressedLen = deflater.deflate(compressed)
+        deflater.end()
+        val spy = SpyInflater()
+        DeflateStream(compressed.copyOf(compressedLen), spy).use { stream ->
+            assertTrue(stream.readBytes().contentEquals(raw))
+        }
+        assertTrue("inflater was not ended on close", spy.ended)
+    }
+
+    private class SpyInflater : java.util.zip.Inflater(true) {
+        var ended = false
+
+        override fun end() {
+            ended = true
+            super.end()
+        }
+    }
 }

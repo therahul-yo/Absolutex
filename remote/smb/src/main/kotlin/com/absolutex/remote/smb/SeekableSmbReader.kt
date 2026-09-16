@@ -43,7 +43,11 @@ class SeekableSmbReader(
                 val blockStart = block * cache.blockSize
                 var data = cache.get(block)
                 if (data == null) {
-                    fetchSpan(pos, offset + length)
+                    // Fetch at most a cache-full window ahead of this block: a longer span
+                    // would evict the head before it is copied ("cache miss after fetch").
+                    // The loop refills window by window, so reads bigger than the cache
+                    // stream instead of throwing.
+                    fetchSpan(pos, minOf(offset + length, pos + cache.maxBytes))
                     data = cache.get(block)
                         ?: throw IOException("cache miss after fetch at block $block")
                 }
@@ -77,7 +81,14 @@ class SeekableSmbReader(
         while (block <= lastBlock) {
             if (cache.get(block) == null) {
                 var end = block
-                while (end + 1 <= lastBlock && cache.get(end + 1) == null) end++
+                // Cap the run at what the cache holds: inserting more would evict this span's
+                // own head, and the read would fail with "cache miss after fetch" after an
+                // OOM-sized transfer. The loop refills window by window instead.
+                while (end + 1 <= lastBlock && cache.get(end + 1) == null &&
+                    (end + 1 - block + 1) * cache.blockSize <= cache.maxBytes
+                ) {
+                    end++
+                }
                 val start = block * cache.blockSize
                 val stop = minOf((end + 1) * cache.blockSize, sizeBytes)
                 val bytes = transport.readAt(remotePath, start, (stop - start).toInt())

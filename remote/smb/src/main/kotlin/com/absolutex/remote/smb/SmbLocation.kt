@@ -10,6 +10,12 @@ data class SmbLocation(
     val path: String,
     val port: Int,
     val username: String,
+    /**
+     * Explicit opt-out for guest and legacy shares: dialects fall back to 2.1+ and signing
+     * and encryption stop being required. Default is SMB3 with both required, so a
+     * plaintext-swap on the path cannot reach the ZIP parser or the image decoders.
+     */
+    val allowUnsigned: Boolean = false,
 ) {
     init {
         require(host.isNotBlank()) { "smb host is blank" }

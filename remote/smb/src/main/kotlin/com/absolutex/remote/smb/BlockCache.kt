@@ -7,7 +7,7 @@ package com.absolutex.remote.smb
  */
 class BlockCache(
     val blockSize: Int = DEFAULT_BLOCK_SIZE,
-    private val maxBytes: Long = DEFAULT_MAX_BYTES,
+    val maxBytes: Long = DEFAULT_MAX_BYTES,
 ) {
     private val guard = Any()
     private val blocks = object : LinkedHashMap<Long, ByteArray>(16, LOAD_FACTOR, true) {
