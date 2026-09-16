@@ -115,16 +115,22 @@ class ThumbJournalTest {
     }
 
     @Test fun `negative sizes parse to null`() {
-        assertNull(ThumbJournal.parse("{\"version\":1,\"entries\":[{\"k\":\"a\",\"s\":-1}]}"))
+        assertNull(ThumbJournal.parse("{\"version\":2,\"entries\":[{\"k\":\"a\",\"s\":-1}]}"))
     }
 
-    @Test fun `the journal version is pinned at one`() {
-        assertEquals(1, ThumbJournal.JOURNAL_VERSION)
+    @Test fun `the journal version is pinned at two`() {
+        assertEquals(2, ThumbJournal.JOURNAL_VERSION)
     }
 
     @Test fun `unknown fields fail closed so the caller rebuilds`() {
         // Evolution is version-gated, not field-tolerant: any shape change bumps the version.
-        assertNull(ThumbJournal.parse("{\"version\":1,\"extra\":true,\"entries\":[]}"))
-        assertNull(ThumbJournal.parse("{\"version\":1,\"entries\":[{\"k\":\"a\",\"s\":1,\"x\":2}]}"))
+        assertNull(ThumbJournal.parse("{\"version\":2,\"extra\":true,\"entries\":[]}"))
+        assertNull(ThumbJournal.parse("{\"version\":2,\"entries\":[{\"k\":\"a\",\"s\":1,\"x\":2}]}"))
+    }
+
+    @Test fun `a pre-bump v1 journal is rejected so old PNG-era entries rebuild as WEBP`() {
+        // Simulates an app upgrade: bytes a prior build wrote at JOURNAL_VERSION 1 must fail closed
+        // now, not be read as if they were version 2, since the disk format itself changed underneath.
+        assertNull(ThumbJournal.parse("{\"version\":1,\"entries\":[{\"k\":\"aa\",\"s\":64}]}"))
     }
 }

@@ -4,7 +4,7 @@ package com.absolutex.core.thumbnails
  * Versioned, dependency-free journal backing [ThumbDiskCache].
  *
  * The journal is the disk cache's size accounting: an insertion-ordered map of key hex to byte
- * size, persisted as `{"version":1,"entries":[{"k":"...","s":1234}]}` with the oldest entry first.
+ * size, persisted as `{"version":2,"entries":[{"k":"...","s":1234}]}` with the oldest entry first.
  * It is pure Kotlin with no Android imports, so eviction accounting is covered by plain JVM tests.
  *
  * Parsing never throws: corrupt text or an unknown [JOURNAL_VERSION] yields null and the caller
@@ -72,7 +72,9 @@ class ThumbJournal private constructor(
     }
 
     companion object {
-        const val JOURNAL_VERSION = 1
+        // Bumped for the PNG -> WEBP_LOSSY disk format switch: a v1 journal now fails closed so
+        // pre-existing PNG entries are wiped and rebuilt as WEBP rather than read back as PNG.
+        const val JOURNAL_VERSION = 2
         const val JOURNAL_FILE = "journal.json"
 
         private const val INITIAL_CAPACITY = 16

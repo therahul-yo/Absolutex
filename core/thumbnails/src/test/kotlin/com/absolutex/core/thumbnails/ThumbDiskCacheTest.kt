@@ -83,6 +83,21 @@ class ThumbDiskCacheTest {
         assertFalse(File(dir, "aa${ThumbKeys.FILE_SUFFIX}").exists())
     }
 
+    @Test fun `a pre-bump v1 journal from the PNG era wipes and rebuilds as WEBP`() {
+        // JOURNAL_VERSION moved to 2 with the PNG to WEBP_LOSSY switch, so a journal a pre-bump
+        // build wrote (hardcoded here, not via the constant) must be treated the same as any other
+        // unreadable journal: wiped, along with the stale PNG bytes it was accounting for.
+        val dir = File(tmp.root, "thumbs")
+        dir.mkdirs()
+        File(dir, ThumbJournal.JOURNAL_FILE).writeText("{\"version\":1,\"entries\":[{\"k\":\"aa\",\"s\":64}]}")
+        File(dir, "aa${ThumbKeys.FILE_SUFFIX}").writeBytes(bytes(64))
+        val rebuilt = ThumbDiskCache(dir)
+        assertEquals(0, rebuilt.entryCount())
+        assertEquals(0L, rebuilt.sizeBytes())
+        assertNull(rebuilt.get("aa"))
+        assertFalse(File(dir, "aa${ThumbKeys.FILE_SUFFIX}").exists())
+    }
+
     @Test fun `a missing journal adopts orphaned entry files`() {
         val dir = File(tmp.root, "thumbs")
         ThumbDiskCache(dir).put("aa", bytes(64))
@@ -115,5 +130,18 @@ class ThumbDiskCacheTest {
         assertNull(disk.get("aa"))
         assertArrayEquals(bytes(16), disk.get("bb"))
         assertEquals(16L, disk.sizeBytes())
+    }
+
+    @Test fun `the journal is batched, not rewritten on every put, and close flushes it`() {
+        // A single put stays well under PERSIST_EVERY_PUTS, so the on-disk journal is still the
+        // empty one the constructor wrote, until close() forces the batched state out.
+        val dir = File(tmp.root, "thumbs")
+        val disk = ThumbDiskCache(dir)
+        disk.put("aa", bytes(16))
+        val onDiskBeforeClose = ThumbJournal.parse(File(dir, ThumbJournal.JOURNAL_FILE).readText())
+        assertEquals(0, onDiskBeforeClose?.entryCount())
+        disk.close()
+        val onDiskAfterClose = ThumbJournal.parse(File(dir, ThumbJournal.JOURNAL_FILE).readText())
+        assertEquals(1, onDiskAfterClose?.entryCount())
     }
 }
