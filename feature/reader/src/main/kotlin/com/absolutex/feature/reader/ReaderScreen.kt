@@ -99,6 +99,8 @@ import kotlin.math.roundToInt
 fun ReaderScreen(
     uri: Uri,
     modifier: Modifier = Modifier,
+    /** Opens the settings destination; null where the host has none (previews, tests). */
+    onSettings: (() -> Unit)? = null,
     vm: ReaderViewModel = hiltViewModel(),
 ) {
     val ui by vm.ui.collectAsStateWithLifecycle()
@@ -136,9 +138,9 @@ fun ReaderScreen(
             // A layout change regroups the pages, so the pager restarts on the page being read.
             else -> key(prefs.pageLayout) {
                 if (prefs.pageLayout == PageLayout.CONTINUOUS_VERTICAL) {
-                    Strip(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm)
+                    Strip(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings)
                 } else {
-                    Pages(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm)
+                    Pages(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings)
                 }
             }
         }
@@ -164,6 +166,7 @@ private fun Pages(
     title: String,
     prefs: ReaderPrefs,
     vm: ReaderViewModel,
+    onSettings: (() -> Unit)?,
 ) {
     val flow = prefs.readingFlow
     // The pager counts screens; everything else (progress, seeking, keys) speaks book pages.
@@ -227,7 +230,7 @@ private fun Pages(
         ReaderPager(flow, pagerState, scrollable, page)
         ReaderChrome(
             visible = chrome, page = spreads[pagerState.currentPage].first, pageCount = pageCount,
-            title = title, onSeek = jump,
+            title = title, onSettings = onSettings, onSeek = jump,
             bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip }, toc = toc,
             onExport = { vm.exportPage(spreads[pagerState.currentPage].first) },
             fitFor = fitContext, prefs = prefs,
@@ -251,6 +254,7 @@ private fun Strip(
     title: String,
     prefs: ReaderPrefs,
     vm: ReaderViewModel,
+    onSettings: (() -> Unit)?,
 ) {
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = startPage)
     val scope = rememberCoroutineScope()
@@ -294,7 +298,7 @@ private fun Strip(
         }
         ReaderChrome(
             visible = chrome, page = listState.firstVisibleItemIndex, pageCount = pageCount,
-            title = title, onSeek = jump,
+            title = title, onSettings = onSettings, onSeek = jump,
             bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip }, toc = toc,
             onExport = { vm.exportPage(listState.firstVisibleItemIndex) },
             fitFor = null, prefs = prefs,
@@ -443,6 +447,7 @@ private fun ReaderChrome(
     page: Int,
     pageCount: Int,
     title: String,
+    onSettings: (() -> Unit)?,
     onSeek: (Int) -> Unit,
     bookId: String,
     strip: (suspend (index: Int, width: Int) -> Bitmap?)?,
@@ -455,7 +460,7 @@ private fun ReaderChrome(
 ) {
     if (!visible || pageCount <= 0) return
     Box(modifier.fillMaxSize()) {
-        ReaderTopBar(title, Modifier.align(Alignment.TopCenter))
+        ReaderTopBar(title, onSettings, Modifier.align(Alignment.TopCenter))
     // While dragging, the thumb and label follow the finger locally; the pager moves once, on
     // release. Seeking through the pager on every drag tick launched an animated scroll per tick,
     // each cancelling the last, and the page stuttered behind the thumb.

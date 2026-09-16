@@ -24,7 +24,7 @@ import androidx.compose.ui.unit.dp
  * opened the book.
  */
 @Composable
-internal fun ReaderTopBar(title: String, modifier: Modifier = Modifier) {
+internal fun ReaderTopBar(title: String, onSettings: (() -> Unit)?, modifier: Modifier = Modifier) {
     val back = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     Surface(
         color = MaterialTheme.colorScheme.surface.copy(alpha = CHROME_ALPHA),
@@ -40,8 +40,13 @@ internal fun ReaderTopBar(title: String, modifier: Modifier = Modifier) {
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(end = 16.dp),
+                modifier = Modifier.weight(1f).padding(end = 16.dp),
             )
+            // TODO(library): settings belong on the library home too, once it has a place for
+            // them. Reachable from here in the meantime rather than not at all.
+            onSettings?.let {
+                TextButton(onClick = it) { Text(stringResource(R.string.reader_settings)) }
+            }
         }
     }
 }
