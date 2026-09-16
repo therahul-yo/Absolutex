@@ -25,9 +25,33 @@ class SyncSecrets(private val store: CredentialStore) {
         store.clear(passwordService(serverId))
     }
 
+    fun saveSmbPassword(serverId: String, password: CharArray) {
+        store.save(smbPasswordService(serverId), password)
+    }
+
+    fun loadSmbPassword(serverId: String): CharArray? = store.load(smbPasswordService(serverId))
+
+    fun saveFtpPassword(serverId: String, password: CharArray) {
+        store.save(ftpPasswordService(serverId), password)
+    }
+
+    fun loadFtpPassword(serverId: String): CharArray? = store.load(ftpPasswordService(serverId))
+
+    /** Clears all four secrets for [serverId] — call on server remove so nothing lingers. */
+    fun clearServer(serverId: String) {
+        store.clear(apiKeyService(serverId))
+        store.clear(passwordService(serverId))
+        store.clear(smbPasswordService(serverId))
+        store.clear(ftpPasswordService(serverId))
+    }
+
     companion object {
         fun apiKeyService(serverId: String): String = "sync/$serverId/api-key"
 
         fun passwordService(serverId: String): String = "sync/$serverId/password"
+
+        fun smbPasswordService(serverId: String): String = "sync/$serverId/smb-password"
+
+        fun ftpPasswordService(serverId: String): String = "sync/$serverId/ftp-password"
     }
 }
