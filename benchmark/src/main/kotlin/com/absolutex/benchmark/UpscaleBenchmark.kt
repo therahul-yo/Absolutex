@@ -30,6 +30,12 @@ import java.io.File
  * the M1/M2 one. Run one scenario at a time with:
  * `tools/run-benchmark.sh 'com.absolutex.benchmark.UpscaleBenchmark#refineLanczos4x'`.
  * `tools/run-benchmark.sh 'com.absolutex.benchmark.UpscaleBenchmark#refinePlatform4x'`.
+ *
+ * Screenshot spec for the lead: Absolute Batman CBR, page 1 (cover), 3× zoom on a speech
+ * bubble. Capture the same page and zoom with PLATFORM, MITCHELL and LANCZOS selected
+ * (upscaler travels on Upscaler.EXTRA_UPSCALER). The speech bubble's text edges are the
+ * comparison target — bilinear softens them, Mitchell sharpens with mild ringing, Lanczos
+ * sharpens with more ringing.
  */
 @RunWith(AndroidJUnit4::class)
 class UpscaleBenchmark {
@@ -100,6 +106,23 @@ class UpscaleBenchmark {
         }
     }
 
+    @Test fun refineMitchell4x() = rule.measureRepeated(
+        packageName = pkg,
+        metrics = listOf(FrameTimingMetric()),
+        iterations = 5,
+        startupMode = StartupMode.WARM,
+        setupBlock = {
+            pressHome()
+            startActivityAndWait(viewIntent("mitchell"))
+        },
+    ) {
+        awaitReader()
+        repeat(4) {
+            pinchesToFourX()
+            backToFit()
+        }
+    }
+
     @Test fun refinePlatform4x() = rule.measureRepeated(
         packageName = pkg,
         metrics = listOf(FrameTimingMetric()),
@@ -114,6 +137,68 @@ class UpscaleBenchmark {
         repeat(4) {
             pinchesToFourX()
             backToFit()
+        }
+    }
+
+    /** Page turns at 4× with each upscaler: the kernel refines on every turn. */
+    @Test fun pageTurnLanczos4x() = rule.measureRepeated(
+        packageName = pkg,
+        metrics = listOf(FrameTimingMetric()),
+        iterations = 5,
+        startupMode = StartupMode.WARM,
+        setupBlock = {
+            pressHome()
+            startActivityAndWait(viewIntent("lanczos"))
+        },
+    ) {
+        awaitReader()
+        repeat(4) {
+            pinchesToFourX()
+            device.waitForIdle()
+            // LEFT advances (see ReaderBenchmark for why coordinates, not a node handle).
+            val y = device.displayHeight / 2
+            device.swipe(device.displayWidth * 85 / 100, y, device.displayWidth * 15 / 100, y, 8)
+            device.waitForIdle()
+        }
+    }
+
+    @Test fun pageTurnMitchell4x() = rule.measureRepeated(
+        packageName = pkg,
+        metrics = listOf(FrameTimingMetric()),
+        iterations = 5,
+        startupMode = StartupMode.WARM,
+        setupBlock = {
+            pressHome()
+            startActivityAndWait(viewIntent("mitchell"))
+        },
+    ) {
+        awaitReader()
+        repeat(4) {
+            pinchesToFourX()
+            device.waitForIdle()
+            val y = device.displayHeight / 2
+            device.swipe(device.displayWidth * 85 / 100, y, device.displayWidth * 15 / 100, y, 8)
+            device.waitForIdle()
+        }
+    }
+
+    @Test fun pageTurnPlatform4x() = rule.measureRepeated(
+        packageName = pkg,
+        metrics = listOf(FrameTimingMetric()),
+        iterations = 5,
+        startupMode = StartupMode.WARM,
+        setupBlock = {
+            pressHome()
+            startActivityAndWait(viewIntent())
+        },
+    ) {
+        awaitReader()
+        repeat(4) {
+            pinchesToFourX()
+            device.waitForIdle()
+            val y = device.displayHeight / 2
+            device.swipe(device.displayWidth * 85 / 100, y, device.displayWidth * 15 / 100, y, 8)
+            device.waitForIdle()
         }
     }
 }
