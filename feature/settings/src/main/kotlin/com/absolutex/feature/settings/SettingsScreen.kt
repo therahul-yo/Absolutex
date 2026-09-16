@@ -188,6 +188,12 @@ private fun ReaderGroup(reader: ReaderPrefs, actions: SettingsActions) {
             descriptionRes = R.string.settings_rotation_desc,
         )
         SwitchSettingRow(
+            titleRes = R.string.settings_thumbnail_strip,
+            checked = reader.thumbnailStrip,
+            onChange = { on -> actions.onReader { it.copy(thumbnailStrip = on) } },
+            descriptionRes = R.string.settings_thumbnail_strip_desc,
+        )
+        SwitchSettingRow(
             titleRes = R.string.settings_keep_screen_on,
             checked = reader.keepScreenOn,
             onChange = { on -> actions.onReader { it.copy(keepScreenOn = on) } },

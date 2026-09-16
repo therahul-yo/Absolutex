@@ -34,6 +34,8 @@ data class ReaderPrefs(
     val useCutout: Boolean = true,
     /** One page per screen, or facing pages side by side (§5.2 page layouts). */
     val pageLayout: PageLayout = PageLayout.SINGLE,
+    /** The chrome carries a strip of page thumbnails (§5.2). */
+    val thumbnailStrip: Boolean = true,
 )
 
 /** How the reader holds its orientation. */

@@ -17,6 +17,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.foundation.focusable
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import android.app.Activity
+import android.graphics.Bitmap
 import android.os.Trace
 import android.net.Uri
 import androidx.compose.foundation.background
@@ -222,7 +223,8 @@ private fun Pages(
         ReaderPager(flow, pagerState, scrollable, page)
         ReaderChrome(
             visible = chrome, page = spreads[pagerState.currentPage].first, pageCount = pageCount, onSeek = jump,
-            bookId = bookId, modifier = Modifier.align(Alignment.BottomCenter),
+            bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip },
+            modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
 }
@@ -283,7 +285,8 @@ private fun Strip(pageCount: Int, startPage: Int, bookId: String, prefs: ReaderP
         }
         ReaderChrome(
             visible = chrome, page = listState.firstVisibleItemIndex, pageCount = pageCount, onSeek = jump,
-            bookId = bookId, modifier = Modifier.align(Alignment.BottomCenter),
+            bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip },
+            modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
 }
@@ -403,6 +406,7 @@ private fun ReaderChrome(
     pageCount: Int,
     onSeek: (Int) -> Unit,
     bookId: String,
+    strip: (suspend (index: Int, width: Int) -> Bitmap?)?,
     modifier: Modifier = Modifier,
 ) {
     if (!visible || pageCount <= 0) return
@@ -423,6 +427,7 @@ private fun ReaderChrome(
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.semantics { contentDescription = indicator },
             )
+            strip?.let { ThumbnailStrip(pageCount, page, bookId, onSeek, it) }
             BookmarkBar(bookId, page, pageCount, onJump = onSeek)
             // Slider works in page numbers, not fractions: a 45-page book has 45 stops and the
             // value it reports is the page the reader lands on.

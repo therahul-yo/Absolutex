@@ -17,6 +17,8 @@ import com.absolutex.core.data.settings.ReaderPrefsSource
 import com.absolutex.core.decode.DecodeDispatchers
 import com.absolutex.core.decode.MemoryBudget
 import com.absolutex.core.decode.PageImage
+import com.absolutex.core.thumbnails.ThumbRequest
+import com.absolutex.core.thumbnails.ThumbnailPipeline
 import com.absolutex.core.decode.TileCache
 import com.absolutex.model.BookIdentity
 import com.absolutex.source.ComicSource
@@ -46,6 +48,9 @@ import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 
 private const val TAG = "Reader"
+
+/** A page is never four times taller than it is wide; the thumbnail fits inside that box. */
+private const val THUMB_HEIGHT_LIMIT = 4
 
 data class ReaderUiState(
     val loading: Boolean = false,
@@ -84,6 +89,12 @@ class ReaderViewModel @Inject constructor(
 
     /** The open book: a [ComicSource] whose pages are encoded images, or a [PdfDocument]. */
     private var source: Closeable? = null
+
+    /**
+     * Page thumbnails for the chrome's strip, on their own caches and dispatcher so a strip scroll
+     * can never starve the page being read. One per book: its disk entries are keyed by book.
+     */
+    private var thumbs: ThumbnailPipeline? = null
     private var bookId: String = ""
     /** The Uri currently open, for the same-book check. Distinct from [bookId], the book's identity. */
     private var openedUri: String = ""
@@ -181,6 +192,8 @@ class ReaderViewModel @Inject constructor(
             // page decodes against it fail cleanly instead of racing a premature close.
             val old = source
             source = source0
+            thumbs?.close()
+            thumbs = ThumbnailPipeline(java.io.File(context.cacheDir, "thumbs"))
             openedUri = uri.toString()
             bookId = identity
             runCatching { old?.close() }
@@ -352,9 +365,31 @@ class ReaderViewModel @Inject constructor(
         pageImages.clear()
         bases.clear()
         tileCache.clear()
+        thumbs?.close()
+        thumbs = null
         runCatching { source?.close() }
         source = null
         super.onCleared()
+    }
+
+    /**
+     * One page thumbnail, for the chrome's strip (§5.2).
+     *
+     * An archive goes through [ThumbnailPipeline], which caches to disk, so reopening a book does
+     * not re-extract 45 pages. A PDF has no encoded bytes to cache, so PDFium renders the page
+     * small, which is already cheap.
+     */
+    suspend fun thumbnail(index: Int, width: Int): Bitmap? {
+        val src = source ?: return null
+        return runCatching {
+            if (src is PdfDocument) {
+                withContext(DecodeDispatchers.decode) {
+                    PdfPageImage.open(src, index).decodeBase(width, width * THUMB_HEIGHT_LIMIT)
+                }
+            } else {
+                thumbs?.load(src as ComicSource, ThumbRequest(bookId, index, ThumbRequest.snapWidth(width)))
+            }
+        }.getOrNull()
     }
 
     /** Halves the tile budget on memory pressure; called from MainActivity's callbacks. */

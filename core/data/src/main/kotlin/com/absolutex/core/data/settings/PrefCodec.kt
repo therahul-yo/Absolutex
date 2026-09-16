@@ -30,6 +30,7 @@ object PrefCodec {
     internal const val KEY_ROTATION_LOCK = "rotation_lock"
     internal const val KEY_USE_CUTOUT = "use_cutout"
     internal const val KEY_PAGE_LAYOUT = "page_layout"
+    internal const val KEY_THUMBNAIL_STRIP = "thumbnail_strip"
 
     fun decodeApp(bag: PrefBag): AppPrefs {
         val defaults = AppPrefs()
@@ -64,6 +65,7 @@ object PrefCodec {
             rotationLock = bag.enumOr(KEY_ROTATION_LOCK, defaults.rotationLock, RotationLock.entries),
             useCutout = bag.boolean(KEY_USE_CUTOUT) ?: defaults.useCutout,
             pageLayout = bag.enumOr(KEY_PAGE_LAYOUT, defaults.pageLayout, PageLayout.entries),
+            thumbnailStrip = bag.boolean(KEY_THUMBNAIL_STRIP) ?: defaults.thumbnailStrip,
         )
     }
 
@@ -75,6 +77,7 @@ object PrefCodec {
         bag.putString(KEY_ROTATION_LOCK, prefs.rotationLock.name)
         bag.putBoolean(KEY_USE_CUTOUT, prefs.useCutout)
         bag.putString(KEY_PAGE_LAYOUT, prefs.pageLayout.name)
+        bag.putBoolean(KEY_THUMBNAIL_STRIP, prefs.thumbnailStrip)
     }
 
     /**

@@ -118,6 +118,7 @@ class PrefCodecTest {
                 PrefCodec.KEY_ROTATION_LOCK,
                 PrefCodec.KEY_USE_CUTOUT,
                 PrefCodec.KEY_PAGE_LAYOUT,
+                PrefCodec.KEY_THUMBNAIL_STRIP,
             ),
             bag.snapshot().keys,
         )
@@ -242,6 +243,7 @@ class PrefCodecTest {
         assertEquals("rotation_lock", PrefCodec.KEY_ROTATION_LOCK)
         assertEquals("use_cutout", PrefCodec.KEY_USE_CUTOUT)
         assertEquals("page_layout", PrefCodec.KEY_PAGE_LAYOUT)
+        assertEquals("thumbnail_strip", PrefCodec.KEY_THUMBNAIL_STRIP)
     }
 
     @Test
