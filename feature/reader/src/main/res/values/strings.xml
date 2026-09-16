@@ -11,6 +11,7 @@
     <string name="reader_page_indicator">%1$d / %2$d</string>
     <string name="reader_page_indicator_desc">Page %1$d of %2$d</string>
     <string name="reader_seek_desc">Jump to a page</string>
+    <string name="reader_close">Close</string>
     <string name="reader_contents">Contents</string>
     <string name="reader_flow_ltr">L to R</string>
     <string name="reader_flow_rtl">R to L</string>

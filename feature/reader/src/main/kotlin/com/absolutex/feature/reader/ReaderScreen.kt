@@ -136,16 +136,16 @@ fun ReaderScreen(
             // A layout change regroups the pages, so the pager restarts on the page being read.
             else -> key(prefs.pageLayout) {
                 if (prefs.pageLayout == PageLayout.CONTINUOUS_VERTICAL) {
-                    Strip(ui.pageCount, vm.readingPage, ui.bookId, prefs, vm)
+                    Strip(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm)
                 } else {
-                    Pages(ui.pageCount, vm.readingPage, ui.bookId, prefs, vm)
+                    Pages(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm)
                 }
             }
         }
     }
 }
 
-private const val CHROME_ALPHA = 0.9f
+internal const val CHROME_ALPHA = 0.9f
 
 /** One + or − press scales by a quarter; eight presses cross the whole zoom range. */
 private const val KEY_ZOOM_STEP = 1.25f
@@ -161,6 +161,7 @@ private fun Pages(
     pageCount: Int,
     startPage: Int,
     bookId: String,
+    title: String,
     prefs: ReaderPrefs,
     vm: ReaderViewModel,
 ) {
@@ -225,11 +226,11 @@ private fun Pages(
     Box(Modifier.fillMaxSize().then(keys)) {
         ReaderPager(flow, pagerState, scrollable, page)
         ReaderChrome(
-            visible = chrome, page = spreads[pagerState.currentPage].first, pageCount = pageCount, onSeek = jump,
+            visible = chrome, page = spreads[pagerState.currentPage].first, pageCount = pageCount,
+            title = title, onSeek = jump,
             bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip }, toc = toc,
             onExport = { vm.exportPage(spreads[pagerState.currentPage].first) },
             fitFor = fitContext, prefs = prefs,
-            modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
 }
@@ -243,7 +244,14 @@ private fun Pages(
  * Keys and edge taps move by most of a screen, not by an item: one item can be many screens tall.
  */
 @Composable
-private fun Strip(pageCount: Int, startPage: Int, bookId: String, prefs: ReaderPrefs, vm: ReaderViewModel) {
+private fun Strip(
+    pageCount: Int,
+    startPage: Int,
+    bookId: String,
+    title: String,
+    prefs: ReaderPrefs,
+    vm: ReaderViewModel,
+) {
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = startPage)
     val scope = rememberCoroutineScope()
     var chrome by remember { mutableStateOf(false) }
@@ -285,11 +293,11 @@ private fun Strip(pageCount: Int, startPage: Int, bookId: String, prefs: ReaderP
             }
         }
         ReaderChrome(
-            visible = chrome, page = listState.firstVisibleItemIndex, pageCount = pageCount, onSeek = jump,
+            visible = chrome, page = listState.firstVisibleItemIndex, pageCount = pageCount,
+            title = title, onSeek = jump,
             bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip }, toc = toc,
             onExport = { vm.exportPage(listState.firstVisibleItemIndex) },
             fitFor = null, prefs = prefs,
-            modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
 }
@@ -434,6 +442,7 @@ private fun ReaderChrome(
     visible: Boolean,
     page: Int,
     pageCount: Int,
+    title: String,
     onSeek: (Int) -> Unit,
     bookId: String,
     strip: (suspend (index: Int, width: Int) -> Bitmap?)?,
@@ -445,6 +454,8 @@ private fun ReaderChrome(
     modifier: Modifier = Modifier,
 ) {
     if (!visible || pageCount <= 0) return
+    Box(modifier.fillMaxSize()) {
+        ReaderTopBar(title, Modifier.align(Alignment.TopCenter))
     // While dragging, the thumb and label follow the finger locally; the pager moves once, on
     // release. Seeking through the pager on every drag tick launched an animated scroll per tick,
     // each cancelling the last, and the page stuttered behind the thumb.
@@ -455,7 +466,7 @@ private fun ReaderChrome(
     val seekLabel = stringResource(R.string.reader_seek_desc)
     Surface(
         color = MaterialTheme.colorScheme.surface.copy(alpha = CHROME_ALPHA),
-        modifier = modifier.fillMaxWidth().navigationBarsPadding(),
+        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding(),
     ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
             if (contents) TocPanel(toc, onJump = { onSeek(it); contents = false })
@@ -491,6 +502,7 @@ private fun ReaderChrome(
                 },
             )
         }
+    }
     }
 }
 
