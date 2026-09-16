@@ -135,14 +135,9 @@ fun ReaderScreen(
                 stringResource(R.string.reader_no_pages),
                 color = Color.White,
             )
-            // A layout change regroups the pages, so the pager restarts on the page being read.
-            else -> key(prefs.pageLayout) {
-                if (prefs.pageLayout == PageLayout.CONTINUOUS_VERTICAL) {
-                    Strip(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings)
-                } else {
-                    Pages(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings)
-                }
-            }
+            prefs.pageLayout == PageLayout.CONTINUOUS_VERTICAL ->
+                Strip(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings)
+            else -> Pages(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings)
         }
     }
 }
@@ -174,6 +169,10 @@ private fun Pages(
     // The pager counts screens; everything else (progress, seeking, keys) speaks book pages.
     val spreads = remember(pageCount, prefs.pageLayout) { Spreads.of(pageCount, prefs.pageLayout) }
     val pagerState = rememberPagerState(initialPage = Spreads.indexOf(spreads, startPage)) { spreads.size }
+    // A layout change regroups the pages: land on the page being read, not on whatever spread
+    // happens to sit at the old index. Rebuilding the whole reader instead would also throw away
+    // the open chrome, which is where the layout was just chosen.
+    LaunchedEffect(spreads) { pagerState.scrollToPage(Spreads.indexOf(spreads, vm.readingPage)) }
     // Per page, not one flag: page N's zoom or overflow must not lock the pager on page N+1.
     val locks = remember(pageCount) { mutableStateMapOf<Int, Boolean>() }
     val scope = rememberCoroutineScope()
