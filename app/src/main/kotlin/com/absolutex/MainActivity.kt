@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.setValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -27,12 +28,15 @@ import com.absolutex.feature.library.LibraryRoute
 import com.absolutex.feature.reader.ReaderScreen
 import com.absolutex.feature.settings.SETTINGS_ROUTE
 import com.absolutex.feature.settings.settingsDestination
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import java.io.File
 import com.absolutex.feature.reader.ReaderViewModel
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -93,6 +97,19 @@ private fun bookUri(path: String): Uri =
     if (path.startsWith("content://")) Uri.parse(path) else Uri.fromFile(File(path))
 
 /**
+ * §5.2 auto-advance: looks up the next book off the main thread and, if there is one, replaces
+ * this reader entry with it, so back from the next book returns to the library rather than to
+ * the one just finished. Does nothing when there is none — auto-advance off, or nothing next.
+ */
+private fun advanceFromReader(scope: CoroutineScope, vm: ShellViewModel, nav: NavHostController, bookId: String) {
+    scope.launch {
+        vm.nextBook(bookId)?.let { next ->
+            nav.navigate(readerRoute(bookUri(next.path))) { popUpTo(READER_ROUTE) { inclusive = true } }
+        }
+    }
+}
+
+/**
  * The app shell: the library is home, the reader and settings are destinations (§5.1, §5.4).
  *
  * A launch Uri makes the reader the start destination rather than a screen pushed on top of the
@@ -106,6 +123,8 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val readerVm: ReaderViewModel = hiltViewModel(context as ComponentActivity)
     val readerError = readerVm.ui.collectAsStateWithLifecycle().value.error
+    // A plain callback cannot itself be a suspend function; onFinished below launches into this.
+    val scope = rememberCoroutineScope()
     // The book to resume (§5.2), once the store has been read. Navigation happens in the effect
     // below, never here: a NavController cannot navigate until its graph is set, which is what
     // composing the NavHost does — resuming from this effect crashed on every launch with a saved
@@ -161,7 +180,12 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
             // starts opening a launch Uri before anything composes, and a per-destination
             // ViewModel would throw that head start away and open the book a second time.
             if (uri != null) {
-                ReaderScreen(uri = uri, vm = readerVm, onSettings = { nav.navigate(SETTINGS_ROUTE) })
+                ReaderScreen(
+                    uri = uri,
+                    vm = readerVm,
+                    onSettings = { nav.navigate(SETTINGS_ROUTE) },
+                    onFinished = { advanceFromReader(scope, vm, nav, readerVm.ui.value.bookId) },
+                )
             }
         }
         settingsDestination()

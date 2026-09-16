@@ -20,7 +20,6 @@ import android.app.Activity
 import android.graphics.Bitmap
 import android.os.Trace
 import android.net.Uri
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
@@ -33,7 +32,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -101,6 +99,12 @@ fun ReaderScreen(
     modifier: Modifier = Modifier,
     /** Opens the settings destination; null where the host has none (previews, tests). */
     onSettings: (() -> Unit)? = null,
+    /**
+     * Turning forward past the last screen (§5.2 auto-advance); null where the host has nowhere
+     * to send it (previews, tests). Fires once per attempt, never on every frame — see [Pages]
+     * and [Strip].
+     */
+    onFinished: (() -> Unit)? = null,
     vm: ReaderViewModel = hiltViewModel(),
 ) {
     val ui by vm.ui.collectAsStateWithLifecycle()
@@ -136,8 +140,8 @@ fun ReaderScreen(
                 color = Color.White,
             )
             prefs.pageLayout == PageLayout.CONTINUOUS_VERTICAL ->
-                Strip(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings)
-            else -> Pages(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings)
+                Strip(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, onFinished)
+            else -> Pages(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, onFinished)
         }
     }
 }
@@ -153,7 +157,8 @@ private const val ZOOM_STEP_BUFFER = 4
 
 private const val HALF = 0.5f
 
-private const val PERCENT = 100f
+/** Shared with [pagerStep] and [stripStep] in ReaderAdvance.kt. */
+internal const val PERCENT = 100f
 
 @Composable
 private fun Pages(
@@ -164,6 +169,7 @@ private fun Pages(
     prefs: ReaderPrefs,
     vm: ReaderViewModel,
     onSettings: (() -> Unit)?,
+    onFinished: (() -> Unit)?,
 ) {
     val flow = prefs.readingFlow
     // The pager counts screens; everything else (progress, seeking, keys) speaks book pages.
@@ -176,8 +182,9 @@ private fun Pages(
     // Per page, not one flag: page N's zoom or overflow must not lock the pager on page N+1.
     val locks = remember(pageCount) { mutableStateMapOf<Int, Boolean>() }
     val scope = rememberCoroutineScope()
-    // Edge swipes arrive in screen terms; in a mirrored right-to-left book left brings the previous page.
-    val goTo: (Int) -> Unit = { step -> scope.launch { pagerState.turn(step, spreads.lastIndex, prefs) } }
+    // Edge swipes arrive in screen terms; in a mirrored right-to-left book left brings the previous
+    // page. See pagerStep (ReaderAdvance.kt) for the last-screen / onFinished behaviour.
+    val goTo: (Int) -> Unit = pagerStep(pagerState, spreads.lastIndex, prefs, scope, onFinished)
     val turn: (Boolean) -> Unit = { forward -> goTo(if (forward != (flow == ReadingFlow.RTL)) 1 else -1) }
     var chrome by remember { mutableStateOf(false) }
     val tap: (TapZone) -> Unit = { zone -> onTapZone(zone, goTo) { chrome = !chrome } }
@@ -254,21 +261,14 @@ private fun Strip(
     prefs: ReaderPrefs,
     vm: ReaderViewModel,
     onSettings: (() -> Unit)?,
+    onFinished: (() -> Unit)?,
 ) {
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = startPage)
     val scope = rememberCoroutineScope()
     var chrome by remember { mutableStateOf(false) }
     ReaderWindow(prefs, immersive = !chrome)
-    val step: (Int) -> Unit = { direction ->
-        scope.launch {
-            val info = listState.layoutInfo
-            val extent = (info.viewportEndOffset - info.viewportStartOffset).toFloat()
-            listState.animateScrollBy(
-                direction * extent * prefs.scrollStepPercent / PERCENT,
-                animationSpec = tween(prefs.pageTurnMs),
-            )
-        }
-    }
+    // See stripStep (ReaderAdvance.kt) for the can't-scroll-further / onFinished behaviour.
+    val step: (Int) -> Unit = stripStep(listState, prefs, scope, onFinished)
     val jump: (Int) -> Unit = { to -> scope.launch { listState.scrollToItem(to.coerceIn(0, pageCount - 1)) } }
     val tap: (TapZone) -> Unit = { zone -> onTapZone(zone, step) { chrome = !chrome } }
     val rtl = prefs.readingFlow == ReadingFlow.RTL

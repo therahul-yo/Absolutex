@@ -20,6 +20,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.absolutex.core.data.NextBookOrder
+import com.absolutex.core.data.NextBookScope
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.data.settings.MAX_PAGE_TURN_MS
@@ -210,7 +212,33 @@ private fun ReaderGroup(reader: ReaderPrefs, actions: SettingsActions) {
             onChange = { on -> actions.onReader { it.copy(volumeKeysTurnPages = on) } },
             descriptionRes = R.string.settings_volume_keys_desc,
         )
+        AutoAdvanceRows(reader, actions)
     }
+}
+
+/** §5.2 auto-advance: on/off, plus where and how it looks for the next book. */
+@Composable
+private fun AutoAdvanceRows(reader: ReaderPrefs, actions: SettingsActions) {
+    SwitchSettingRow(
+        titleRes = R.string.settings_auto_advance,
+        checked = reader.autoAdvance,
+        onChange = { on -> actions.onReader { it.copy(autoAdvance = on) } },
+        descriptionRes = R.string.settings_auto_advance_desc,
+    )
+    SegmentedSettingRow(
+        options = NextBookScope.entries,
+        selected = reader.nextBookScope,
+        onSelect = { scope -> actions.onReader { it.copy(nextBookScope = scope) } },
+        labelRes = ::nextBookScopeLabelRes,
+        descriptionRes = R.string.settings_next_book_scope_desc,
+    )
+    SegmentedSettingRow(
+        options = NextBookOrder.entries,
+        selected = reader.nextBookOrder,
+        onSelect = { order -> actions.onReader { it.copy(nextBookOrder = order) } },
+        labelRes = ::nextBookOrderLabelRes,
+        descriptionRes = R.string.settings_next_book_order_desc,
+    )
 }
 
 /** §5.2's animation tuning: how long a page turn takes, and how far a strip scrolls per step. */

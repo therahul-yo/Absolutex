@@ -56,6 +56,14 @@
     <string name="settings_use_cutout_desc">Use the cutout area. Pages draw around the camera cutout instead of below it.</string>
     <string name="settings_volume_keys">Volume keys turn pages</string>
     <string name="settings_volume_keys_desc">Volume keys turn pages. Volume down goes forward, volume up goes back.</string>
+    <string name="settings_auto_advance">Auto-advance</string>
+    <string name="settings_auto_advance_desc">Auto-advance. Turning past the last page opens the next book.</string>
+    <string name="settings_next_book_scope_desc">Where to look for the next book</string>
+    <string name="settings_next_book_scope_library">Whole library</string>
+    <string name="settings_next_book_scope_folder">Current folder</string>
+    <string name="settings_next_book_order_desc">How to order the next book</string>
+    <string name="settings_next_book_order_parsed">Issue number</string>
+    <string name="settings_next_book_order_filename">Filename</string>
 
     <!-- AppPrefs.cacheSizeMiB is the decode/page cache, not thumbnails; see lead review on #15. -->
     <string name="settings_cache_value">Page cache: %1$d MiB</string>

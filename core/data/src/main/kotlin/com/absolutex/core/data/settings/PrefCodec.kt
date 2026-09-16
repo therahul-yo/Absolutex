@@ -1,5 +1,7 @@
 package com.absolutex.core.data.settings
 
+import com.absolutex.core.data.NextBookOrder
+import com.absolutex.core.data.NextBookScope
 import com.absolutex.model.FitMode
 import com.absolutex.model.PageTransition
 import com.absolutex.model.FitModeMemory
@@ -37,6 +39,9 @@ object PrefCodec {
     internal const val KEY_TRANSITION = "page_transition"
     internal const val KEY_PAGE_TURN_MS = "page_turn_ms"
     internal const val KEY_SCROLL_STEP = "scroll_step_percent"
+    internal const val KEY_AUTO_ADVANCE = "auto_advance"
+    internal const val KEY_NEXT_BOOK_SCOPE = "next_book_scope"
+    internal const val KEY_NEXT_BOOK_ORDER = "next_book_order"
 
     /**
      * Fits chosen per screen-and-page shape, as "SCREEN:PAGE=MODE" strings. One key holding the
@@ -87,6 +92,9 @@ object PrefCodec {
                 .coerceIn(MIN_PAGE_TURN_MS, MAX_PAGE_TURN_MS),
             scrollStepPercent = (bag.int(KEY_SCROLL_STEP) ?: defaults.scrollStepPercent)
                 .coerceIn(MIN_SCROLL_STEP_PERCENT, MAX_SCROLL_STEP_PERCENT),
+            autoAdvance = bag.boolean(KEY_AUTO_ADVANCE) ?: defaults.autoAdvance,
+            nextBookScope = bag.enumOr(KEY_NEXT_BOOK_SCOPE, defaults.nextBookScope, NextBookScope.entries),
+            nextBookOrder = bag.enumOr(KEY_NEXT_BOOK_ORDER, defaults.nextBookOrder, NextBookOrder.entries),
             fitMemory = FitModeMemory.fromPairs(
                 bag.stringSet(KEY_FIT_BY_CONTEXT).orEmpty()
                     .mapNotNull { entry ->
@@ -109,6 +117,9 @@ object PrefCodec {
         bag.putString(KEY_TRANSITION, prefs.transition.name)
         bag.putInt(KEY_PAGE_TURN_MS, prefs.pageTurnMs.coerceIn(MIN_PAGE_TURN_MS, MAX_PAGE_TURN_MS))
         bag.putInt(KEY_SCROLL_STEP, prefs.scrollStepPercent.coerceIn(MIN_SCROLL_STEP_PERCENT, MAX_SCROLL_STEP_PERCENT))
+        bag.putBoolean(KEY_AUTO_ADVANCE, prefs.autoAdvance)
+        bag.putString(KEY_NEXT_BOOK_SCOPE, prefs.nextBookScope.name)
+        bag.putString(KEY_NEXT_BOOK_ORDER, prefs.nextBookOrder.name)
         val fits = prefs.fitMemory.asPairs()
         if (fits.isNotEmpty()) bag.putStringSet(KEY_FIT_BY_CONTEXT, fits.map { "${it.key}=${it.value}" }.toSet())
     }
