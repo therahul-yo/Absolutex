@@ -11,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Button
@@ -26,6 +27,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.ui.AbsolutexTheme
 import com.absolutex.feature.reader.ReaderScreen
 import com.absolutex.feature.reader.ReaderViewModel
@@ -34,6 +37,7 @@ import dagger.hilt.android.AndroidEntryPoint
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     private val readerViewModel: ReaderViewModel by viewModels()
+    private val shell: ShellViewModel by viewModels()
 
     private val trimCallback = object : ComponentCallbacks2 {
         override fun onTrimMemory(level: Int) {
@@ -47,14 +51,29 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
+        // The condition runs at first draw, after super.onCreate has injected the ViewModel.
+        installSplashScreen().setKeepOnScreenCondition { shell.appPrefs.value == null }
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         registerComponentCallbacks(trimCallback)
         // A Uri on the launch intent opens that book directly (VIEW from a file manager,
         // a device-storage location in §5.1, or an instrumented benchmark driving the reader).
         val direct = intent?.data
-        setContent { AbsolutexTheme { Root(directUri = direct) } }
+        // Start opening a launch Uri now rather than when the reader first composes. Composition
+        // waits behind the splash (theme settings) and a first layout; on the reference phone that
+        // was ~54 ms of the tap-to-first-page budget spent before the archive was even touched.
+        if (direct != null) readerViewModel.open(direct)
+        setContent {
+            val app = shell.appPrefs.collectAsStateWithLifecycle().value ?: return@setContent
+            val dark = when (app.nightMode) {
+                NightMode.ON -> true
+                NightMode.OFF -> false
+                NightMode.SYSTEM -> isSystemInDarkTheme()
+            }
+            AbsolutexTheme(darkTheme = dark, dynamicColor = app.dynamicColour, trueBlack = app.trueBlack) {
+                Root(directUri = direct)
+            }
+        }
     }
 
     override fun onDestroy() {

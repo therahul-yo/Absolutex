@@ -17,6 +17,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
@@ -31,12 +32,18 @@ import com.absolutex.core.decode.PageImage
 import com.absolutex.core.decode.TileCache
 import com.absolutex.core.decode.TileGrid
 import com.absolutex.core.decode.TileKey
+import com.absolutex.model.FitGeometry
+import com.absolutex.model.FitMode
+import com.absolutex.model.TapGrid
+import com.absolutex.model.TapZone
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -44,17 +51,23 @@ private const val MAX_SCALE = 8f
 private const val MIN_SCALE = 1f
 /** Below this, the base layer already exceeds display density and tiles would add nothing. */
 private const val TILE_THRESHOLD = 1.2f
-/** Zoom callbacks only fire on crossings of this scale, to avoid per-frame recompose. */
-private const val ZOOM_REPORT_THRESHOLD = 1.02f
+/** Above this zoom the page owns every drag and the pager is locked; a hair above 1 absorbs float noise. */
+private const val ZOOM_LOCK_THRESHOLD = 1.02f
+
+/** Double-tap zoom from fit: large enough to read small lettering, small enough to keep context. */
+private const val DOUBLE_TAP_SCALE = 2.5f
+
+/**
+ * The base layer's longest edge, as a multiple of the screen's. Full size on a 12000px page would
+ * otherwise be a texture of hundreds of MB; tiles cover the detail the cap leaves out.
+ */
+private const val MAX_BASE_EDGE = 1.25f
 
 /** Zoom quantisation for the tile-fetch trigger: quarter steps of scale. */
 private const val ZOOM_BUCKETS_PER_UNIT = 4
 
 /** Tiles decoded per batch, so the nearest ones land before the whole ring is done. */
 private const val TILE_FETCH_CHUNK = 4
-/** Hysteresis is handled in ReaderScreen (1.05f); this is just the reporting gate. */
-private fun crossesZoomBoundary(old: Float, new: Float): Boolean =
-    (old <= ZOOM_REPORT_THRESHOLD) != (new <= ZOOM_REPORT_THRESHOLD)
 
 private fun floorDiv(a: Int, b: Int): Int = if (a >= 0) a / b else -(((-a) + b - 1) / b)
 
@@ -79,9 +92,40 @@ fun PageCanvas(
     bookId: String,
     cache: TileCache,
     modifier: Modifier = Modifier,
-    onTapCenter: () -> Unit = {},
-    /** Lets the pager stop stealing drags once the page is zoomed. */
-    onZoomChanged: (Float) -> Unit = {},
+    fitMode: FitMode = FitMode.FIT_SCREEN,
+    /** Where an overflowing page starts: its right edge for a right-to-left book. */
+    rightToLeft: Boolean = false,
+    /** The tapped zone of §5.2's 3x3 grid, already mirrored for a right-to-left book. */
+    onTapZone: (TapZone) -> Unit = {},
+    /**
+     * The base layer is decoded and the next frame paints it. This is what "first page rendered"
+     * means for §3's budget — the page object existing is not the same as pixels.
+     */
+    onBaseReady: () -> Unit = {},
+    /**
+     * Supplies the base layer at a size. The reader passes one that shares a decode per page and
+     * size; the default decodes directly, for previews and tests.
+     */
+    /** Zoom factors from the keyboard or gamepad (§5.3), applied about the screen centre. */
+    zoomSteps: Flow<Float>? = null,
+    baseLayer: suspend (width: Int, height: Int) -> Bitmap? = { w, h ->
+        withContext(DecodeDispatchers.decode) { runCatching { page.decodeBase(w, h) }.getOrNull() }
+    },
+    /** The pager's axis. A page that can scroll along it must own drags on it. */
+    pagerVertical: Boolean = false,
+    /**
+     * True while the pager must stay off this page's drags: the page is zoomed, or overflows along
+     * the pager's axis. Consuming a drag here does not stop the pager — it starts dragging before
+     * this node decides — so the pager has to be switched off instead. Reported on change only.
+     */
+    onPagerLockChanged: (Boolean) -> Unit = {},
+    /**
+     * A swipe along the pager's axis that the page cannot absorb while the pager is locked, which is
+     * the only way such a page turns. `forward` is the finger moving left (or up).
+     */
+    onEdgeSwipe: (forward: Boolean) -> Unit = {},
+    /** Which half of a two-page spread this page fills, if any. */
+    spreadSide: SpreadSide = SpreadSide.NONE,
 ) {
     var scale by remember(pageIndex) { mutableFloatStateOf(1f) }
     var offsetX by remember(pageIndex) { mutableFloatStateOf(0f) }
@@ -90,26 +134,122 @@ fun PageCanvas(
     var tileGeneration by remember(pageIndex) { mutableIntStateOf(0) }
     var base by remember(pageIndex) { mutableStateOf<Bitmap?>(null) }
     var viewport by remember(pageIndex) { mutableStateOf(0 to 0) }
-    var lastReportedZoom by remember(pageIndex) { mutableFloatStateOf(1f) }
+    // Null until first reported, so a page re-entering composition always clears a stale lock.
+    var lastReportedLock by remember(pageIndex) { mutableStateOf<Boolean?>(null) }
+    // The layout (fit mode, flow) this page was last put at its start position for. A viewport change
+    // under the same layout only re-clamps, so a status-bar toggle or rotation never throws the
+    // reader back to the top of a page they had scrolled down.
+    var positionedFor by remember(pageIndex) { mutableStateOf<Pair<FitMode, Boolean>?>(null) }
+    // The gesture coroutine outlives recompositions; read the callbacks through these so a flow change
+    // mid-page cannot leave it turning pages with the old direction.
+    val edgeSwipe by rememberUpdatedState(onEdgeSwipe)
+    val lockChanged by rememberUpdatedState(onPagerLockChanged)
 
     val src = remember { Rect() }
     val dst = remember { Rect() }
     val paint = remember { Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG) }
 
-    fun maybeReportZoom(newScale: Float) {
-        if (crossesZoomBoundary(lastReportedZoom, newScale)) {
-            lastReportedZoom = newScale
-            onZoomChanged(newScale)
+    fun reportLock(atScale: Float, vw: Int, vh: Int) {
+        val s = FitGeometry.baseScale(fitMode, vw, vh, page.width, page.height)
+        val overflowsPagerAxis = if (pagerVertical) {
+            FitGeometry.maxOffsetY(vh, page.height, s) > 0f
+        } else {
+            FitGeometry.maxOffsetX(vw, page.width, s) > 0f
+        }
+        val locked = atScale > ZOOM_LOCK_THRESHOLD || overflowsPagerAxis
+        if (locked != lastReportedLock) {
+            lastReportedLock = locked
+            lockChanged(locked)
         }
     }
 
-    // Base layer: decoded once at viewport size, kept resident for the whole page.
-    LaunchedEffect(pageIndex, viewport) {
+    /**
+     * Size the base layer decodes at: what the page is drawn at for [fitMode] at zoom 1, never above
+     * source resolution, capped by [MAX_BASE_EDGE]. Decoding at the viewport box instead left fit
+     * height and full size upscaled from a smaller bitmap and permanently soft, since tiles only
+     * start once the user zooms.
+     */
+    fun baseTarget(vw: Int, vh: Int): Pair<Int, Int> {
+        val atFit = min(FitGeometry.baseScale(fitMode, vw, vh, page.width, page.height), 1f)
+        val longest = max(page.width, page.height) * atFit
+        val cap = MAX_BASE_EDGE * max(vw, vh)
+        val k = atFit * if (longest > cap) cap / longest else 1f
+        return max(1, (page.width * k).toInt()) to max(1, (page.height * k).toInt())
+    }
+
+    // Reading starts at the top of an overflowing page, on the edge its flow starts from. This runs
+    // before the base layer lands (that effect decodes first), so the page never flashes centred.
+    LaunchedEffect(pageIndex, viewport, fitMode, rightToLeft, pagerVertical) {
         val (vw, vh) = viewport
         if (vw <= 0 || vh <= 0) return@LaunchedEffect
-        base = withContext(DecodeDispatchers.decode) {
-            runCatching { page.decodeBase(vw, vh) }.getOrNull()
+        reportLock(scale, vw, vh)
+        val layout = fitMode to rightToLeft
+        if (positionedFor != layout) {
+            // New page or a deliberate layout change: start where that layout starts, at the current zoom.
+            val s = FitGeometry.baseScale(fitMode, vw, vh, page.width, page.height) * scale
+            offsetX = FitGeometry.startOffsetX(vw, page.width, s, rightToLeft)
+            offsetY = FitGeometry.startOffsetY(vh, page.height, s)
+            positionedFor = layout
+        } else {
+            val clamped = clampOffset(Offset(offsetX, offsetY), vw, vh, page.width, page.height, fitMode, scale)
+            offsetX = clamped.x; offsetY = clamped.y
         }
+    }
+
+    LaunchedEffect(zoomSteps, viewport) {
+        val steps = zoomSteps ?: return@LaunchedEffect
+        val (vw, vh) = viewport
+        if (vw <= 0 || vh <= 0) return@LaunchedEffect
+        steps.collect { factor ->
+            val old = scale
+            scale = (scale * factor).coerceIn(MIN_SCALE, MAX_SCALE)
+            val ratio = scale / old
+            val clamped = clampOffset(
+                Offset(offsetX * ratio, offsetY * ratio), vw, vh, page.width, page.height, fitMode, scale,
+            )
+            offsetX = clamped.x; offsetY = clamped.y
+            reportLock(scale, vw, vh)
+        }
+    }
+
+    // Base layer: decoded once at its drawn size, kept resident for the whole page.
+    LaunchedEffect(pageIndex, viewport, fitMode) {
+        val (vw, vh) = viewport
+        if (vw <= 0 || vh <= 0) return@LaunchedEffect
+        val (tw, th) = baseTarget(vw, vh)
+        base = baseLayer(tw, th)
+        // Success or failure, the page has reached a stable state; reporting only on success left a
+        // book whose first base failed never "fully drawn", which starves the startup metric.
+        onBaseReady()
+    }
+
+    /**
+     * Whether a one-finger drag heading along [travel] can move the page: only along an axis that
+     * overflows at the current zoom, and only with room left in that direction.
+     */
+    fun canPan(travel: Offset, vw: Int, vh: Int): Boolean {
+        val s = FitGeometry.baseScale(fitMode, vw, vh, page.width, page.height) * scale
+        return if (abs(travel.x) >= abs(travel.y)) {
+            val limit = FitGeometry.maxOffsetX(vw, page.width, s)
+            if (travel.x > 0) offsetX < limit else offsetX > -limit
+        } else {
+            val limit = FitGeometry.maxOffsetY(vh, page.height, s)
+            if (travel.y > 0) offsetY < limit else offsetY > -limit
+        }
+    }
+
+    fun alongPagerAxis(travel: Offset): Boolean =
+        if (pagerVertical) abs(travel.y) > abs(travel.x) else abs(travel.x) >= abs(travel.y)
+
+    /** Decides a one-finger drag once, at touch slop. True when the page claims it. */
+    fun decideAtSlop(travel: Offset, vw: Int, vh: Int): Boolean {
+        if (canPan(travel, vw, vh)) return true
+        // With the pager locked nothing else can turn the page, so the swipe the page could not
+        // absorb turns it from here.
+        if (alongPagerAxis(travel) && lastReportedLock == true) {
+            edgeSwipe(if (pagerVertical) travel.y < 0 else travel.x < 0)
+        }
+        return false
     }
 
     // Tile streaming. Transform is observed via snapshotFlow so the composable body never
@@ -117,16 +257,21 @@ fun PageCanvas(
     // computed in SOURCE space (offset/effective, not offset/TILE_SIZE) so a fixed source
     // region maps to a fixed bucket at any zoom; distinctUntilChangedBy keeps a steady
     // pinch from respawning the fetch on every frame.
-    LaunchedEffect(pageIndex, viewport) {
+    LaunchedEffect(pageIndex, viewport, fitMode) {
         val (vw0, vh0) = viewport
         if (vw0 <= 0 || vh0 <= 0) return@LaunchedEffect
         if (page.width <= 0 || page.height <= 0) return@LaunchedEffect
+        val fit = FitGeometry.baseScale(fitMode, vw0, vh0, page.width, page.height)
+        // Tiles start once the drawn page outresolves the base layer, not at a fixed zoom: fit
+        // width and full size draw above the base's resolution at zoom 1 when MAX_BASE_EDGE caps it.
+        val baseWidth = baseTarget(vw0, vh0).first
+        // A base layer already at source resolution leaves tiles nothing to add.
+        if (baseWidth >= page.width) return@LaunchedEffect
+        val tilesFrom = baseWidth.toFloat() / page.width * TILE_THRESHOLD
         snapshotFlow { Triple(scale, offsetX, offsetY) }
             .distinctUntilChangedBy { (s, ox, oy) ->
-                if (s < TILE_THRESHOLD) return@distinctUntilChangedBy Triple(0, 0, 0)
-                val fit = min(vw0.toFloat() / page.width, vh0.toFloat() / page.height)
                 val eff = fit * s
-                if (eff <= 0f) return@distinctUntilChangedBy Triple(0, 0, 0)
+                if (eff <= 0f || eff < tilesFrom) return@distinctUntilChangedBy Triple(0, 0, 0)
                 Triple(
                     (s * ZOOM_BUCKETS_PER_UNIT).toInt(),
                     (ox / eff / TileGrid.TILE_SIZE).toInt(),
@@ -135,11 +280,8 @@ fun PageCanvas(
             }
             .collect { (s, ox, oy) ->
                 ensureActive()
-                if (s < TILE_THRESHOLD) return@collect
-
-                val fit = min(vw0.toFloat() / page.width, vh0.toFloat() / page.height)
                 val effective = fit * s
-                if (effective <= 0f) return@collect
+                if (effective <= 0f || effective < tilesFrom) return@collect
 
                 // Inverse of the draw transform: draw uses
                 // originX=(vw-drawW)/2+ox, so source left=((−ox)−(vw−drawW)/2)/effective.
@@ -197,13 +339,24 @@ fun PageCanvas(
         modifier = modifier
             .fillMaxSize()
             .onSizeChanged { viewport = it.width to it.height }
-            .pointerInput(pageIndex) {
+            .pointerInput(pageIndex, fitMode, pagerVertical) {
                 // Hand-rolled instead of detectTransformGestures, which consumes EVERY drag
                 // once past touch slop — that swallowed the horizontal swipe and the pager
-                // never turned a page. Here a single-finger drag is only claimed while
-                // zoomed in; at fit scale it falls through to HorizontalPager untouched.
+                // never turned a page. A one-finger drag is decided once, at touch slop: claimed
+                // if it can move the page along the axis it is heading (see decideAtSlop). Along the
+                // pager's own axis this node only ever sees drags while the pager is locked; the
+                // cross axis (a fit-width page scrolling down inside a horizontal pager) is shared,
+                // and deciding at slop keeps an early vertical wobble from panning a page turn.
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
+                    var travel = Offset.Zero
+                    var claimed = false
+                    // Set when the page declines a drag at slop. It stops panning but keeps watching,
+                    // so a second finger that lands late still pinches.
+                    var ceded = false
+                    // Set when a declined drag runs along a free pager's axis: the pager is turning the
+                    // page, and a pinch now would fight its drag, so the rest of the gesture is its.
+                    var released = false
                     do {
                         val event = awaitPointerEvent()
                         if (event.changes.any { it.isConsumed }) break
@@ -216,43 +369,61 @@ fun PageCanvas(
                             val zoom = event.calculateZoom()
                             val old = scale
                             scale = (scale * zoom).coerceIn(MIN_SCALE, MAX_SCALE)
-                            if (scale <= MIN_SCALE) {
-                                offsetX = 0f; offsetY = 0f
-                            } else {
-                                offsetX += pan.x; offsetY += pan.y
-                                val clamped = clampOffset(
-                                    Offset(offsetX, offsetY), size.width, size.height,
-                                    page.width, page.height, scale,
-                                )
-                                offsetX = clamped.x; offsetY = clamped.y
+                            // Scaling the offset with the zoom keeps the point at screen centre
+                            // still; the clamp keeps the page on screen, and at zoom 1 pulls a
+                            // fitting page back to centre.
+                            val ratio = scale / old
+                            val clamped = clampOffset(
+                                Offset(offsetX * ratio + pan.x, offsetY * ratio + pan.y),
+                                size.width, size.height, page.width, page.height, fitMode, scale,
+                            )
+                            offsetX = clamped.x; offsetY = clamped.y
+                            claimed = true
+                            event.changes.forEach { if (it.positionChanged()) it.consume() }
+                            if (old != scale) reportLock(scale, size.width, size.height)
+                        } else if (pan != Offset.Zero) {
+                            if (!claimed && !ceded) {
+                                travel += pan
+                                if (travel.getDistance() >= viewConfiguration.touchSlop) {
+                                    claimed = decideAtSlop(travel, size.width, size.height)
+                                    ceded = !claimed
+                                    released = ceded && lastReportedLock != true && alongPagerAxis(travel)
+                                }
                             }
-                            event.changes.forEach { if (it.positionChanged()) it.consume() }
-                            if (old != scale) maybeReportZoom(scale)
-                        } else if (scale > MIN_SCALE && pan != Offset.Zero) {
-                            offsetX += pan.x
-                            offsetY += pan.y
+                            if (claimed) {
                                 val clamped = clampOffset(
-                                    Offset(offsetX, offsetY), size.width, size.height,
-                                    page.width, page.height, scale,
+                                    Offset(offsetX + pan.x, offsetY + pan.y),
+                                    size.width, size.height, page.width, page.height, fitMode, scale,
                                 )
                                 offsetX = clamped.x; offsetY = clamped.y
-                            event.changes.forEach { if (it.positionChanged()) it.consume() }
+                                event.changes.forEach { if (it.positionChanged()) it.consume() }
+                            }
                         }
-                    } while (event.changes.any { it.pressed })
+                    } while (!released && event.changes.any { it.pressed })
                 }
             }
-            .pointerInput(pageIndex) {
+            // rightToLeft is a key: onTap mirrors the grid by it, and a flow change mid-page would
+            // otherwise leave taps turning pages the old way while swipes already go the new way.
+            .pointerInput(pageIndex, fitMode, pagerVertical, rightToLeft, spreadSide) {
                 detectTapGestures(
                     onDoubleTap = {
-                        // Double-tap toggles between fit and a useful reading zoom.
-                        if (scale > MIN_SCALE) {
-                            scale = MIN_SCALE; offsetX = 0f; offsetY = 0f
-                        } else {
-                            scale = 2.5f
-                        }
-                        maybeReportZoom(scale)
+                        // Double-tap toggles between fit and a useful reading zoom, about the
+                        // screen centre, so the passage being read stays where it was.
+                        val old = scale
+                        scale = if (scale > MIN_SCALE) MIN_SCALE else DOUBLE_TAP_SCALE
+                        val ratio = scale / old
+                        val clamped = clampOffset(
+                            Offset(offsetX * ratio, offsetY * ratio),
+                            size.width, size.height, page.width, page.height, fitMode, scale,
+                        )
+                        offsetX = clamped.x; offsetY = clamped.y
+                        reportLock(scale, size.width, size.height)
                     },
-                    onTap = { onTapCenter() },
+                    onTap = { at ->
+                        // Mirrored for RTL, so "the column that turns forward" stays under the same
+                        // thumb whichever way the book reads.
+                        onTapZone(spreadSide.zoneAt(at.x, at.y, size.width, size.height, rightToLeft))
+                    },
                 )
             },
     ) {
@@ -268,11 +439,13 @@ fun PageCanvas(
         val bmp = base ?: return@Canvas
         if (page.width <= 0 || page.height <= 0) return@Canvas
 
-        val fit = min(vw.toFloat() / page.width, vh.toFloat() / page.height)
+        val fit = FitGeometry.baseScale(fitMode, vw, vh, page.width, page.height)
         val effective = fit * s
         val drawW = page.width * effective
         val drawH = page.height * effective
-        val originX = (vw - drawW) / 2f + ox
+        // A page narrower than its half of a spread moves its spare width to the outside edge, so
+        // facing pages meet at the gutter. An overflowing page has none and stays centred.
+        val originX = (vw - drawW) / 2f + ox + spreadSide.gutter * max(0f, (vw - drawW) / 2f)
         val originY = (vh - drawH) / 2f + oy
 
         drawIntoCanvas { canvas ->
@@ -287,7 +460,9 @@ fun PageCanvas(
             )
             native.drawBitmap(bmp, src, dst, paint)
 
-            if (s < TILE_THRESHOLD) return@drawIntoCanvas
+            // The base layer's own resolution decides, read off the bitmap: no allocation here.
+            if (bmp.width >= page.width) return@drawIntoCanvas
+            if (effective < bmp.width.toFloat() / page.width * TILE_THRESHOLD) return@drawIntoCanvas
 
             val sample = TileGrid.sampleSizeFor(effective)
             val cols = TileGrid.columns(page.width)
@@ -334,14 +509,31 @@ private fun clampOffset(
     viewportH: Int,
     pageW: Int,
     pageH: Int,
+    fitMode: FitMode,
     scale: Float,
 ): Offset {
     if (viewportW <= 0 || viewportH <= 0) return offset
     if (pageW <= 0 || pageH <= 0) return offset
-    val fit = min(viewportW.toFloat() / pageW, viewportH.toFloat() / pageH)
-    val drawW = pageW * fit * scale
-    val drawH = pageH * fit * scale
-    val maxX = if (drawW <= viewportW) 0f else (drawW - viewportW) / 2f
-    val maxY = if (drawH <= viewportH) 0f else (drawH - viewportH) / 2f
+    val s = FitGeometry.baseScale(fitMode, viewportW, viewportH, pageW, pageH) * scale
+    val maxX = FitGeometry.maxOffsetX(viewportW, pageW, s)
+    val maxY = FitGeometry.maxOffsetY(viewportH, pageH, s)
     return Offset(offset.x.coerceIn(-maxX, maxX), offset.y.coerceIn(-maxY, maxY))
+}
+
+/**
+ * Where a page sits in a two-page spread, in screen terms. Each page gets half the screen as its
+ * viewport, but its tap zones stay those of the whole screen: the thumb that turns a single page
+ * forward must turn a spread forward too.
+ */
+enum class SpreadSide(internal val gutter: Float) {
+    NONE(0f),
+    LEFT(1f),
+    RIGHT(-1f),
+    ;
+
+    internal fun zoneAt(x: Float, y: Float, width: Int, height: Int, mirrored: Boolean): TapZone = when (this) {
+        NONE -> TapGrid.zoneAt(x, y, width, height, mirrored)
+        LEFT -> TapGrid.zoneAt(x, y, width * 2, height, mirrored)
+        RIGHT -> TapGrid.zoneAt(x + width, y, width * 2, height, mirrored)
+    }
 }

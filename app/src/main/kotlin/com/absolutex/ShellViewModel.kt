@@ -6,8 +6,13 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.absolutex.core.data.LastBookStore
+import com.absolutex.core.data.settings.AppPrefs
+import com.absolutex.core.data.settings.AppPrefsSource
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -15,7 +20,15 @@ import javax.inject.Inject
 class ShellViewModel @Inject constructor(
     private val lastBookStore: LastBookStore,
     @ApplicationContext private val context: Context,
+    prefs: AppPrefsSource,
 ) : ViewModel() {
+
+    /**
+     * Theme settings, null until the store has been read once. The splash stays up while it is
+     * null, so a dark or true-black user never sees a light first frame flash before the stored
+     * value lands.
+     */
+    val appPrefs: StateFlow<AppPrefs?> = prefs.appPrefs.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     suspend fun lastBook(): String? = lastBookStore.get()
 

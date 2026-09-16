@@ -1,6 +1,7 @@
 package com.absolutex.core.data.settings
 
 import com.absolutex.model.FitMode
+import com.absolutex.model.PageLayout
 import com.absolutex.model.ReadingFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -70,6 +71,16 @@ class PrefCodecTest {
     }
 
     @Test
+    fun `every page layout survives a round-trip`() {
+        for (layout in PageLayout.entries) {
+            val original = ReaderPrefs(pageLayout = layout)
+            val bag = MapPrefBag()
+            PrefCodec.encodeReader(original, bag)
+            assertEquals(original, PrefCodec.decodeReader(bag))
+        }
+    }
+
+    @Test
     fun `every night mode survives a round-trip`() {
         for (mode in NightMode.entries) {
             val bag = MapPrefBag()
@@ -102,6 +113,11 @@ class PrefCodecTest {
                 PrefCodec.KEY_IMAGE_FOLDERS,
                 PrefCodec.KEY_READING_FLOW,
                 PrefCodec.KEY_FIT_MODE,
+                PrefCodec.KEY_VOLUME_KEYS,
+                PrefCodec.KEY_KEEP_SCREEN_ON,
+                PrefCodec.KEY_ROTATION_LOCK,
+                PrefCodec.KEY_USE_CUTOUT,
+                PrefCodec.KEY_PAGE_LAYOUT,
             ),
             bag.snapshot().keys,
         )
@@ -221,5 +237,38 @@ class PrefCodecTest {
         assertEquals("open_image_folders", PrefCodec.KEY_IMAGE_FOLDERS)
         assertEquals("reading_flow", PrefCodec.KEY_READING_FLOW)
         assertEquals("fit_mode", PrefCodec.KEY_FIT_MODE)
+        assertEquals("volume_keys_turn_pages", PrefCodec.KEY_VOLUME_KEYS)
+        assertEquals("keep_screen_on", PrefCodec.KEY_KEEP_SCREEN_ON)
+        assertEquals("rotation_lock", PrefCodec.KEY_ROTATION_LOCK)
+        assertEquals("use_cutout", PrefCodec.KEY_USE_CUTOUT)
+        assertEquals("page_layout", PrefCodec.KEY_PAGE_LAYOUT)
+    }
+
+    @Test
+    fun `window behaviour defaults suit reading and every choice round-trips`() {
+        val defaults = PrefCodec.decodeReader(MapPrefBag())
+        assertEquals(true, defaults.keepScreenOn)
+        assertEquals(RotationLock.SYSTEM, defaults.rotationLock)
+        assertEquals(true, defaults.useCutout)
+        RotationLock.entries.forEach { lock ->
+            val bag = MapPrefBag()
+            val prefs = ReaderPrefs(keepScreenOn = false, rotationLock = lock, useCutout = false)
+            PrefCodec.encodeReader(prefs, bag)
+            assertEquals(prefs, PrefCodec.decodeReader(bag))
+        }
+    }
+
+    @Test
+    fun `an unknown rotation lock name falls back to following the system`() {
+        val bag = MapPrefBag(mapOf(PrefCodec.KEY_ROTATION_LOCK to "UPSIDE_DOWN"))
+        assertEquals(RotationLock.SYSTEM, PrefCodec.decodeReader(bag).rotationLock)
+    }
+
+    @Test
+    fun `volume keys are off until the reader asks for them, and the choice round-trips`() {
+        assertEquals(false, PrefCodec.decodeReader(MapPrefBag()).volumeKeysTurnPages)
+        val bag = MapPrefBag()
+        PrefCodec.encodeReader(ReaderPrefs(volumeKeysTurnPages = true), bag)
+        assertEquals(true, PrefCodec.decodeReader(bag).volumeKeysTurnPages)
     }
 }

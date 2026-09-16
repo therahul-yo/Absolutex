@@ -1,5 +1,6 @@
 package com.absolutex.core.data
 
+import com.absolutex.core.scan.LibraryChange
 import com.absolutex.core.scan.LibraryScanner
 import com.absolutex.core.scan.ScannedBook
 import com.absolutex.model.BookIdentity
@@ -70,6 +71,48 @@ class LibraryRepository internal constructor(
         return ScanResult(found = found, removed = removed)
     }
 
+    /**
+     * Applies one change from the library's event stream to the persisted library (§5.1).
+     *
+     * The stream's contract is delta-or-rewalk: `Added` and `Modified` arrive only for paths the
+     * watcher says exist, `Removed` only for paths it says are gone, and `RescanRequested`
+     * whenever that is not trustworthy. Each arm checks its own precondition against disk anyway,
+     * because the watcher reports what it saw and disk is what is true.
+     *
+     * @param locationRoot the root the change's location maps to, or null when the change is for
+     *   a location this repository does not know. An unknown location is dropped: without a root
+     *   to scope under, a rescan's stale sweep could reach another location's rows.
+     */
+    suspend fun applyChange(change: LibraryChange, locationRoot: File?): ChangeResult {
+        if (locationRoot == null) return ChangeResult.Ignored
+        return when (change) {
+            is LibraryChange.Added -> upsertOne(change.path)
+            is LibraryChange.Modified -> upsertOne(change.path)
+            is LibraryChange.FolderPromoted -> upsertOne(change.path)
+            is LibraryChange.Removed -> {
+                dao.deletePath(change.path)
+                ChangeResult.Removed(path = change.path)
+            }
+            LibraryChange.RescanRequested -> {
+                scanLocation(locationRoot)
+                ChangeResult.Rescanned(root = locationRoot)
+            }
+        }
+    }
+
+    /**
+     * Writes the one book at [path], or reports why there is nothing to write.
+     *
+     * The parse goes through [LibraryScanner.scanFile] — the same predicates a full walk uses —
+     * so an `Added` for something the scanner would not pick up (junk, hidden, a half-written
+     * file that vanished before the write) is a `NotABook`, not a crash and not a row.
+     */
+    private suspend fun upsertOne(path: String): ChangeResult {
+        val book = LibraryScanner.scanFile(File(path)) ?: return ChangeResult.NotABook(path)
+        dao.upsertPreservingAddedAt(listOf(book.toEntity(now())))
+        return ChangeResult.Upserted(path = path)
+    }
+
     private fun ScannedBook.toEntity(scanId: Long) = LibraryBook(
         path = path,
         // Identity for cross-location deduplication (§5.1): the same file seen twice through
@@ -96,3 +139,22 @@ class LibraryRepository internal constructor(
 }
 
 data class ScanResult(val found: Int, val removed: Int)
+
+/**
+ * What applying one [LibraryChange] did.
+ *
+ * Sealed rather than `Unit` so the location layer can schedule a re-walk only when it must: the
+ * watcher already answered renames with a rescan, and the location layer picks which root a path
+ * belongs to, so the repository's job is only to say what it did with what it was given.
+ */
+sealed interface ChangeResult {
+    data class Upserted(val path: String) : ChangeResult
+    data class Removed(val path: String) : ChangeResult
+    data class Rescanned(val root: File) : ChangeResult
+
+    /** The path named no book the scanner would keep: junk, hidden, or gone before the write. */
+    data class NotABook(val path: String) : ChangeResult
+
+    /** A change for a location nobody registered. Dropped, because there is no root to scope under. */
+    data object Ignored : ChangeResult
+}

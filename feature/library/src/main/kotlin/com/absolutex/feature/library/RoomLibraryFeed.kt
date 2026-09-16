@@ -1,0 +1,149 @@
+package com.absolutex.feature.library
+
+import com.absolutex.core.data.LibraryBook
+import com.absolutex.core.data.LibraryRepository
+import com.absolutex.core.data.ProgressDao
+import com.absolutex.core.data.ReadingProgress
+import com.absolutex.model.IssueNumber
+import com.absolutex.model.ParsedName
+import dagger.Binds
+import dagger.Module
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import java.io.File
+import javax.inject.Inject
+import javax.inject.Singleton
+
+/**
+ * [LibraryFeed] over the shipped repository and the progress table.
+ *
+ * Progress joins on `LibraryBook.contentKey`, which since 6f7d70d is `BookIdentity.of(name, size)`
+ * — the same key `ReadingProgress.bookId` now carries, however the book was opened.
+ */
+@Singleton
+internal class RoomLibraryFeed @Inject constructor(
+    private val repository: LibraryRepository,
+    private val progressDao: ProgressDao,
+) : LibraryFeed {
+
+    override val capabilities = LibraryCapabilities(
+        // Nothing stores a favourite: no column, no table, no preference. See setFavorite.
+        canFavorite = false,
+        canMarkRead = true,
+        // No repository delete exists, and inventing one that removes a user's files from disk
+        // is not a call this lane should make. See delete.
+        canDelete = false,
+    )
+
+    override fun observeBooks(): Flow<List<LibraryBookUi>> =
+        combine(repository.observeLibrary(), progressDao.observeAll()) { books, progress ->
+            // Index the positions once, then look up per book: scanning the progress table per
+            // row instead would be quadratic on a large library.
+            val byIdentity = progress.associateBy { it.bookId }
+            // Deduplicated before mapping, so the expensive part runs once per book that is shown.
+            books.deduplicatedByIdentity().map { it.toUi(byIdentity) }
+            // Mapping thousands of rows is real work and Room emits on its own executor; Default
+            // keeps it off both the main thread and Room's.
+        }.flowOn(Dispatchers.Default)
+
+    override suspend fun search(query: String): List<LibraryBookUi> {
+        val progress = progressDao.observeAll().first().associateBy { it.bookId }
+        return repository.search(query).deduplicatedByIdentity().map { it.toUi(progress) }
+    }
+
+    override suspend fun setFavorite(paths: Set<String>, favorite: Boolean): LibraryNotice =
+        LibraryNotice.BatchUnsupported(UnsupportedReason.FAVOURITES_STORE_MISSING)
+
+    /**
+     * Marks a selection read, or clears its position.
+     *
+     * What to write is decided by [planSetRead], which knows that a container's page count is
+     * unknown to the scanner and known to the reader — trusting the scan alone made Mark read on
+     * an opened 45-page CBR always answer "needs opening first", and Mark unread then overwrote
+     * the 45 with a 0.
+     */
+    override suspend fun setRead(paths: Set<String>, read: Boolean): LibraryNotice {
+        if (paths.isEmpty()) return LibraryNotice.BatchApplied(count = 0, skipped = 0)
+        val byPath = repository.observeLibrary().first().associateBy { it.path }
+        val stored = progressDao.observeAll().first().associateBy { it.bookId }
+        val known = paths.mapNotNull { byPath[it] }
+        val plan = planSetRead(
+            targets = known.map { book ->
+                ReadTarget(
+                    bookId = book.contentKey,
+                    scannedPageCount = book.pageCount,
+                    storedPageCount = stored[book.contentKey]?.pageCount,
+                )
+            },
+            read = read,
+        )
+        val stamp = System.currentTimeMillis()
+        for (write in plan.writes) {
+            progressDao.upsert(ReadingProgress(write.bookId, write.pageIndex, write.pageCount, stamp))
+        }
+        // A path the library no longer holds is reported, not silently dropped from the count.
+        return LibraryNotice.BatchApplied(
+            count = plan.writes.size,
+            skipped = plan.skipped + (paths.size - known.size),
+        )
+    }
+
+    override suspend fun delete(paths: Set<String>): LibraryNotice =
+        LibraryNotice.BatchUnsupported(UnsupportedReason.DELETE_NOT_IMPLEMENTED)
+
+    private fun LibraryBook.toUi(progress: Map<String, ReadingProgress>): LibraryBookUi {
+        val position = progress[contentKey]
+        return LibraryBookUi(
+            path = path,
+            displayName = displayNameOf(this),
+            originalFilename = File(path).name,
+            series = series,
+            sizeBytes = sizeBytes,
+            lastModified = lastModified,
+            addedAt = addedAt,
+            // The scanner leaves a container's count null; a position row knows it once opened.
+            pageCount = pageCount ?: position?.pageCount?.takeIf { it > 0 },
+            currentPage = position?.pageIndex,
+            // TODO(library): read from a real favourites store; see setFavorite.
+            isFavorite = false,
+        )
+    }
+
+    private companion object {
+
+        /**
+         * Rebuilds the scanner's [ParsedName] so the library labels a book exactly as the rest of
+         * the app does. The persisted columns are that parse, taken apart by Room; putting them
+         * back together beats a second copy of the formatting rules that would drift from it.
+         *
+         * TODO(library): honour [com.absolutex.model.TitlePolicy.ORIGINAL_FILENAME], the §5.1
+         *  global switch for turning filename parsing off. It needs a settings store.
+         */
+        fun displayNameOf(book: LibraryBook): String = ParsedName(
+            series = book.series,
+            issue = book.issue?.let { value -> IssueNumber(value, book.issueRaw ?: value.toString()) },
+            volume = book.volume,
+            year = book.year,
+            title = book.title,
+            originalFilename = File(book.path).name,
+        ).displayName
+    }
+}
+
+@Module
+@InstallIn(SingletonComponent::class)
+internal abstract class LibraryFeedModule {
+
+    /**
+     * The screens depend on [LibraryFeed], never on Room. That is what lets the state layer stay
+     * plain Kotlin, and what lets tests hand the ViewModel a fake without a database.
+     */
+    @Binds
+    abstract fun bindLibraryFeed(impl: RoomLibraryFeed): LibraryFeed
+}

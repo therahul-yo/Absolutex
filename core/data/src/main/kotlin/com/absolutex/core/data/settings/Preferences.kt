@@ -1,6 +1,7 @@
 package com.absolutex.core.data.settings
 
 import com.absolutex.model.FitMode
+import com.absolutex.model.PageLayout
 import com.absolutex.model.ReadingFlow
 
 /** Night mode, as §5.4 groups it under General. */
@@ -17,7 +18,26 @@ enum class NightMode { OFF, ON, SYSTEM }
 data class ReaderPrefs(
     val readingFlow: ReadingFlow = ReadingFlow.LTR,
     val fitMode: FitMode = FitMode.FIT_SCREEN,
+    /**
+     * Volume keys turn pages (§5.3). Off by default: taking over the volume keys silently is the
+     * kind of surprise a reader should ask for, not impose.
+     */
+    val volumeKeysTurnPages: Boolean = false,
+    /** The screen stays on while a page is open (§5.2). Reading is not an idle phone. */
+    val keepScreenOn: Boolean = true,
+    /** Rotation lock while reading (§5.2). SYSTEM follows the device's own rotation setting. */
+    val rotationLock: RotationLock = RotationLock.SYSTEM,
+    /**
+     * Pages draw under the display cutout (§5.2). On by default: a camera hole-punch covers a few
+     * pixels of margin, and letterboxing the whole page away from it wastes a strip of screen.
+     */
+    val useCutout: Boolean = true,
+    /** One page per screen, or facing pages side by side (§5.2 page layouts). */
+    val pageLayout: PageLayout = PageLayout.SINGLE,
 )
+
+/** How the reader holds its orientation. */
+enum class RotationLock { SYSTEM, PORTRAIT, LANDSCAPE }
 
 /**
  * App-wide flags: the Locations, General, Thumbnails and Rendering settings that are simple
