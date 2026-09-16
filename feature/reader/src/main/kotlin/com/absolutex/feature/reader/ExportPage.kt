@@ -15,6 +15,9 @@ internal const val EXPORT_MAX_EDGE = 3000
 private const val EXPORT_QUALITY = 95
 private val ILLEGAL_IN_NAME = Regex("""[\\/:*?"<>|\u0000-\u001f]""")
 
+/** The book's own extension, which an exported page should not inherit: "Batman.cbr p1.jpg". */
+private val CONTAINER_EXTENSION = Regex("""\.[A-Za-z0-9]{2,4}$""")
+
 /**
  * A file name for one exported page (§5.2). Anything a file system or MediaStore would reject is
  * replaced, so a book called "Batman: Year One / v2" still exports.
@@ -22,7 +25,10 @@ private val ILLEGAL_IN_NAME = Regex("""[\\/:*?"<>|\u0000-\u001f]""")
 internal fun exportFileName(bookTitle: String, pageIndex: Int, extension: String): String {
     // Underscores are trimmed with the whitespace: a title that was only separators would
     // otherwise export as "___ p1.jpg".
-    val title = ILLEGAL_IN_NAME.replace(bookTitle, "_").trim { it.isWhitespace() || it == '_' }.ifEmpty { "page" }
+    val title = ILLEGAL_IN_NAME.replace(bookTitle, "_")
+        .let { CONTAINER_EXTENSION.replace(it, "") }
+        .trim { it.isWhitespace() || it == '_' }
+        .ifEmpty { "page" }
     return "$title p${pageIndex + 1}.$extension"
 }
 
