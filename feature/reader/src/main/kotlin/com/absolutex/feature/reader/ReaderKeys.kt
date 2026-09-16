@@ -1,6 +1,11 @@
 package com.absolutex.feature.reader
 
+import com.absolutex.model.TapGrid
+import com.absolutex.model.TapZone
 import android.view.KeyEvent
+import com.absolutex.model.TapGrid
+import com.absolutex.model.TapZone
+import com.absolutex.model.column
 
 /** What a key asks the reader to do (§5.3). */
 enum class ReaderKeyAction { NEXT_PAGE, PREVIOUS_PAGE, FIRST_PAGE, LAST_PAGE, ZOOM_IN, ZOOM_OUT, TOGGLE_CHROME, BACK }
@@ -14,6 +19,19 @@ enum class ReaderKeyAction { NEXT_PAGE, PREVIOUS_PAGE, FIRST_PAGE, LAST_PAGE, ZO
  *
  * Not yet: F1/F2 previous/next book (needs the library), D-pad scrolling a zoomed page, mouse wheel.
  */
+/**
+ * What a tap in §5.2's grid does: the outer columns turn pages — the one way to turn that never
+ * competes with the pager, which matters on a zoomed page where the pager is switched off — and the
+ * centre column toggles the chrome. Shared by every layout, so they cannot drift apart.
+ */
+fun onTapZone(zone: TapZone, step: (Int) -> Unit, toggleChrome: () -> Unit) {
+    when (zone.column) {
+        TapGrid.CELLS - 1 -> step(1)
+        0 -> step(-1)
+        else -> toggleChrome()
+    }
+}
+
 object ReaderKeys {
 
     @Suppress("CyclomaticComplexMethod")

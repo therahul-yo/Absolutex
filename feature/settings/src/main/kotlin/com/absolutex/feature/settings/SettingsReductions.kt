@@ -4,6 +4,7 @@ import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.data.settings.ReaderPrefs
 import com.absolutex.model.FitMode
+import com.absolutex.model.FitModeMemory
 import com.absolutex.model.ReadingFlow
 
 /**
@@ -35,4 +36,9 @@ fun AppPrefs.withOpenImageFolders(open: Boolean): AppPrefs = copy(openImageFolde
 
 fun ReaderPrefs.withReadingFlow(flow: ReadingFlow): ReaderPrefs = copy(readingFlow = flow)
 
-fun ReaderPrefs.withFitMode(mode: FitMode): ReaderPrefs = copy(fitMode = mode)
+/**
+ * Settings' fit mode is "use this from now on", so it writes every shape's memory as well as the
+ * stored choice. The reader's own fit control writes one shape (§5.2).
+ */
+fun ReaderPrefs.withFitMode(mode: FitMode): ReaderPrefs =
+    copy(fitMode = mode, fitMemory = FitModeMemory.everywhere(mode))

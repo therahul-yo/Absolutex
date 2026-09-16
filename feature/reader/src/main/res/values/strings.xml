@@ -12,6 +12,10 @@
     <string name="reader_page_indicator_desc">Page %1$d of %2$d</string>
     <string name="reader_seek_desc">Jump to a page</string>
     <string name="reader_contents">Contents</string>
+    <string name="reader_fit_screen">Screen</string>
+    <string name="reader_fit_width">Width</string>
+    <string name="reader_fit_height">Height</string>
+    <string name="reader_fit_full">Full</string>
     <string name="reader_export">Export page</string>
     <string name="reader_export_saved">Saved to Pictures/Absolutex</string>
     <string name="reader_export_open">Open</string>

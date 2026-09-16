@@ -6,6 +6,7 @@ import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.data.settings.ReaderPrefs
 import com.absolutex.core.data.settings.SettingsWriter
 import com.absolutex.model.FitMode
+import com.absolutex.model.FitModeMemory
 import com.absolutex.model.PageLayout
 import com.absolutex.model.ReadingFlow
 import kotlinx.coroutines.Dispatchers
@@ -115,7 +116,11 @@ class SettingsViewModelTest {
         vm.setFitMode(FitMode.FIT_WIDTH)
         advanceUntilIdle()
         assertEquals(
-            ReaderPrefs().copy(readingFlow = ReadingFlow.RTL, fitMode = FitMode.FIT_WIDTH),
+            ReaderPrefs().copy(
+                readingFlow = ReadingFlow.RTL,
+                fitMode = FitMode.FIT_WIDTH,
+                fitMemory = FitModeMemory.everywhere(FitMode.FIT_WIDTH),
+            ),
             fake.reader,
         )
         assertEquals(AppPrefs(), fake.app)

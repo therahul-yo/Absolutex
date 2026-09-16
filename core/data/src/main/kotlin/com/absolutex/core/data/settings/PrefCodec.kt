@@ -1,6 +1,7 @@
 package com.absolutex.core.data.settings
 
 import com.absolutex.model.FitMode
+import com.absolutex.model.FitModeMemory
 import com.absolutex.model.PageLayout
 import com.absolutex.model.ReadingFlow
 
@@ -31,6 +32,13 @@ object PrefCodec {
     internal const val KEY_USE_CUTOUT = "use_cutout"
     internal const val KEY_PAGE_LAYOUT = "page_layout"
     internal const val KEY_THUMBNAIL_STRIP = "thumbnail_strip"
+
+    /**
+     * Fits chosen per screen-and-page shape, as "SCREEN:PAGE=MODE" strings. One key holding the
+     * chosen ones only: a shape never chosen in keeps following its default, so writing all four
+     * up front would freeze every shape the first time any one of them is edited.
+     */
+    internal const val KEY_FIT_BY_CONTEXT = "fit_by_context"
 
     fun decodeApp(bag: PrefBag): AppPrefs {
         val defaults = AppPrefs()
@@ -66,6 +74,13 @@ object PrefCodec {
             useCutout = bag.boolean(KEY_USE_CUTOUT) ?: defaults.useCutout,
             pageLayout = bag.enumOr(KEY_PAGE_LAYOUT, defaults.pageLayout, PageLayout.entries),
             thumbnailStrip = bag.boolean(KEY_THUMBNAIL_STRIP) ?: defaults.thumbnailStrip,
+            fitMemory = FitModeMemory.fromPairs(
+                bag.stringSet(KEY_FIT_BY_CONTEXT).orEmpty()
+                    .mapNotNull { entry ->
+                        entry.split('=').takeIf { it.size == 2 }?.let { (key, value) -> key to value }
+                    }
+                    .toMap(),
+            ),
         )
     }
 
@@ -78,6 +93,8 @@ object PrefCodec {
         bag.putBoolean(KEY_USE_CUTOUT, prefs.useCutout)
         bag.putString(KEY_PAGE_LAYOUT, prefs.pageLayout.name)
         bag.putBoolean(KEY_THUMBNAIL_STRIP, prefs.thumbnailStrip)
+        val fits = prefs.fitMemory.asPairs()
+        if (fits.isNotEmpty()) bag.putStringSet(KEY_FIT_BY_CONTEXT, fits.map { "${it.key}=${it.value}" }.toSet())
     }
 
     /**

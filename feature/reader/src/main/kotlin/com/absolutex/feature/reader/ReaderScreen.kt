@@ -80,7 +80,10 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.absolutex.core.decode.PageImage
+import com.absolutex.model.FitContext
 import com.absolutex.model.FitMode
+import com.absolutex.core.data.settings.fitFor
+import androidx.compose.ui.platform.LocalConfiguration
 import com.absolutex.model.ReadingFlow
 import com.absolutex.model.Spreads
 import com.absolutex.model.TapZone
@@ -140,10 +143,6 @@ private const val CHROME_ALPHA = 0.9f
 private const val KEY_ZOOM_STEP = 1.25f
 private const val ZOOM_STEP_BUFFER = 4
 
-/** Grid columns that turn pages; the centre column is chrome. */
-private const val FIRST_COLUMN = 0
-private const val LAST_COLUMN = 2
-
 private const val HALF = 0.5f
 
 /** A key press or edge tap in a strip moves this much of a screen, keeping a line of context. */
@@ -166,31 +165,20 @@ private fun Pages(
     val scope = rememberCoroutineScope()
     // Edge swipes arrive in screen terms; in a mirrored right-to-left book left brings the previous page.
     val goTo: (Int) -> Unit = { step ->
-        scope.launch {
-            pagerState.animateScrollToPage((pagerState.currentPage + step).coerceIn(0, spreads.lastIndex))
-        }
+        scope.launch { pagerState.animateScrollToPage((pagerState.currentPage + step).coerceIn(0, spreads.lastIndex)) }
     }
     val turn: (Boolean) -> Unit = { forward -> goTo(if (forward != (flow == ReadingFlow.RTL)) 1 else -1) }
-    // §5.2 tap zones. The outer columns turn pages — the one way to turn that never competes with
-    // the pager, which matters on a zoomed or overflowing page where the pager is switched off.
-    // The centre column toggles the chrome.
     var chrome by remember { mutableStateOf(false) }
-    val tap: (TapZone) -> Unit = { zone ->
-        when (zone.column) {
-            LAST_COLUMN -> goTo(1)
-            FIRST_COLUMN -> goTo(-1)
-            else -> chrome = !chrome
-        }
-    }
+    val tap: (TapZone) -> Unit = { zone -> onTapZone(zone, goTo) { chrome = !chrome } }
     ReaderWindow(prefs, immersive = !chrome)
 
     // §5.3: keyboard and gamepad alone must be enough. Zoom goes only to the page being looked at.
     val zoomSteps = remember { MutableSharedFlow<Float>(extraBufferCapacity = ZOOM_STEP_BUFFER) }
     val jump: (Int) -> Unit = { to -> scope.launch { pagerState.scrollToPage(Spreads.indexOf(spreads, to)) } }
     val rtl = flow == ReadingFlow.RTL
-    val keys = readerKeys(rtl, prefs.volumeKeysTurnPages, goTo, jump, pageCount - 1, zoomSteps::tryEmit) {
-        chrome = !chrome
-    }
+    val keys = readerKeys(
+        rtl, prefs.volumeKeysTurnPages, goTo, jump, pageCount - 1, zoomSteps::tryEmit,
+    ) { chrome = !chrome }
 
     // Persist progress as the reader moves. snapshotFlow keeps this off the composition path.
     LaunchedEffect(pagerState) {
@@ -202,6 +190,8 @@ private fun Pages(
     var firstPageDrawn by remember(bookId) { mutableStateOf(false) }
     ReportDrawnWhen { firstPageDrawn }
     val toc by vm.toc.collectAsStateWithLifecycle()
+    var landscapePage by remember(bookId) { mutableStateOf(false) }
+    val fitContext = rememberFitContext(landscapePage)
 
     // A page is laid out the same way whichever pager hosts it; only the axis and direction change.
     val page: @Composable PagerScope.(Int) -> Unit = { screen ->
@@ -209,8 +199,9 @@ private fun Pages(
         val current = screen == pagerState.currentPage
         SpreadRow(spread, rtl) { index, side ->
             PageSlot(
-                index = index, bookId = bookId, vm = vm, fitMode = prefs.fitMode, rightToLeft = rtl,
+                index = index, bookId = bookId, vm = vm, fitMode = null, prefs = prefs, rightToLeft = rtl,
                 pagerVertical = flow == ReadingFlow.VERTICAL,
+                onLoaded = { if (current) landscapePage = it.width > it.height },
                 onBaseReady = { if (current && index == spread.first) firstPageDrawn = true },
                 // Neighbours wait for the page on screen: decoded together, it finished last (see PageSlot).
                 decodeNow = current || firstPageDrawn,
@@ -228,6 +219,7 @@ private fun Pages(
             visible = chrome, page = spreads[pagerState.currentPage].first, pageCount = pageCount, onSeek = jump,
             bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip }, toc = toc,
             onExport = { vm.exportPage(spreads[pagerState.currentPage].first) },
+            fitFor = fitContext, prefs = prefs,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
@@ -254,13 +246,7 @@ private fun Strip(pageCount: Int, startPage: Int, bookId: String, prefs: ReaderP
         }
     }
     val jump: (Int) -> Unit = { to -> scope.launch { listState.scrollToItem(to.coerceIn(0, pageCount - 1)) } }
-    val tap: (TapZone) -> Unit = { zone ->
-        when (zone.column) {
-            LAST_COLUMN -> step(1)
-            FIRST_COLUMN -> step(-1)
-            else -> chrome = !chrome
-        }
-    }
+    val tap: (TapZone) -> Unit = { zone -> onTapZone(zone, step) { chrome = !chrome } }
     val rtl = prefs.readingFlow == ReadingFlow.RTL
     // ponytail: no keyboard zoom in a strip; pinch zooms a page in place. Add when a strip has a focus page.
     val keys = readerKeys(rtl, prefs.volumeKeysTurnPages, step, jump, pageCount - 1, { false }) { chrome = !chrome }
@@ -279,7 +265,8 @@ private fun Strip(pageCount: Int, startPage: Int, bookId: String, prefs: ReaderP
                 val size = aspect?.let { Modifier.fillMaxWidth().aspectRatio(it) } ?: Modifier.fillParentMaxSize()
                 Box(size.clipToBounds()) {
                     PageSlot(
-                        index = index, bookId = bookId, vm = vm, fitMode = FitMode.FIT_WIDTH, rightToLeft = rtl,
+                        index = index, bookId = bookId, vm = vm, fitMode = FitMode.FIT_WIDTH, prefs = prefs,
+                        rightToLeft = rtl,
                         pagerVertical = true, onPagerLockChanged = {}, onEdgeSwipe = {}, onTapZone = tap,
                         spreadSide = SpreadSide.NONE, onBaseReady = { if (index == startPage) firstPageDrawn = true },
                         decodeNow = true, zoomSteps = null,
@@ -292,6 +279,7 @@ private fun Strip(pageCount: Int, startPage: Int, bookId: String, prefs: ReaderP
             visible = chrome, page = listState.firstVisibleItemIndex, pageCount = pageCount, onSeek = jump,
             bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip }, toc = toc,
             onExport = { vm.exportPage(listState.firstVisibleItemIndex) },
+            fitFor = null, prefs = prefs,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
@@ -415,6 +403,9 @@ private fun ReaderChrome(
     strip: (suspend (index: Int, width: Int) -> Bitmap?)?,
     toc: List<TocEntry>,
     onExport: suspend () -> Uri?,
+    /** Null in a layout whose fit is fixed, such as the continuous strip. */
+    fitFor: FitContext?,
+    prefs: ReaderPrefs,
     modifier: Modifier = Modifier,
 ) {
     if (!visible || pageCount <= 0) return
@@ -433,6 +424,7 @@ private fun ReaderChrome(
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
             if (contents) TocPanel(toc, onJump = { onSeek(it); contents = false })
             ExportRow(page, onExport)
+            fitFor?.let { FitRow(prefs, it) }
             if (toc.isNotEmpty()) {
                 TextButton(onClick = { contents = !contents }) {
                     Text(stringResource(R.string.reader_contents))
@@ -527,7 +519,9 @@ private fun PageSlot(
     index: Int,
     bookId: String,
     vm: ReaderViewModel,
-    fitMode: FitMode,
+    /** Forces one fit, for a layout that has no choice: a continuous strip is fit to width. */
+    fitMode: FitMode?,
+    prefs: ReaderPrefs,
     rightToLeft: Boolean,
     pagerVertical: Boolean,
     onPagerLockChanged: (Boolean) -> Unit,
@@ -560,13 +554,19 @@ private fun PageSlot(
 
     // A decode with no dimensions is unreadable, never rendered.
     val img = image?.takeIf { it.width > 0 && it.height > 0 }
+    // The fit follows the shape of what is actually on screen, which is only known once the page's
+    // header is read: a spread and a single page are different situations with different answers.
+    val screen = LocalConfiguration.current
+    val fit = fitMode ?: img?.let {
+        prefs.fitFor(FitContext.of(screen.screenWidthDp, screen.screenHeightDp, it.width, it.height))
+    } ?: prefs.fitMode
     when {
         img != null -> PageCanvas(
             page = img,
             pageIndex = index,
             bookId = bookId,
             cache = vm.tileCache,
-            fitMode = fitMode,
+            fitMode = fit,
             rightToLeft = rightToLeft,
             pagerVertical = pagerVertical,
             onPagerLockChanged = onPagerLockChanged,

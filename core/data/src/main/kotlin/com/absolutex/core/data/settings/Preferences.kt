@@ -1,6 +1,8 @@
 package com.absolutex.core.data.settings
 
+import com.absolutex.model.FitContext
 import com.absolutex.model.FitMode
+import com.absolutex.model.FitModeMemory
 import com.absolutex.model.PageLayout
 import com.absolutex.model.ReadingFlow
 
@@ -17,7 +19,13 @@ enum class NightMode { OFF, ON, SYSTEM }
  */
 data class ReaderPrefs(
     val readingFlow: ReadingFlow = ReadingFlow.LTR,
+    /** What the settings screen shows and writes everywhere; the reader reads [fitMemory]. */
     val fitMode: FitMode = FitMode.FIT_SCREEN,
+    /**
+     * The fit for each screen-and-page shape (§5.2). A context never chosen in falls back to
+     * [FitModeMemory]'s own default, which is why a spread on a portrait phone starts at fit-width.
+     */
+    val fitMemory: FitModeMemory = FitModeMemory(),
     /**
      * Volume keys turn pages (§5.3). Off by default: taking over the volume keys silently is the
      * kind of surprise a reader should ask for, not impose.
@@ -37,6 +45,9 @@ data class ReaderPrefs(
     /** The chrome carries a strip of page thumbnails (§5.2). */
     val thumbnailStrip: Boolean = true,
 )
+
+/** The fit for this shape of screen and page: what was last chosen here, or the shape's default. */
+fun ReaderPrefs.fitFor(context: FitContext): FitMode = fitMemory.modeFor(context)
 
 /** How the reader holds its orientation. */
 enum class RotationLock { SYSTEM, PORTRAIT, LANDSCAPE }

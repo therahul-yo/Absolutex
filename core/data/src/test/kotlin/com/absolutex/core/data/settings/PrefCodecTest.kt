@@ -1,6 +1,10 @@
 package com.absolutex.core.data.settings
 
+import com.absolutex.model.FitContext
 import com.absolutex.model.FitMode
+import com.absolutex.model.FitModeMemory
+import com.absolutex.model.PageOrientation
+import com.absolutex.model.ScreenOrientation
 import com.absolutex.model.PageLayout
 import com.absolutex.model.ReadingFlow
 import org.junit.Assert.assertEquals
@@ -78,6 +82,40 @@ class PrefCodecTest {
             PrefCodec.encodeReader(original, bag)
             assertEquals(original, PrefCodec.decodeReader(bag))
         }
+    }
+
+    @Test
+    fun `a shape keeps the fit chosen for it, and the others keep their defaults`() {
+        val landscapeScreen = FitContext(ScreenOrientation.LANDSCAPE, PageOrientation.PORTRAIT)
+        val spreadOnPhone = FitContext(ScreenOrientation.PORTRAIT, PageOrientation.LANDSCAPE)
+        val original = ReaderPrefs(fitMemory = FitModeMemory().with(landscapeScreen, FitMode.FIT_HEIGHT))
+        val bag = MapPrefBag()
+        PrefCodec.encodeReader(original, bag)
+        val decoded = PrefCodec.decodeReader(bag)
+        assertEquals(original, decoded)
+        assertEquals(FitMode.FIT_HEIGHT, decoded.fitFor(landscapeScreen))
+        // Untouched, so still the shape's own default rather than the one just chosen elsewhere.
+        assertEquals(FitMode.FIT_WIDTH, decoded.fitFor(spreadOnPhone))
+    }
+
+    @Test
+    fun `nothing chosen writes no key at all`() {
+        // Writing all four up front would freeze every shape at today's default the first time any
+        // one of them is edited.
+        val bag = MapPrefBag()
+        PrefCodec.encodeReader(ReaderPrefs(), bag)
+        assertTrue(PrefCodec.KEY_FIT_BY_CONTEXT !in bag.snapshot().keys)
+    }
+
+    @Test
+    fun `an unreadable stored fit is dropped, and its shape keeps its default`() {
+        val bag = MapPrefBag(mapOf(PrefCodec.KEY_FIT_BY_CONTEXT to setOf("LANDSCAPE:PORTRAIT=SIDEWAYS", "nonsense")))
+        val decoded = PrefCodec.decodeReader(bag)
+        assertEquals(FitModeMemory(), decoded.fitMemory)
+        assertEquals(
+            FitMode.FIT_SCREEN,
+            decoded.fitFor(FitContext(ScreenOrientation.LANDSCAPE, PageOrientation.PORTRAIT)),
+        )
     }
 
     @Test

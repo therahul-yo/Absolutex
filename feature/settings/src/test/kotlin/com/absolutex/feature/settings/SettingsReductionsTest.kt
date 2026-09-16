@@ -3,7 +3,12 @@ package com.absolutex.feature.settings
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.data.settings.ReaderPrefs
+import com.absolutex.core.data.settings.fitFor
+import com.absolutex.model.FitContext
 import com.absolutex.model.FitMode
+import com.absolutex.model.FitModeMemory
+import com.absolutex.model.PageOrientation
+import com.absolutex.model.ScreenOrientation
 import com.absolutex.model.ReadingFlow
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -101,9 +106,15 @@ class SettingsReductionsTest {
     }
 
     @Test
-    fun `withFitMode covers every enum entry`() {
+    fun `withFitMode covers every enum entry, and applies it to every shape`() {
         FitMode.entries.forEach { mode ->
-            assertEquals(ReaderPrefs().copy(fitMode = mode), ReaderPrefs().withFitMode(mode))
+            val updated = ReaderPrefs().withFitMode(mode)
+            assertEquals(ReaderPrefs().copy(fitMode = mode, fitMemory = FitModeMemory.everywhere(mode)), updated)
+            // Settings means "from now on", so even the shape with its own default follows it.
+            assertEquals(
+                mode,
+                updated.fitFor(FitContext(ScreenOrientation.PORTRAIT, PageOrientation.LANDSCAPE)),
+            )
         }
     }
 }
