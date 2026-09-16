@@ -222,7 +222,7 @@ private fun Pages(
         ReaderPager(flow, pagerState, scrollable, page)
         ReaderChrome(
             visible = chrome, page = spreads[pagerState.currentPage].first, pageCount = pageCount, onSeek = jump,
-            modifier = Modifier.align(Alignment.BottomCenter),
+            bookId = bookId, modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
 }
@@ -283,7 +283,7 @@ private fun Strip(pageCount: Int, startPage: Int, bookId: String, prefs: ReaderP
         }
         ReaderChrome(
             visible = chrome, page = listState.firstVisibleItemIndex, pageCount = pageCount, onSeek = jump,
-            modifier = Modifier.align(Alignment.BottomCenter),
+            bookId = bookId, modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
 }
@@ -402,6 +402,7 @@ private fun ReaderChrome(
     page: Int,
     pageCount: Int,
     onSeek: (Int) -> Unit,
+    bookId: String,
     modifier: Modifier = Modifier,
 ) {
     if (!visible || pageCount <= 0) return
@@ -422,6 +423,7 @@ private fun ReaderChrome(
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.semantics { contentDescription = indicator },
             )
+            BookmarkBar(bookId, page, pageCount, onJump = onSeek)
             // Slider works in page numbers, not fractions: a 45-page book has 45 stops and the
             // value it reports is the page the reader lands on.
             Slider(

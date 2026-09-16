@@ -34,6 +34,9 @@ object DataModule {
     @Provides
     fun libraryDao(db: AbsolutexDatabase): LibraryDao = db.libraryDao()
 
+    @Provides
+    fun bookmarkDao(db: AbsolutexDatabase): BookmarkDao = db.bookmarkDao()
+
     /** Total device RAM, the input to the cache ceiling (see MemoryBudget). */
     @Provides
     @Singleton
