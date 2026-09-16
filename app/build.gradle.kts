@@ -52,6 +52,9 @@ dependencies {
     implementation(project(":feature:reader"))
     implementation(project(":feature:library"))
     implementation(project(":feature:settings"))
+    // Sync wiring (milestone 5): installs SyncModule into the app graph. Inert until the
+    // trigger call sites fire — no work starts from the dependency alone.
+    implementation(project(":remote:sync"))
 
     implementation(platform(libs.compose.bom))
     implementation(libs.androidx.core.ktx)

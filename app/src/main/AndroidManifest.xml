@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Sync (milestone 5): Komga/Kavita live on the LAN. Cleartext stays per-host opt-in
+         (SyncServer.allowCleartext); the per-host network security config is milestone 3's. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- Pre-release: no Drive backup history of reading state. Revisit with a
          dataExtractionRules allowlist before 1.0 if backup is wanted. -->
     <application

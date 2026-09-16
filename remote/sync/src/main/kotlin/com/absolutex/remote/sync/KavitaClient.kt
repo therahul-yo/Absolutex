@@ -24,6 +24,15 @@ class KavitaClient(private val http: HttpCall, baseUrl: String) {
     var refreshToken: String? = null
         private set
 
+    /**
+     * API-key auth: the key rides as the bearer token (assumption — the lead validates on a
+     * live server). A rejected key surfaces as 401 on first use, never silently.
+     */
+    fun setBearerToken(token: String) {
+        this.token = token
+        this.refreshToken = token
+    }
+
     fun login(username: String, password: CharArray): Unit {
         val body = JSONObject().put("username", username).put("password", password.concatToString()).toString()
         val response = http.request("POST", "$root/api/Account/login", JSON_HEADERS, body)
@@ -72,7 +81,8 @@ class KavitaClient(private val http: HttpCall, baseUrl: String) {
         return mapOf(AUTHORIZATION to "Bearer $current")
     }
 
-    private fun authedRequest(method: String, path: String, body: String?): HttpResponse {
+    /** Module-visible for library browsing ([KavitaLibrary]); auth refresh included. */
+    internal fun authedRequest(method: String, path: String, body: String?): HttpResponse {
         // One retry after a single refresh; a second 401 means the refresh itself is dead.
         val first = http.request(method, root + path, bearer(), body)
         if (first.code != HTTP_UNAUTHORIZED) return first

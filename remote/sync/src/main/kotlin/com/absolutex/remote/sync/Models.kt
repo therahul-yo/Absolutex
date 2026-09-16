@@ -10,7 +10,17 @@ enum class ServerKind {
 data class SeriesRef(val id: String, val name: String)
 
 /** Minimal book identity (required fields only, no defaults on identity fields). */
-data class BookRef(val id: String, val name: String, val seriesId: String, val pageCount: Int)
+data class BookRef(
+    val id: String,
+    val name: String,
+    val seriesId: String,
+    val pageCount: Int,
+    /**
+     * File size in bytes (BookDto.sizeBytes). Null when the server omits it — such a book can
+     * never match a local identity and is left alone, never guessed.
+     */
+    val sizeBytes: Long? = null,
+)
 
 /** One entry of a remote book page listing (required fields only). */
 data class PageRef(val number: Int, val fileName: String, val mediaType: String)

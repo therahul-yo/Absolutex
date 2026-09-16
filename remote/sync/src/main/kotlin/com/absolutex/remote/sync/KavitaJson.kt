@@ -29,3 +29,42 @@ internal fun parseKavitaProgress(body: String): RemoteProgress = parseJson(body)
         updatedAt = optInstant(root, "lastModifiedUtc"),
     )
 }
+
+/**
+ * One chapter's files for identity matching. File names come from full server paths
+ * (frequently Windows-style), so matching uses the base name on either separator.
+ */
+data class KavitaChapterFiles(
+    val chapterId: Int,
+    val volumeId: Int,
+    val seriesId: Int,
+    val files: List<KavitaFileRef>,
+)
+
+data class KavitaFileRef(val fileName: String, val bytes: Long)
+
+internal fun parseKavitaVolumeIds(body: String): List<Int> = parseJsonArray(body) { array ->
+    List(array.length(), array::getJSONObject).map { req(it, "id", it::getInt) }
+}
+
+internal fun parseKavitaVolume(body: String): List<KavitaChapterFiles> = parseJson(body) { root ->
+    val volumeId = req(root, "id", root::getInt)
+    val seriesId = req(root, "seriesId", root::getInt)
+    optObjects(root, "chapters").map { chapter ->
+        val chapterId = req(chapter, "id", chapter::getInt)
+        KavitaChapterFiles(
+            chapterId = chapterId,
+            volumeId = optInt(chapter, "volumeId") ?: volumeId,
+            seriesId = seriesId,
+            files = optObjects(chapter, "files").mapNotNull { file ->
+                val path = optString(file, "filePath") ?: return@mapNotNull null
+                val bytes = optLong(file, "bytes") ?: return@mapNotNull null
+                KavitaFileRef(fileName = path.substringAfterLast('/').substringAfterLast('\\'), bytes = bytes)
+            },
+        )
+    }
+}
+
+internal fun parseKavitaSeriesLibraryId(body: String): Int = parseJson(body) { root ->
+    req(root, "libraryId", root::getInt)
+}
