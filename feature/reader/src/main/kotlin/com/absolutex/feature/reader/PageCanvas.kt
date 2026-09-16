@@ -325,21 +325,23 @@ fun PageCanvas(
             cropDecided = true
             return@LaunchedEffect
         }
-        Trace.beginSection("absx.cropDetect")
         try {
             // copy() is the documented hardware-to-software path (Palette does the same); any
             // failure here falls back to no crop, never a broken page.
+            Trace.beginSection("absx.cropCopy")
             val soft = runCatching { thumb.copy(Bitmap.Config.ARGB_8888, false) }.getOrNull()
+            Trace.endSection()
             if (soft != null) {
                 val sw = soft.width
                 val sh = soft.height
                 val pixels = IntArray(sw * sh)
                 soft.getPixels(pixels, 0, sw, 0, 0, sw, sh)
                 soft.recycle()
+                Trace.beginSection("absx.cropDetect")
                 crop = CropMath.detect(pixels, sw, sh)?.scaleFrom(sw, sh, page.width, page.height)
+                Trace.endSection()
             }
         } finally {
-            Trace.endSection()
             cropDecided = true
         }
     }
