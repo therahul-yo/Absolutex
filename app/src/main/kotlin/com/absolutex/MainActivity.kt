@@ -88,6 +88,10 @@ private const val READER_ROUTE = "reader/{uri}"
 
 private fun readerRoute(uri: Uri) = "reader/${Uri.encode(uri.toString())}"
 
+/** A library row's path: a document Uri as it stands, a device path as a file Uri. */
+private fun bookUri(path: String): Uri =
+    if (path.startsWith("content://")) Uri.parse(path) else Uri.fromFile(File(path))
+
 /**
  * The app shell: the library is home, the reader and settings are destinations (§5.1, §5.4).
  *
@@ -100,17 +104,21 @@ private fun readerRoute(uri: Uri) = "reader/${Uri.encode(uri.toString())}"
 private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
     val nav = rememberNavController()
     val context = androidx.compose.ui.platform.LocalContext.current
+    val readerVm: ReaderViewModel = hiltViewModel(context as ComponentActivity)
+    val readerError = readerVm.ui.collectAsStateWithLifecycle().value.error
     // The book to resume (§5.2), once the store has been read. Navigation happens in the effect
     // below, never here: a NavController cannot navigate until its graph is set, which is what
     // composing the NavHost does — resuming from this effect crashed on every launch with a saved
     // book, and only a device showed it.
     var resume by remember { mutableStateOf<Uri?>(null) }
     LaunchedEffect(Unit) {
-        if (directUri != null) return@LaunchedEffect
-        val saved = vm.lastBook() ?: return@LaunchedEffect
-        val held = context.contentResolver.persistedUriPermissions.any { it.uri.toString() == saved }
-        // Pass the stale Uri so the grant (if half-held) is released, not leaked.
-        if (held) resume = Uri.parse(saved) else vm.clearLastBook(saved)
+        if (directUri == null) resume = vm.resumableBook()
+    }
+
+    // A folder, not a file: a location is what the library scans, and SAF is the only way to read
+    // one since Android 11 removed path access to shared storage.
+    val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { folder ->
+        if (folder != null) vm.addLocation(folder)
     }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { picked ->
@@ -137,25 +145,36 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
     NavHost(nav, startDestination = if (directUri != null) readerRoute(directUri) else LIBRARY_ROUTE) {
         composable(LIBRARY_ROUTE) {
             LibraryRoute(
-                // The library stores device paths; the reader takes either a path or a SAF Uri.
-                onOpenBook = { path -> nav.navigate(readerRoute(Uri.fromFile(File(path)))) },
-                // TODO(library): storage locations (§5.1 milestone 3). Until they exist, this
-                // picks one book rather than a folder, which is what the picker could always do.
-                onAddLocation = {
-                    // Generic types: the picker cannot filter by .cbz/.cbr, so widen and let
-                    // libarchive decide. Filtering by extension here would hide books whose
-                    // provider reports application/octet-stream.
-                    picker.launch(arrayOf("*/*"))
-                },
+                // A library row holds whatever the scan found it by: a document Uri from a SAF
+                // location, or a device path from a filesystem one. The reader opens either.
+                onOpenBook = { path -> nav.navigate(readerRoute(bookUri(path))) },
+                onAddLocation = { folderPicker.launch(null) },
             )
         }
         composable(READER_ROUTE) { entry ->
             val uri = entry.arguments?.getString("uri")?.let { Uri.parse(Uri.decode(it)) }
-            if (uri != null) ReaderScreen(uri = uri, onSettings = { nav.navigate(SETTINGS_ROUTE) })
+            // The activity's ReaderViewModel, not the destination's own: MainActivity.onCreate
+            // starts opening a launch Uri before anything composes, and a per-destination
+            // ViewModel would throw that head start away and open the book a second time.
+            if (uri != null) {
+                ReaderScreen(uri = uri, vm = readerVm, onSettings = { nav.navigate(SETTINGS_ROUTE) })
+            }
         }
         settingsDestination()
     }
     // After the NavHost: effects run in composition order, so the graph is set by the time this
     // one does. Resuming lands on top of the library, so back returns to it.
     LaunchedEffect(resume) { resume?.let { nav.navigate(readerRoute(it)) } }
+
+    // A resumed book that will not open is not worth a screen: the reader's error belongs to a
+    // book the reader chose to open, not to one the app reopened by itself. Forget it and go home,
+    // so the next launch starts at the library instead of at the same dead end.
+    LaunchedEffect(readerError, resume) {
+        val resumed = resume ?: return@LaunchedEffect
+        if (readerError != null) {
+            vm.clearLastBook(resumed.toString())
+            resume = null
+            nav.popBackStack(LIBRARY_ROUTE, inclusive = false)
+        }
+    }
 }

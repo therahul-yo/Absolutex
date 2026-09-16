@@ -163,13 +163,13 @@ class LibraryScanner(
          *
          * Shared with [LibraryWatcher] so watch and scan never disagree on what to ignore.
          */
-        fun shouldSkip(file: File, includeHidden: Boolean): Boolean {
-            if (!includeHidden && file.name.startsWith(".")) return true
-            return if (file.isDirectory) {
-                EntryFilter.isJunkDirectory(file.name)
-            } else {
-                EntryFilter.isJunk(file.name)
-            }
+        fun shouldSkip(file: File, includeHidden: Boolean): Boolean =
+            shouldSkip(file.name, file.isDirectory, includeHidden)
+
+        /** By name, for a tree whose entries are documents rather than files (see SafScanner). */
+        fun shouldSkip(name: String, isDirectory: Boolean, includeHidden: Boolean): Boolean {
+            if (!includeHidden && name.startsWith(".")) return true
+            return if (isDirectory) EntryFilter.isJunkDirectory(name) else EntryFilter.isJunk(name)
         }
         /**
          * Containers worth opening (§2). Kept here rather than in FilenameParser: the parser

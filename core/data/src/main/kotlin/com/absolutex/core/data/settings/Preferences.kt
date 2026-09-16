@@ -97,6 +97,8 @@ data class AppPrefs(
     val openGenericArchives: Boolean = false,
     /** Treat a folder of loose images as a book. */
     val openImageFolders: Boolean = true,
+    /** Library locations (§5.1): SAF tree Uris the user granted, as strings. */
+    val locations: Set<String> = emptySet(),
 ) {
     companion object {
         const val DEFAULT_CACHE_MIB: Int = 512

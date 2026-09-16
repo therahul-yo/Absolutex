@@ -75,6 +75,18 @@ class PrefCodecTest {
     }
 
     @Test
+    fun `library locations survive a round-trip, and none writes no key`() {
+        val locations = setOf("content://tree/a", "content://tree/b")
+        val bag = MapPrefBag()
+        PrefCodec.encodeApp(AppPrefs(locations = locations), bag)
+        assertEquals(locations, PrefCodec.decodeApp(bag).locations)
+
+        val empty = MapPrefBag()
+        PrefCodec.encodeApp(AppPrefs(), empty)
+        assertTrue(PrefCodec.KEY_LOCATIONS !in empty.snapshot().keys)
+    }
+
+    @Test
     fun `every page layout survives a round-trip`() {
         for (layout in PageLayout.entries) {
             val original = ReaderPrefs(pageLayout = layout)

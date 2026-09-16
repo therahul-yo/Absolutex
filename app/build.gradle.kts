@@ -45,6 +45,7 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:ui"))
     implementation(project(":core:data"))
+    implementation(project(":core:scan"))
     implementation(project(":core:decode"))
     implementation(project(":source:api"))
     implementation(project(":source:libarchive"))

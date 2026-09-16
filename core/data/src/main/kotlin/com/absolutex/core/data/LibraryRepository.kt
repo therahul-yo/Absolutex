@@ -1,10 +1,15 @@
 package com.absolutex.core.data
 
 import com.absolutex.core.scan.LibraryChange
+import com.absolutex.core.scan.DocumentTree
 import com.absolutex.core.scan.LibraryScanner
+import com.absolutex.core.scan.SafScanner
+import com.absolutex.core.scan.TreeEntry
 import com.absolutex.core.scan.ScannedBook
 import com.absolutex.model.BookIdentity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -69,6 +74,22 @@ class LibraryRepository internal constructor(
         // files are still there, simply because the walk never reached them.
         val removed = dao.deleteStaleIn(root.path, scanId)
         return ScanResult(found = found, removed = removed)
+    }
+
+    /**
+     * Scans a SAF tree the user granted (§5.1), the same way [scanLocation] scans a directory.
+     *
+     * Rows carry the document Uri as their path, which is what the reader opens and what the
+     * stale sweep scopes by: every document Uri under a tree starts with that tree's own Uri.
+     */
+    suspend fun scanTree(root: TreeEntry, tree: DocumentTree, includeHidden: Boolean = false): ScanResult {
+        val scanId = now()
+        val books = withContext(Dispatchers.IO) { SafScanner.scan(root, tree, includeHidden) }
+        books.chunked(BATCH).forEach { chunk -> dao.upsertPreservingAddedAt(chunk.map { it.toEntity(scanId) }) }
+        // Only after the walk completes, as in scanLocation: a cancelled walk must not delete the
+        // books it simply never reached.
+        val removed = dao.deleteStaleIn(root.uri, scanId)
+        return ScanResult(found = books.size, removed = removed)
     }
 
     /**

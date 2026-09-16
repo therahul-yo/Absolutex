@@ -25,6 +25,7 @@ object PrefCodec {
     internal const val KEY_SHOW_HIDDEN = "show_hidden_folders"
     internal const val KEY_GENERIC_ARCHIVES = "open_generic_archives"
     internal const val KEY_IMAGE_FOLDERS = "open_image_folders"
+    internal const val KEY_LOCATIONS = "library_locations"
     internal const val KEY_READING_FLOW = "reading_flow"
     internal const val KEY_FIT_MODE = "fit_mode"
     internal const val KEY_VOLUME_KEYS = "volume_keys_turn_pages"
@@ -54,6 +55,7 @@ object PrefCodec {
             showHiddenFolders = bag.boolean(KEY_SHOW_HIDDEN) ?: defaults.showHiddenFolders,
             openGenericArchives = bag.boolean(KEY_GENERIC_ARCHIVES) ?: defaults.openGenericArchives,
             openImageFolders = bag.boolean(KEY_IMAGE_FOLDERS) ?: defaults.openImageFolders,
+            locations = bag.stringSet(KEY_LOCATIONS) ?: defaults.locations,
         )
     }
 
@@ -65,6 +67,8 @@ object PrefCodec {
         bag.putBoolean(KEY_SHOW_HIDDEN, prefs.showHiddenFolders)
         bag.putBoolean(KEY_GENERIC_ARCHIVES, prefs.openGenericArchives)
         bag.putBoolean(KEY_IMAGE_FOLDERS, prefs.openImageFolders)
+        // Only when there are any: an empty set would write a key that says nothing.
+        if (prefs.locations.isNotEmpty()) bag.putStringSet(KEY_LOCATIONS, prefs.locations)
     }
 
     fun decodeReader(bag: PrefBag): ReaderPrefs {
