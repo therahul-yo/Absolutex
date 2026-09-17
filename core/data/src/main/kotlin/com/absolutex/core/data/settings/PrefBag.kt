@@ -25,6 +25,14 @@ interface MutablePrefBag : PrefBag {
     fun putInt(key: String, value: Int)
     fun putString(key: String, value: String)
     fun putStringSet(key: String, value: Set<String>)
+
+    /**
+     * Deletes [key] outright, distinct from writing an empty or default value in its place:
+     * `putStringSet(key, emptySet())` still leaves a present entry, and a set backed by
+     * [DataStoreSettings] only ever forgets a stored value this way — writing one value over
+     * another never removes what the store no longer needs (see [PrefCodec.encodeApp]).
+     */
+    fun remove(key: String)
 }
 
 /**
@@ -69,5 +77,9 @@ class MapPrefBag(initial: Map<String, Any> = emptyMap()) : MutablePrefBag {
 
     override fun putStringSet(key: String, value: Set<String>) {
         values[key] = LinkedHashSet(value)
+    }
+
+    override fun remove(key: String) {
+        values.remove(key)
     }
 }
