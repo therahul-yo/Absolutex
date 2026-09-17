@@ -22,6 +22,13 @@ interface PageImage : Closeable {
     /** One tile at its own subsample, or null when it cannot be produced. */
     fun decodeTile(tile: Tile): Bitmap?
 
+    /**
+     * Whole page fit inside a [targetEdge]×[targetEdge] box, software-allocated. The crop path
+     * reads this back for [com.absolutex.core.gpu.CropMath.detect]; a HARDWARE bitmap cannot be
+     * read back without a GPU→CPU stall, so the thumbnail forces ALLOCATOR_SOFTWARE.
+     */
+    fun decodeThumbnail(targetEdge: Int): Bitmap?
+
     companion object {
         /** Scales (w,h) to fit inside the target box, preserving aspect ratio. */
         fun fitInside(w: Int, h: Int, boxW: Int, boxH: Int): Pair<Int, Int> {
@@ -78,6 +85,22 @@ private class EncodedPageImage(
             decoder.allocator = ImageDecoder.ALLOCATOR_HARDWARE
             decoder.isMutableRequired = false
         }
+    }
+
+    /**
+     * Crop-detection thumbnail: software-allocated so it can be read back without a GPU stall.
+     * The base layer stays HARDWARE for the display path; only the crop thumb is forced SOFTWARE.
+     */
+    override fun decodeThumbnail(targetEdge: Int): Bitmap? {
+        val src = ImageDecoder.createSource(ByteBuffer.wrap(bytes))
+        return runCatching {
+            ImageDecoder.decodeBitmap(src) { decoder, info, _ ->
+                val (w, h) = PageImage.fitInside(info.size.width, info.size.height, targetEdge, targetEdge)
+                decoder.setTargetSize(w, h)
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                decoder.isMutableRequired = false
+            }
+        }.getOrNull()
     }
 
     /** Returns null if the region decoder is unavailable. */

@@ -312,10 +312,10 @@ fun PageCanvas(
         }
     }
 
-    // Border-crop detection, before the base layer below: a thumbnail analysed off the main
-    // thread, so the crop is decided before the first paint and layout never snaps. The thumb
-    // copy is the only readback in this workstream — ~14 K pixels once per page, traced as
-    // `absx.cropDetect` so the lead can read the per-page cost in Perfetto.
+    // Border-crop detection, before the base layer below: the thumbnail, its readback and
+    // detection run off the main thread, so the crop is decided before the first paint and
+    // layout never snaps. No hardware bitmap is ever touched on Main here: the thumbnail is
+    // allocated software and the work runs entirely on DecodeDispatchers.decode.
     LaunchedEffect(pageIndex, cropEnabled) {
         if (!cropActive) {
             crop = null
@@ -327,31 +327,23 @@ fun PageCanvas(
         val (vw, vh) = viewport
         if (vw <= 0 || vh <= 0) return@LaunchedEffect
         if (page.width <= 0 || page.height <= 0) return@LaunchedEffect
-        val thumbScale = CropMath.THUMB_EDGE.toFloat() / max(page.width, page.height)
-        val tw = max(1, (page.width * thumbScale).toInt())
-        val th = max(1, (page.height * thumbScale).toInt())
-        val thumb = baseLayer(tw, th)
-        if (thumb == null) {
-            cropDecided = true
-            cropDecidedCb?.invoke(null)
-            return@LaunchedEffect
-        }
         try {
-            // copy() is the documented hardware-to-software path (Palette does the same); any
-            // failure here falls back to no crop, never a broken page.
-            Trace.beginSection("absx.cropCopy")
-            val soft = runCatching { thumb.copy(Bitmap.Config.ARGB_8888, false) }.getOrNull()
-            Trace.endSection()
-            if (soft != null) {
-                val sw = soft.width
-                val sh = soft.height
+            val result = withContext(DecodeDispatchers.decode) {
+                val thumb = runCatching { page.decodeThumbnail(CropMath.THUMB_EDGE) }.getOrNull()
+                if (thumb == null) return@withContext null
+                val sw = thumb.width
+                val sh = thumb.height
                 val pixels = IntArray(sw * sh)
-                soft.getPixels(pixels, 0, sw, 0, 0, sw, sh)
-                soft.recycle()
                 Trace.beginSection("absx.cropDetect")
-                crop = CropMath.detect(pixels, sw, sh)?.scaleFrom(sw, sh, page.width, page.height)
-                Trace.endSection()
+                try {
+                    thumb.getPixels(pixels, 0, sw, 0, 0, sw, sh)
+                    CropMath.detect(pixels, sw, sh)?.scaleFrom(sw, sh, page.width, page.height)
+                } finally {
+                    Trace.endSection()
+                    thumb.recycle()
+                }
             }
+            crop = result
         } finally {
             cropDecided = true
             cropDecidedCb?.invoke(crop)
