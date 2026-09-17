@@ -31,11 +31,12 @@ import java.io.File
  * `tools/run-benchmark.sh 'com.absolutex.benchmark.UpscaleBenchmark#refineLanczos4x'`.
  * `tools/run-benchmark.sh 'com.absolutex.benchmark.UpscaleBenchmark#refinePlatform4x'`.
  *
- * Screenshot spec for the lead: Absolute Batman CBR, page 1 (cover), 3× zoom on a speech
- * bubble. Capture the same page and zoom with PLATFORM, MITCHELL and LANCZOS selected
- * (upscaler travels on Upscaler.EXTRA_UPSCALER). The speech bubble's text edges are the
- * comparison target — bilinear softens them, Mitchell sharpens with mild ringing, Lanczos
- * sharpens with more ringing.
+ * Screenshot spec for the lead: Absolute Batman CBR, **one interior page with speech bubbles
+ * (page 3), at 4× zoom** — not the cover (covers are high-resolution colour art with little
+ * lettering, so they hide the softness an upscaler fixes). Capture the same page and zoom with
+ * PLATFORM, MITCHELL and LANCZOS selected (upscaler travels on Upscaler.EXTRA_UPSCALER). The
+ * speech bubble's text edges are the comparison target — bilinear softens them, Mitchell sharpens
+ * with mild ringing, Lanczos sharpens with more ringing.
  */
 @RunWith(AndroidJUnit4::class)
 class UpscaleBenchmark {

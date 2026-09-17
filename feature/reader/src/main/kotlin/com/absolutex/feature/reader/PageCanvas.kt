@@ -412,6 +412,11 @@ fun PageCanvas(
                     // Set when a declined drag runs along a free pager's axis: the pager is turning the
                     // page, and a pinch now would fight its drag, so the rest of the gesture is its.
                     var released = false
+                    // TODO(lead): the `gestureActive = false` reset at the end of this loop runs only
+                    // on a normal exit, not if the coroutine is cancelled (e.g. fitMode changes
+                    // mid-pinch — the fit chips sit live over the page). Use try/finally so the
+                    // kernel re-engages on any exit. See #23 review item 2. PageCanvas is lead-owned
+                    // until lead/review-fixes merges; leaving this marker for that fix.
                     do {
                         val event = awaitPointerEvent()
                         if (event.changes.any { it.isConsumed }) break
