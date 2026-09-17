@@ -412,12 +412,13 @@ fun PageCanvas(
                     // Set when a declined drag runs along a free pager's axis: the pager is turning the
                     // page, and a pinch now would fight its drag, so the rest of the gesture is its.
                     var released = false
-                    // TODO(lead): the `gestureActive = false` reset at the end of this loop runs only
-                    // on a normal exit, not if the coroutine is cancelled (e.g. fitMode changes
-                    // mid-pinch — the fit chips sit live over the page). Use try/finally so the
-                    // kernel re-engages on any exit. See #23 review item 2. PageCanvas is lead-owned
-                    // until lead/review-fixes merges; leaving this marker for that fix.
-                    do {
+                    // The `gestureActive = false` reset runs in a `finally` so it fires on any
+                    // exit — including when the coroutine is cancelled (e.g. fitMode changes
+                    // mid-pinch, since the fit chips sit live over the page). Without `finally`,
+                    // a cancelled gesture leaves `atRest` stuck false and the kernel never
+                    // re-engages until the page changes. Fixes #24 review item 2.
+                    try {
+                        do {
                         val event = awaitPointerEvent()
                         if (event.changes.any { it.isConsumed }) break
 
@@ -461,10 +462,12 @@ fun PageCanvas(
                                 event.changes.forEach { if (it.positionChanged()) it.consume() }
                             }
                         }
-                    } while (!released && event.changes.any { it.pressed })
-                    // Fingers up: the next repaint refines with the kernel, if one is selected.
-                    gestureActive = false
-                }
+                        } while (!released && event.changes.any { it.pressed })
+                    } finally {
+                        // Fingers up (or the coroutine was cancelled): the next repaint refines
+                        // with the kernel, if one is selected.
+                        gestureActive = false
+                    }
             }
             // rightToLeft is a key: onTap mirrors the grid by it, and a flow change mid-page would
             // otherwise leave taps turning pages the old way while swipes already go the new way.
