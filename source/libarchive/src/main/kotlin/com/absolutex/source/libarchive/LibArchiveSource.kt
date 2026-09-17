@@ -100,8 +100,15 @@ class LibArchiveSource private constructor(
             val ordinals = IntArray(kept.size) { kept[it].first }
             // Locate against the RAW entry list (ordinals must match nativeExtract), parse once;
             // a missing, unreadable or malformed ComicInfo costs the metadata, not the open.
-            val info = ComicInfoLoader.from(raw.map { String(it, Charsets.UTF_8) }) { ordinal ->
-                openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinal, password) }?.let { ordinal to it }
+            val info = try {
+                ComicInfoLoader.from(raw.map { String(it, Charsets.UTF_8) }) { ordinal ->
+                    val bytes = openFd().use { pfd ->
+                        LibArchive.nativeExtract(pfd.fd, ordinal, password)
+                    }?.let { if (it.size > 1024 * 1024) null else it }
+                    bytes?.let { ordinal to it }
+                }
+            } catch (e: Exception) {
+                null
             }
             // Only recovery pays for payload validation. Header discovery alone overcounts the
             // final cut-off entry; metadata can also reveal a cut exactly between entries.
