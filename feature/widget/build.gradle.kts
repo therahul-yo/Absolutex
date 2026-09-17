@@ -18,7 +18,12 @@ dependencies {
     implementation(project(":core:data"))
     // Compose BOM alignment, matching the other Compose feature modules.
     implementation(platform(libs.compose.bom))
-    implementation(libs.glance.appwidget)
+    implementation(libs.glance.appwidget) {
+        // Glance lists WorkManager only for actionRunCallback, which this widget never uses
+        // (refresh is a broadcast; updatePeriodMillis=0). Measured in PR #19: WorkManager drags
+        // in a protobuf runtime and its own Room job database — the bulk of the widget's dex cost.
+        exclude(group = "androidx.work")
+    }
     implementation(libs.hilt.android) // EntryPointAccessors only; Hilt codegen stays in :app.
     implementation(libs.kotlinx.coroutines.android)
 
