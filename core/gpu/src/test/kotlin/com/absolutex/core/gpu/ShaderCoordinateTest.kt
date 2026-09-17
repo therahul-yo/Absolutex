@@ -54,7 +54,11 @@ class ShaderCoordinateTest {
     @Test
     fun `mitchell taps are one source texel apart at 2x magnification`() {
         // 2x zoom: dst is 2x the bitmap, so scale = 0.5 (canvas = bitmap * 0.5 + trans).
-        val (p, taps) = samplePositions(Upscaler.MITCHELL, scaleX = 0.5f, scaleY = 0.5f, transX = 0f, transY = 0f, 120.6f, 80.3f)
+        val pos = samplePositions(
+            Upscaler.MITCHELL, scaleX = 0.5f, scaleY = 0.5f,
+            transX = 0f, transY = 0f, 120.6f, 80.3f,
+        )
+        val taps = pos.second
         // Adjacent horizontal taps differ by exactly scaleX * 1 texel = 0.5 canvas px, which
         // corresponds to 1 source texel. That's the whole point: taps must cover the kernel
         // support, not collapse onto each other.
@@ -69,7 +73,10 @@ class ShaderCoordinateTest {
 
     @Test
     fun `mitchell taps are one source texel apart at 4x magnification`() {
-        val (p, taps) = samplePositions(Upscaler.MITCHELL, scaleX = 0.25f, scaleY = 0.25f, transX = 0f, transY = 0f, 120.6f, 80.3f)
+        val taps = samplePositions(
+            Upscaler.MITCHELL, scaleX = 0.25f, scaleY = 0.25f,
+            transX = 0f, transY = 0f, 120.6f, 80.3f,
+        ).second
         val rowStart = taps.take(4)
         for (k in 1 until rowStart.size) {
             val dx = abs(rowStart[k].first - rowStart[k - 1].first)
@@ -82,7 +89,10 @@ class ShaderCoordinateTest {
         // For s = 0.5 (2x), t = 100, fragCoord 120.6 → bitmap (120.6 - 100) / 0.5 = 41.2.
         // The lead's work example: true bitmap pixel 10.3 for the older wrong case, but the
         // key property is the inverse-map arithmetic itself, pinned here.
-        val (p, taps) = samplePositions(Upscaler.MITCHELL, scaleX = 0.5f, scaleY = 0.5f, transX = 100f, transY = 50f, 120.6f, 80.3f)
+        val p = samplePositions(
+            Upscaler.MITCHELL, scaleX = 0.5f, scaleY = 0.5f,
+            transX = 100f, transY = 50f, 120.6f, 80.3f,
+        ).first
         assertEquals("p.x is inverse-mapped", (120.6f - 100f) / 0.5f, p.first, 1e-4f)
         assertEquals("p.y is inverse-mapped", (80.3f - 50f) / 0.5f, p.second, 1e-4f)
     }
@@ -98,7 +108,11 @@ class ShaderCoordinateTest {
         val scaleX = 0.5f; val scaleY = 0.5f; val transX = 0f; val transY = 0f
         val fragCoordX = 60.6f; val fragCoordY = 40.3f
 
-        val (p, taps) = samplePositions(upscaler, scaleX, scaleY, transX, transY, fragCoordX, fragCoordY)
+        val pos = samplePositions(
+            upscaler, scaleX, scaleY, transX, transY, 60.6f, 40.3f,
+        )
+        val p = pos.first
+        val taps = pos.second
 
         // The shader's canvas-space taps, inverse-mapped back to the bitmap, must equal the
         // UpscaleMath window texels for the same center.
@@ -131,7 +145,10 @@ class ShaderCoordinateTest {
         // The fixed shader must NOT produce taps this close: the real spacing is 1 texel in
         // bitmap space, which is `scale` canvas px apart. We assert the gap is meaningfully
         // larger than a quarter-texel so a regression to the double-inverse-map is caught.
-        val (p, taps) = samplePositions(Upscaler.MITCHELL, scaleX = 0.25f, scaleY = 0.25f, transX = 0f, transY = 0f, 120.6f, 80.3f)
+        val taps = samplePositions(
+            Upscaler.MITCHELL, scaleX = 0.25f, scaleY = 0.25f,
+            transX = 0f, transY = 0f, 120.6f, 80.3f,
+        ).second
         val rowStart = taps.take(4)
         val gap = abs(rowStart[1].first - rowStart[0].first)
         // A collapsed window has gaps < 0.1 canvas px; the real one is 0.25 px. Keep the
