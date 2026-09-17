@@ -36,6 +36,8 @@ class LibArchiveSource private constructor(
     private val ordinals: IntArray,
     override val comicInfo: ComicInfo?,
     override val pageReadability: PageReadability?,
+    val isEncrypted: Boolean,
+    private val passphrase: ArchivePassphrase,
 ) : ComicSource {
 
     override fun openPage(index: Int): InputStream {
@@ -44,14 +46,15 @@ class LibArchiveSource private constructor(
         // By ordinal, never by name: two entries can share a name, and names do not survive a
         // JNI round trip byte-for-byte (see nativeList in archive_jni.c).
         val bytes = traced("absx.entryExtract") {
-            openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinals[index]) }
-        }
-            ?: throw IOException("unreadable entry: ${page.entryName}")
+            passphrase.useBytes { password ->
+                openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinals[index], password) }
+            }
+        } ?: throw IOException("unreadable entry: ${page.entryName}")
         return ByteArrayInputStream(bytes)
     }
 
-    /** Owns no descriptor — each read opens and closes its own. */
-    override fun close() = Unit
+    /** Owns no descriptor; clear the session password and reject subsequent reads. */
+    override fun close() = passphrase.close()
 
     companion object {
         private const val MAX_COMIC_INFO_BYTES = 1024 * 1024
@@ -70,12 +73,40 @@ class LibArchiveSource private constructor(
          * @throws IOException if the container cannot be read at all. A container that reads
          * partially retains discovered slots and reports readable payloads separately.
          */
-        fun open(openFd: () -> ParcelFileDescriptor): LibArchiveSource = traced("absx.archiveOpen") {
-            // Out-param rather than a richer return type: the listing already crosses JNI, and
-            // whether it reached clean EOF is the one bit separating "this is the whole book"
-            // from "this is what survived".
+        fun open(openFd: () -> ParcelFileDescriptor): LibArchiveSource = open(null, openFd)
+
+        /**
+         * Copies [passphrase]; the caller owns and should clear its CharArray after this call.
+         * Only a successful encrypted source retains its copy, until [close]. UTF-8 passwords
+         * must be nonempty and contain no NUL (libarchive's C-string contract).
+         * TODO(lead): catch ArchivePasswordException at the reader open boundary, prompt/retry
+         * for required/rejected passwords, and show unsupported encryption without retrying.
+         */
+        fun open(passphrase: CharArray?, openFd: () -> ParcelFileDescriptor): LibArchiveSource =
+            traced("absx.archiveOpen") {
+                val owned = ArchivePassphrase(passphrase)
+                var transferred = false
+                try {
+                    owned.useBytes { password -> openWithPassword(openFd, owned, password) }
+                        .also { transferred = true }
+                } finally {
+                    if (!transferred) owned.close()
+                }
+            }
+
+        private fun openWithPassword(
+            openFd: () -> ParcelFileDescriptor,
+            owned: ArchivePassphrase,
+            password: ByteArray?,
+        ): LibArchiveSource {
+            // Out-params rather than a richer return type: the listing already crosses JNI, and
+            // whether it reached clean EOF — and whether anything in it is encrypted — are the
+            // two bits separating "this is the whole book" from "this is what survived".
             val complete = BooleanArray(1)
-            val raw = traced("absx.entryList") { openFd().use { LibArchive.nativeList(it.fd, complete) } }
+            val encrypted = BooleanArray(1)
+            val raw = traced("absx.entryList") {
+                openFd().use { LibArchive.nativeList(it.fd, complete, encrypted, password) }
+            }
                 ?: throw IOException("not a readable archive")
             // String(bytes, UTF_8) substitutes U+FFFD for malformed input instead of throwing, so
             // a Shift-JIS name from an old Japanese scan degrades to mojibake, not to a crash.
@@ -90,19 +121,21 @@ class LibArchiveSource private constructor(
             // Locate against the RAW entry list (ordinals must match nativeExtract), parse once;
             // a missing, unreadable or malformed ComicInfo costs the metadata, not the open.
             // Any failure below — unreadable entry, malformed XML, a sidecar too large to be
-            // real — costs the metadata, not the book. The cap is checked after extraction
-            // because the size limit would otherwise have to live in JNI; 1 MiB is far past
-            // any ComicInfo.xml a real scan carries.
+            // real, a wrong password — costs the metadata, not the book. The cap is checked
+            // after extraction because the size limit would otherwise have to live in JNI;
+            // 1 MiB is far past any ComicInfo.xml a real scan carries.
             //
-            // runCatching, never a throwing read. This is what #38 exists to deliver: a corrupt
-            // or truncated ComicInfo.xml degrades to comicInfo = null instead of killing the
-            // book open. The branch this was rebuilt from had a version that caught IOException
-            // and rethrew it wrapped, called unconditionally, which reverses that guarantee —
-            // it is deliberately not carried over. MAX_COMIC_INFO_BYTES rather than a literal,
-            // so the limit is stated once and cannot drift.
+            // runCatching, never a throwing read. This is the guarantee #38 exists to deliver:
+            // a corrupt or truncated ComicInfo.xml degrades to comicInfo = null instead of
+            // killing the book open. The branch this was rebuilt from had a version that caught
+            // IOException and rethrew it wrapped, called unconditionally — which reverses that
+            // guarantee, and is deliberately not carried over. MAX_COMIC_INFO_BYTES rather than
+            // a literal, so the limit is stated once and cannot drift.
             val info = runCatching {
                 ComicInfoLoader.from(raw.map { String(it, Charsets.UTF_8) }) { ordinal ->
-                    val bytes = openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinal) }
+                    val bytes = openFd().use { pfd ->
+                        LibArchive.nativeExtract(pfd.fd, ordinal, password)
+                    }
                     bytes?.takeIf { it.size <= MAX_COMIC_INFO_BYTES }?.let { ordinal to it }
                 }
             }.getOrNull()
@@ -111,12 +144,14 @@ class LibArchiveSource private constructor(
             val recovery = !complete[0] || (info?.pageCount ?: 0) > pages.size
             val readability = if (recovery) {
                 PageReadability.inspect(ordinals.toList(), info?.pageCount) { ordinal ->
-                    openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinal) }?.isNotEmpty() == true
+                    openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinal, password) }?.isNotEmpty() == true
                 }
             } else {
                 null
             }
-            LibArchiveSource(openFd, pages, ordinals, info, readability)
+            // A plain archive keeps no copy of the password it never needed.
+            if (!encrypted[0]) owned.forget()
+            return LibArchiveSource(openFd, pages, ordinals, info, readability, encrypted[0], owned)
         }
     }
 }
