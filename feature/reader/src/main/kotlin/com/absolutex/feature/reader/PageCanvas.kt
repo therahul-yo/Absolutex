@@ -192,6 +192,7 @@ fun PageCanvas(
     // mid-page cannot leave it turning pages with the old direction.
     val edgeSwipe by rememberUpdatedState(onEdgeSwipe)
     val lockChanged by rememberUpdatedState(onPagerLockChanged)
+    val cropDecidedCb by rememberUpdatedState(onCropDecided)
     // True while a pinch or a claimed pan owns this page. The draw lambda reads it to pick the
     // sampling kernel: kernel upscalers refine only at rest, so gesture frames never pay for
     // taps. Draw-observed like scale above — no recomposition on touch down or release.
@@ -319,6 +320,7 @@ fun PageCanvas(
         if (!cropActive) {
             crop = null
             cropDecided = true
+            cropDecidedCb?.invoke(null)
             return@LaunchedEffect
         }
         if (cropDecided) return@LaunchedEffect
@@ -331,6 +333,7 @@ fun PageCanvas(
         val thumb = baseLayer(tw, th)
         if (thumb == null) {
             cropDecided = true
+            cropDecidedCb?.invoke(null)
             return@LaunchedEffect
         }
         try {
@@ -351,6 +354,7 @@ fun PageCanvas(
             }
         } finally {
             cropDecided = true
+            cropDecidedCb?.invoke(crop)
         }
     }
 

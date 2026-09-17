@@ -7,6 +7,7 @@ import android.content.pm.ActivityInfo
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.Flow
 import com.absolutex.core.data.settings.ReaderPrefs
+import com.absolutex.core.gpu.CropRect
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.isShiftPressed
@@ -311,6 +312,7 @@ private fun Strip(
                         spreadSide = SpreadSide.NONE, onBaseReady = { if (index == startPage) firstPageDrawn = true },
                         decodeNow = true, zoomSteps = null,
                         onLoaded = { aspects[index] = it.width.toFloat() / it.height },
+                        onCropDecided = { crop -> if (crop != null) aspects[index] = crop.width.toFloat() / crop.height },
                     )
                 }
             }
@@ -574,6 +576,8 @@ private fun PageSlot(
     zoomSteps: Flow<Float>?,
     /** The page's header is read: its dimensions are known. Only valid (non-empty) pages. */
     onLoaded: (PageImage) -> Unit = {},
+    /** Fires once when the page's border crop is decided (or null if uncropped / crop disabled). */
+    onCropDecided: ((CropRect?) -> Unit)? = null,
 ) {
     var image by remember(index) { mutableStateOf<PageImage?>(null) }
     var attempts by remember(index) { mutableIntStateOf(0) }
@@ -612,6 +616,7 @@ private fun PageSlot(
             onBaseReady = onBaseReady,
             baseLayer = { w, h -> vm.baseLayer(index, img, w, h) },
             zoomSteps = zoomSteps,
+            onCropDecided = onCropDecided,
         )
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
