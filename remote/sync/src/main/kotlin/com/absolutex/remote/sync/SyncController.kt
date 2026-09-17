@@ -1,11 +1,11 @@
 package com.absolutex.remote.sync
 
 import com.absolutex.core.data.ProgressDao
-import com.absolutex.core.data.ReadingProgress
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
-import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -38,119 +38,111 @@ interface ServerSync {
  *   [onPageSettled] from the already-debounced write path, so there is no second debounce
  *   here by design.
  * - Pull (app start, book open, manual): newer remote positions are adopted with the
- *   remote's own timestamp, so the next comparison ties instead of flip-flopping.
+ *   remote's own timestamp, so the next comparison ties instead of flip-flopping — except
+ *   for the already-open book, whose pulls surface on [progressOffers] instead of moving
+ *   the page (see below).
+ * - App background: the app shell calls [onAppBackgrounded] from its own lifecycle observer
+ *   (lifecycle-process is deliberately not a dependency — see the wiring PR's Decisions).
  *
  * TODO(lead): wire ReaderViewModel — after `bookId` is known in `open()`, call
  *   `onBookOpened(bookId)` and prefer the returned page over `progressDao` when non-null
  *   (before the first frame); in `onPageChanged`'s debounced write, call
  *   `onPageSettled(bookId)` after the upsert; in `onCleared`'s flush, call
  *   `onBookClosed(bookId)`.
- * TODO(library): wire app start — in `AbsolutexApp.onCreate` (or the first MainActivity
- *   composition), inject this controller and call `onAppStart()` in a scope.
+ * TODO(lead): offer "Continue at page N from <server>" — collect `progressOffers` in the
+ *   reader chrome and show a non-moving snackbar/dialog for non-null values (adopting only
+ *   on tap, then call `consumeOffer()`); a pull landing after the first page must never
+ *   move the page on its own.
+ * TODO(library): wire app start and background — in `AbsolutexApp.onCreate` (or the first
+ *   MainActivity composition), inject this controller and call `onAppStart()` in a scope;
+ *   observe the app lifecycle there and call `onAppBackgrounded()` when it leaves the
+ *   foreground while reading.
  */
 @Singleton
 class SyncController @Inject constructor(
-    private val progressDao: ProgressDao,
-    private val servers: SyncServers,
+    progressDao: ProgressDao,
+    servers: SyncServers,
     secrets: SyncSecrets,
-    private val queue: SyncQueue,
+    queue: SyncQueue,
     http: HttpCall,
+    clock: ServerClock,
 ) {
-    private val komga = KomgaSync(http, secrets, progressDao)
-    private val kavita = KavitaSync(http, secrets, progressDao)
+    private val runner = SyncRunner(
+        progressDao,
+        servers,
+        queue,
+        KomgaSync(http, secrets, progressDao, clock),
+        KavitaSync(http, secrets, progressDao, clock),
+    )
+
+    private val _offers = MutableStateFlow<RemoteProgressOffer?>(null)
+
+    /** Newer remote positions for the already-open book; the reader offers, never applies. */
+    val progressOffers: StateFlow<RemoteProgressOffer?> = _offers.asStateFlow()
+
+    /** Book the reader currently holds open, if any — pulls for it become offers. */
+    private var openBookId: String? = null
 
     /** App start / manual: flush the outbox, then adopt anything newer for known books. */
     suspend fun onAppStart() = withContext(Dispatchers.IO) {
-        drainQueue()
-        pullKnownBooks()
+        runner.drainQueue()
+        runner.pullKnownBooks(openBookId) { _offers.value = it }
     }
 
     suspend fun onManualSync() = withContext(Dispatchers.IO) {
-        drainQueue()
-        pullKnownBooks()
+        runner.drainQueue()
+        runner.pullKnownBooks(openBookId) { _offers.value = it }
+    }
+
+    /**
+     * App to background while reading: push the open book first (the reader may not be
+     * torn down, so its close flush may never run), then the manual pass.
+     */
+    suspend fun onAppBackgrounded(bookId: String?) = withContext(Dispatchers.IO) {
+        if (bookId != null) {
+            runner.pushBook(bookId)
+        }
+        runner.drainQueue()
+        runner.pullKnownBooks(openBookId) { _offers.value = it }
     }
 
     /** Book open: pull only. Returns a position to adopt pre-first-paint, or null. */
     suspend fun onBookOpened(bookId: String): PulledPosition? = withContext(Dispatchers.IO) {
-        val local = progressDao.get(bookId)?.toSync()
-        if (local == null) return@withContext null
-        for (server in servers.current()) {
-            val pulled = runnerFor(server).pull(server, local)
-            if (pulled != null) return@withContext PulledPosition(pulled.pageIndex)
-        }
-        null
+        openBookId = bookId
+        val pulled = runner.pullBook(bookId, offerWhenOpen = false, openBookId) { _offers.value = it }
+        if (pulled != null) PulledPosition(pulled.pageIndex) else null
     }
 
     /** Book close / page settle: compare-then-push per server, enqueue on failure. */
     suspend fun onBookClosed(bookId: String) = withContext(Dispatchers.IO) {
-        pushBook(bookId)
+        runner.pushBook(bookId)
+        if (openBookId == bookId) {
+            openBookId = null
+        }
+        if (_offers.value?.bookId == bookId) {
+            _offers.value = null
+        }
     }
 
     suspend fun onPageSettled(bookId: String) = withContext(Dispatchers.IO) {
-        pushBook(bookId)
+        runner.pushBook(bookId)
     }
 
-    private suspend fun pushBook(bookId: String) {
-        val local = progressDao.get(bookId)?.toSync() ?: return
-        var queued = false
-        for (server in servers.current()) {
-            try {
-                runnerFor(server).sync(server, local)
-            } catch (e: IOException) {
-                queue.enqueue(local.toPending(server.id), e.message)
-                queued = true
-            }
-        }
-        if (queued) drainQueue()
+    /** Folder browse / refresh for one server: flush its outbox, then pull through it. */
+    suspend fun syncNow(serverId: String) = withContext(Dispatchers.IO) {
+        runner.syncServer(serverId, openBookId) { _offers.value = it }
     }
 
-    private suspend fun drainQueue() {
-        val now = System.currentTimeMillis()
-        val byServer = queue.due(now).groupBy { it.serverId }
-        for ((serverId, entries) in byServer) {
-            val server = servers.current().firstOrNull { it.id == serverId } ?: continue
-            val runner = runnerFor(server)
-            for (entry in entries) {
-                try {
-                    runner.sync(server, entry.toSync())
-                    queue.remove(serverId, entry.bookId)
-                } catch (e: IOException) {
-                    queue.recordFailure(entry, now, e.message)
-                }
-            }
+    /** Pushes (and pulls) exactly these books — the browse/refresh trigger for a folder. */
+    suspend fun syncBooks(bookIds: List<String>) = withContext(Dispatchers.IO) {
+        for (bookId in bookIds) {
+            runner.pushBook(bookId)
+            runner.pullBook(bookId, offerWhenOpen = true, openBookId) { _offers.value = it }
         }
     }
 
-    private suspend fun pullKnownBooks() {
-        val locals = progressDao.observeAll().first()
-        for (server in servers.current()) {
-            val runner = runnerFor(server)
-            var failure: IOException? = null
-            for (local in locals) {
-                if (failure != null) break
-                try {
-                    runner.pull(server, local.toSync())?.let { adopt(local, it) }
-                } catch (e: IOException) {
-                    failure = e
-                }
-            }
-        }
+    /** Clears the current offer after the reader has shown or adopted it. */
+    fun consumeOffer() {
+        _offers.value = null
     }
-
-    /** Adopts a pulled position with the remote's timestamp, so the next compare ties. */
-    private suspend fun adopt(local: ReadingProgress, pulled: SyncProgress) {
-        progressDao.upsert(local.copy(pageIndex = pulled.pageIndex, updatedAt = pulled.updatedAt))
-    }
-
-    private fun runnerFor(server: SyncServer): ServerSync =
-        if (server.kind == ServerKind.KOMGA) komga else kavita
 }
-
-private fun ReadingProgress.toSync(): SyncProgress =
-    SyncProgress(bookId = bookId, pageIndex = pageIndex, pageCount = pageCount, updatedAt = updatedAt)
-
-private fun SyncProgress.toPending(serverId: String): PendingPush =
-    PendingPush(serverId, bookId, pageIndex, pageCount, updatedAt)
-
-private fun PendingPush.toSync(): SyncProgress =
-    SyncProgress(bookId = bookId, pageIndex = pageIndex, pageCount = pageCount, updatedAt = updatedAt)

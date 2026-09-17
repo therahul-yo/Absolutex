@@ -19,9 +19,16 @@ internal const val RANGE = "Range"
 
 internal val JSON_HEADERS: Map<String, String> = mapOf("Content-Type" to "application/json")
 
-data class HttpResponse(val code: Int, val body: String)
+internal const val DATE_HEADER = "Date"
 
-class HttpBytesResponse(val code: Int, val bytes: ByteArray)
+/**
+ * Text response. [serverDateMs] is the server's `Date` header in epoch millis, or null when
+ * the server sent none (or it did not parse): the clock-skew correction observes the server
+ * clock through this field, never through the body.
+ */
+data class HttpResponse(val code: Int, val body: String, val serverDateMs: Long? = null)
+
+class HttpBytesResponse(val code: Int, val bytes: ByteArray, val serverDateMs: Long? = null)
 
 interface HttpCall {
     fun request(method: String, url: String, headers: Map<String, String>, body: String?): HttpResponse
@@ -42,7 +49,7 @@ class HttpUrlConnectionCall(
         val connection = openConnection(method, url, headers)
         try {
             if (body != null) connection.writeBody(body)
-            return HttpResponse(connection.responseCode, connection.readBody())
+            return HttpResponse(connection.responseCode, connection.readBody(), connection.serverDate())
         } finally {
             connection.disconnect()
         }
@@ -55,7 +62,7 @@ class HttpUrlConnectionCall(
     ): HttpBytesResponse {
         val connection = openConnection(method, url, headers)
         try {
-            return HttpBytesResponse(connection.responseCode, connection.readBytesBody())
+            return HttpBytesResponse(connection.responseCode, connection.readBytesBody(), connection.serverDate())
         } finally {
             connection.disconnect()
         }
@@ -92,4 +99,11 @@ class HttpUrlConnectionCall(
         val stream = if (responseCode >= HTTP_BAD_REQUEST) errorStream else inputStream
         return stream?.use { it.readBytes() } ?: ByteArray(0)
     }
+
+    /**
+     * The server's clock as observed on this response. `getHeaderFieldDate` parses the
+     * RFC-1123 `Date` every HTTP server sends; 0 (absent or unparseable) reads as unknown.
+     */
+    private fun java.net.HttpURLConnection.serverDate(): Long? =
+        getHeaderFieldDate(DATE_HEADER, 0L).takeIf { it > 0L }
 }

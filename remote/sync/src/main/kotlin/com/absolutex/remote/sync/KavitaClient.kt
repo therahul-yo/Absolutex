@@ -25,9 +25,30 @@ class KavitaClient(private val http: HttpCall, baseUrl: String) {
         private set
 
     /**
-     * API-key auth: the key rides as the bearer token (assumption — the lead validates on a
-     * live server). A rejected key surfaces as 401 on first use, never silently.
+     * API-key auth, verified against Kavita's source (develop): an auth key is NOT a bearer
+     * token — `POST /api/Plugin/authenticate` exchanges it for a JWT
+     * (PluginController.Authenticate; `apiKey` + `pluginName` are query params per the
+     * published OpenAPI, and the 200 is a UserDto carrying `token`/`refreshToken`, parsed
+     * like a login session). Sending the raw key as `Bearer` 401s on first use. The exchange
+     * result rides the normal bearer + refresh path below, so an expiring key behaves like an
+     * expiring login. Query-carried secret: Kavita's own design; HTTPS assumed (SyncServer
+     * validation), and the key itself still lives only in the credential store.
      */
+    fun exchangeApiKey(apiKey: CharArray, pluginName: String) {
+        val encoded = java.net.URLEncoder.encode(apiKey.concatToString(), Charsets.UTF_8)
+        val name = java.net.URLEncoder.encode(pluginName, Charsets.UTF_8)
+        val response = http.request(
+            "POST",
+            "$root/api/Plugin/authenticate?apiKey=$encoded&pluginName=$name",
+            JSON_HEADERS,
+            null,
+        )
+        if (response.code != HTTP_OK) throw IOException("kavita API-key exchange failed: ${response.code}")
+        val session = parseKavitaSession(response.body)
+        token = session.token
+        refreshToken = session.refreshToken
+    }
+
     fun setBearerToken(token: String) {
         this.token = token
         this.refreshToken = token

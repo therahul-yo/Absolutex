@@ -110,7 +110,7 @@ class SyncWiringTest {
         val secrets = SyncSecrets(InMemoryCredentialStore())
         secrets.saveApiKey("srv", "key".toCharArray())
         val queue = SyncQueue(dataStore("queue.preferences_pb"))
-        val controller = SyncController(dao, stores, secrets, queue, http)
+        val controller = SyncController(dao, stores, secrets, queue, http, ServerClock())
         return Triple(controller, fake, queue)
     }
 
@@ -126,6 +126,14 @@ class SyncWiringTest {
             .connectTimeout(java.time.Duration.ofSeconds(10))
             .build()
 
+        private fun java.net.http.HttpResponse<*>.serverDate(): Long? {
+            val raw = headers().firstValue(DATE_HEADER).orElse(null) ?: return null
+            return runCatching {
+                java.time.ZonedDateTime.parse(raw, java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME)
+                    .toInstant().toEpochMilli()
+            }.getOrNull()?.takeIf { it > 0L }
+        }
+
         override fun request(method: String, url: String, headers: Map<String, String>, body: String?): HttpResponse {
             val builder = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
             headers.forEach { (name, value) -> builder.header(name, value) }
@@ -136,7 +144,7 @@ class SyncWiringTest {
             }
             builder.method(method, publisher)
             val response = client.send(builder.build(), java.net.http.HttpResponse.BodyHandlers.ofString())
-            return HttpResponse(response.statusCode(), response.body())
+            return HttpResponse(response.statusCode(), response.body(), response.serverDate())
         }
 
         override fun requestBytes(method: String, url: String, headers: Map<String, String>): HttpBytesResponse {
@@ -285,7 +293,7 @@ class SyncWiringTest {
         val secrets = SyncSecrets(InMemoryCredentialStore())
         secrets.savePassword("srv", "s3cret".toCharArray())
         val queue = SyncQueue(dataStore("queue.preferences_pb"))
-        val controller = SyncController(dao, stores, secrets, queue, HttpUrlConnectionCall())
+        val controller = SyncController(dao, stores, secrets, queue, HttpUrlConnectionCall(), ServerClock())
         return Triple(controller, fake, queue)
     }
 
