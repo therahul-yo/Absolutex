@@ -172,6 +172,7 @@ class ReaderViewModel @Inject constructor(
         openJob = viewModelScope.launch {
             val opened = try {
                 withContext(DecodeDispatchers.extract) {
+                    // TODO(lead): route absolutex-remote:// Uris to RemoteBookOpener; OpenBook stays local.
                     context.openBook(uri) to context.identityOf(uri)
                 }
             } catch (e: CancellationException) {
