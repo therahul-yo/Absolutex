@@ -20,7 +20,9 @@ import javax.crypto.spec.GCMParameterSpec
 class AndroidKeystoreCredentialStore(private val storageDir: File) : SmbCredentialStore {
 
     override fun store(alias: String, password: CharArray) {
-        val plain = password.concatToString().toByteArray(Charsets.UTF_8)
+        // CharsetEncoder, never concatToString: a String pins the secret on the heap with no
+        // way to clear it, defeating the CharArray contract this interface documents.
+        val plain = with(CharCodec) { password.toUtf8Bytes() }
         try {
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.ENCRYPT_MODE, key())
@@ -50,7 +52,7 @@ class AndroidKeystoreCredentialStore(private val storageDir: File) : SmbCredenti
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(GCM_TAG_BITS, iv))
         val plain = cipher.doFinal(cipherText)
         try {
-            return String(plain, Charsets.UTF_8).toCharArray()
+            return with(CharCodec) { plain.toChars() }
         } finally {
             plain.fill(0)
         }
