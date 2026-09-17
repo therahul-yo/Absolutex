@@ -5,8 +5,13 @@ internal object LibArchive {
     init { System.loadLibrary("absolutex_archive") }
 
     /** Raw names in archive order. [complete] receives whether listing reached clean EOF. */
-    @JvmStatic external fun nativeList(fd: Int, complete: BooleanArray): Array<ByteArray>?
+    @JvmStatic external fun nativeList(
+        fd: Int,
+        complete: BooleanArray,
+        encrypted: BooleanArray,
+        passphrase: ByteArray?,
+    ): Array<ByteArray>?
 
     /** Data of the regular-file entry at [ordinal], as numbered by [nativeList]. */
-    @JvmStatic external fun nativeExtract(fd: Int, ordinal: Int): ByteArray?
+    @JvmStatic external fun nativeExtract(fd: Int, ordinal: Int, passphrase: ByteArray?): ByteArray?
 }

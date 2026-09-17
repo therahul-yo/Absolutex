@@ -19,28 +19,28 @@ import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 public class LibArchive {
     static { System.loadLibrary("absolutex_archive"); }
-    static native byte[][] nativeList(int fd, boolean[] complete);
-    static native byte[] nativeExtract(int fd, int ordinal);
+    static native byte[][] nativeList(int fd, boolean[] complete, boolean[] encrypted, byte[] password);
+    static native byte[] nativeExtract(int fd, int ordinal, byte[] password);
     public static void main(String[] args) throws Exception {
         try (FileInputStream in = new FileInputStream(args[0])) {
             Field field = FileDescriptor.class.getDeclaredField("fd");
             field.setAccessible(true);
             int fd = field.getInt(in.getFD());
             boolean[] complete = {true};
-            byte[][] names = nativeList(fd, complete);
+            byte[][] names = nativeList(fd, complete, new boolean[1], null);
             int listed = 0, readable = 0;
             for (int i = 0; i < names.length; i++) {
                 String name = new String(names[i], StandardCharsets.UTF_8);
                 if (name.endsWith(".png")) {
                     listed++;
-                    if (nativeExtract(fd, i) != null) readable++;
+                    if (nativeExtract(fd, i, null) != null) readable++;
                 }
             }
             System.out.printf("listed=%d readable=%d%n", listed, readable);
             if (listed != 14 || readable != 13 || complete[0]) {
                 throw new AssertionError("recovery must retain 14 slots but only 13 complete payloads");
             }
-            String info = new String(nativeExtract(fd, 0), StandardCharsets.UTF_8);
+            String info = new String(nativeExtract(fd, 0, null), StandardCharsets.UTF_8);
             if (!info.contains("<PageCount>20</PageCount>")) throw new AssertionError("missing total");
         }
     }
