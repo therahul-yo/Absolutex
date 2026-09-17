@@ -255,15 +255,8 @@ list_impl(JNIEnv *env, jclass clazz, jint fd, jbooleanArray complete,
                 throw_named(env, PASSWORD_REQUIRED, "Archive password required");
                 break;
             }
-            /* Headers alone don't verify ZIP passwords. Validate encrypted payloads before
-               publishing a source, including metadata and entries dropped by the page filter. */
-            jbyteArray probe = read_entry(env, a, entry);
-            if (probe == NULL) {
-                password_error(env, a);
-                throw_named(env, "java/io/IOException", "Encrypted archive entry is unreadable");
-                break;
-            }
-            (*env)->DeleteLocalRef(env, probe);
+            /* Single password probe deferred to Kotlin: nativeList only tracks the flag.
+               The Kotlin side performs one nativeExtract call to verify the password. */
         }
         if (!is_ordinal_entry(entry)) continue;
         if (n >= MAX_ENTRIES) {
