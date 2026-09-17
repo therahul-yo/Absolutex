@@ -73,6 +73,21 @@ class ThumbnailPipelineTest {
         pipeline().load(FakeSource(mapOf(0 to truncated())), request(0))
     }
 
+    @Test fun `immediate failure preserves IOException and allows retry`() = runTest {
+        // Inline execution forces completion before computeIfAbsent returns, without timing guesses.
+        val thumbs = ThumbnailPipeline(File(tmp.root, "inline"), dispatcher = Dispatchers.Unconfined)
+        val source = FakeSource(emptyMap())
+        try {
+            repeat(2) {
+                val failure = runCatching { thumbs.load(source, request(0)) }.exceptionOrNull()
+                assertTrue("Expected IOException, got $failure", failure is IOException)
+            }
+            assertEquals(2, source.reads.get())
+        } finally {
+            thumbs.close()
+        }
+    }
+
     @Test fun `poison is never cached so a retry re-reads the source`() = runTest {
         val source = FakeSource(mapOf(0 to truncated()))
         val thumbs = pipeline()

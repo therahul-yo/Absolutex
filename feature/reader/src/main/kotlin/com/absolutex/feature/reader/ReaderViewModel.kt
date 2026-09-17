@@ -31,6 +31,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -65,12 +66,27 @@ data class ReaderUiState(
 )
 
 @HiltViewModel
-class ReaderViewModel @Inject constructor(
+class ReaderViewModel internal constructor(
     @ApplicationContext private val context: Context,
     private val progressDao: ProgressDao,
     @TotalRamBytes private val totalRamBytes: Long,
     prefs: ReaderPrefsSource,
+    private val bookOpener: BookOpener,
 ) : ViewModel() {
+
+    /**
+     * The constructor Hilt uses; only the four Hilt-known params above are real dependencies.
+     * Needs its own internal constructor rather than a Kotlin default argument for [bookOpener]
+     * because Dagger cannot see Kotlin defaults on an `@Inject` constructor (see
+     * LibraryRepository for the same pattern and the same reason). Tests use the internal
+     * constructor to supply a fake [BookOpener].
+     */
+    @Inject constructor(
+        @ApplicationContext context: Context,
+        progressDao: ProgressDao,
+        @TotalRamBytes totalRamBytes: Long,
+        prefs: ReaderPrefsSource,
+    ) : this(context, progressDao, totalRamBytes, prefs, ContextBookOpener(context))
 
     /**
      * Reading flow and fit mode, live. Eager so the value is usually in hand before the first page:
@@ -99,8 +115,9 @@ class ReaderViewModel @Inject constructor(
     /**
      * Page thumbnails for the chrome's strip, on their own caches and dispatcher so a strip scroll
      * can never starve the page being read. One per book: its disk entries are keyed by book.
+     * Built lazily (see [ThumbPipelineHolder]), not in [open]: a book's first page never needs one.
      */
-    private var thumbs: ThumbnailPipeline? = null
+    private val thumbs = ThumbPipelineHolder(context.cacheDir)
     private var bookId: String = ""
     /** The Uri currently open, for the same-book check. Distinct from [bookId], the book's identity. */
     private var openedUri: String = ""
@@ -121,7 +138,6 @@ class ReaderViewModel @Inject constructor(
      */
     private val bases = ConcurrentHashMap<BaseKey, Deferred<Bitmap?>>()
 
-    private data class BaseKey(val bookId: String, val page: Int, val width: Int, val height: Int)
     private val openGeneration = AtomicInteger(0)
     private var openJob: Job? = null
     // Coalesces fling bursts into one Room write: cancel-and-relaunch around the upsert.
@@ -153,7 +169,14 @@ class ReaderViewModel @Inject constructor(
     // message, and the detail is logged. Narrowing would let an unlisted failure crash instead.
     @Suppress("TooGenericExceptionCaught")
     fun open(uri: Uri) {
-        if (openedUri == uri.toString() && source != null) return
+        // Already open, and nothing else is in flight to contradict it: a genuine no-op. The
+        // "nothing else in flight" half matters because a request to reopen the current book can
+        // arrive while a DIFFERENT book's open is still running — rapid back-and-forth on the one
+        // activity-scoped instance every book shares. openedUri/source are only written when an
+        // open finishes, so both still describe the current book for that whole in-flight window;
+        // without this check, reopening it here returned early having done nothing, leaving the
+        // other book's job as the only thing still running and its result the one that would win.
+        if (openedUri == uri.toString() && source != null && openJob?.isActive != true) return
         // The activity starts opening a launch Uri in onCreate, before the reader composes, and the
         // reader then asks for the same Uri. That second call must join the open in flight, not
         // cancel and restart it — a restart would throw away the head start it exists to give.
@@ -171,10 +194,17 @@ class ReaderViewModel @Inject constructor(
         _ui.value = ReaderUiState(loading = true)
         openJob = viewModelScope.launch {
             val opened = try {
-                withContext(DecodeDispatchers.extract) {
-                    // TODO(lead): route absolutex-remote:// Uris to RemoteBookOpener; OpenBook stays local.
-                    context.openBook(uri) to context.identityOf(uri)
-                }
+                // NonCancellable: bookOpener.open() (openBook()/identityOf() in production — see
+                // ContextBookOpener) is a blocking call with no suspension point of its own, so
+                // cancelling this job cannot interrupt it — it always runs to completion once
+                // started. Without NonCancellable, a cancel landing while it was already finishing
+                // still made this resume with a CancellationException, discarding the
+                // successfully-opened handle instead of returning it — leaking its fd (and, for a
+                // PDF, its native handle) because it was then never reachable by the generation
+                // check below, which is what already closes a result superseded by a newer,
+                // non-cancelling call to open().
+                // TODO(lead): route absolutex-remote:// Uris to RemoteBookOpener; OpenBook stays local.
+                withContext(NonCancellable) { bookOpener.open(uri) }
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
@@ -199,8 +229,10 @@ class ReaderViewModel @Inject constructor(
             // page decodes against it fail cleanly instead of racing a premature close.
             val old = source
             source = source0
-            thumbs?.close()
-            thumbs = ThumbnailPipeline(java.io.File(context.cacheDir, "thumbs"))
+            // Closed now, but not rebuilt until first use (see ThumbPipelineHolder): its
+            // disk-journal reconciliation is a real cost that must not land before the state
+            // below, which gates the first page.
+            thumbs.reset()
             openedUri = uri.toString()
             bookId = identity
             runCatching { old?.close() }
@@ -292,8 +324,12 @@ class ReaderViewModel @Inject constructor(
         if (bitmap == null) {
             bases.remove(key, decode)
         } else {
-            // Keep only the settled page's neighbourhood; a far base is cheap to decode again.
-            bases.keys.removeIf { kotlin.math.abs(it.page - settledPage) > BASE_WINDOW }
+            // Keep only the settled page's neighbourhood, and only this size for the page just
+            // decoded (see baseKeysToKeep): BaseKey carries width and height, and a page resized
+            // more than once while still in the window — a multi-window drag, a foldable
+            // fold/unfold, a rotation — must not keep one ~9 MB bitmap per size it was ever
+            // measured at.
+            bases.keys.retainAll(baseKeysToKeep(bases.keys, settledPage, BASE_WINDOW, key))
         }
         return bitmap
     }
@@ -356,8 +392,7 @@ class ReaderViewModel @Inject constructor(
         pageImages.clear()
         bases.clear()
         tileCache.clear()
-        thumbs?.close()
-        thumbs = null
+        thumbs.reset()
         runCatching { source?.close() }
         source = null
         super.onCleared()
@@ -378,7 +413,7 @@ class ReaderViewModel @Inject constructor(
                     PdfPageImage.open(src, index).decodeBase(width, width * THUMB_HEIGHT_LIMIT)
                 }
             } else {
-                thumbs?.load(src as ComicSource, ThumbRequest(bookId, index, ThumbRequest.snapWidth(width)))
+                thumbs.get().load(src as ComicSource, ThumbRequest(bookId, index, ThumbRequest.snapWidth(width)))
             }
         }.getOrNull()
     }
@@ -391,25 +426,36 @@ class ReaderViewModel @Inject constructor(
     suspend fun exportPage(index: Int): Uri? {
         val src = source ?: return null
         val title = _ui.value.title
-        return withContext(DecodeDispatchers.extract) {
-            runCatching {
-                if (src is PdfDocument) {
+        return runCatching {
+            if (src is PdfDocument) {
+                // Its own dispatcher, not extract's (see DecodeDispatchers.export): a
+                // full-resolution render (up to EXPORT_MAX_EDGE, already the bound export needs —
+                // PageImage.fitInside never renders larger than that box) can run for hundreds of
+                // milliseconds, and extract's pool is what archive prefetch needs free while a book
+                // is open. The size bound was already sensible; what moved is where the render runs.
+                withContext(DecodeDispatchers.export) {
                     val page = PdfPageImage.open(src, index)
                     context.exportPageBitmap(title, index, page.decodeBase(EXPORT_MAX_EDGE, EXPORT_MAX_EDGE))
-                } else {
+                }
+            } else {
+                withContext(DecodeDispatchers.extract) {
                     val source1 = src as ComicSource
                     val bytes = source1.openPage(index).use { it.readBytes() }
                     context.exportPageBytes(title, index, source1.pages[index].entryName, bytes)
                 }
-            }.onFailure { Log.e(TAG, "export failed", it) }.getOrNull()
-        }
+            }
+        }.onFailure { Log.e(TAG, "export failed", it) }.getOrNull()
     }
 
     /** Halves the tile budget on memory pressure; called from MainActivity's callbacks. */
     fun onTrimMemory(level: Int) {
         if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
             tileCache.trimToSize(tileCache.maxBytes() / 2)
-            bases.keys.removeIf { it.page != settledPage }
+            // Under memory pressure only the settled page is worth keeping at all, and only at
+            // one size: keeping every size it had ever been measured at (the same unbounded shape
+            // baseLayer's own eviction used to have) would defeat the trim it's supposed to do.
+            val keepSize = bases.keys.firstOrNull { it.page == settledPage }
+            bases.keys.retainAll(setOfNotNull(keepSize))
         }
     }
 }
