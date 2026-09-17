@@ -47,6 +47,7 @@ object ColourShader {
     const val UNIFORM_UPSCALER = "upscaler"
     const val UNIFORM_MAP_SCALE = "mapScale"
     const val UNIFORM_MAP_TRANS = "mapTrans"
+    const val UNIFORM_CROP_RECT = "cropRect"
 
     // Upscaler codes. Frozen: they cross from Upscaler.code, so append-only on both sides.
     const val UPSCALER_PLATFORM = 0
@@ -64,6 +65,7 @@ uniform vec3 gammaExp;
 uniform int upscaler;
 uniform vec2 mapScale;
 uniform vec2 mapTrans;
+uniform vec4 cropRect;
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 const float WB_STRENGTH = 0.25;
 // Mitchell-Netravali with B = C = 1/3, expanded (see UpscaleMath): (7x^3 - 12x^2 + 16/3) / 6
@@ -102,7 +104,8 @@ vec3 sampleMitchell(vec2 p) {
     float wsum = 0.0;
     for (int j = 0; j < 4; j++) {
         for (int i = 0; i < 4; i++) {
-            vec2 tap = base + vec2(float(i), float(j)) + 0.5;
+            // Clamp the tap to the crop rect so edge taps don't read beyond the crop.
+            vec2 tap = clamp(base + vec2(float(i), float(j)) + 0.5, cropRect.xy, cropRect.zw);
             float w = mitchell(tap.x - p.x) * mitchell(tap.y - p.y);
             acc += content.eval(tap * mapScale + mapTrans).rgb * w;
             wsum += w;
