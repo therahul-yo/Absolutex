@@ -133,7 +133,10 @@ class FilenameParserTableTest {
         Row("Batman 001.epub", "Batman", 1.0),
         Row("Series 002 (2024).CBZ", "Series", 2.0, year = 2024),
         // Deeply nested: the nearest named folder is the series, ancestors only feed volume/year.
-        Row("Comics/Saga v05/020 - Chapter Four.cbz", "Saga", 20.0, volume = 5, title = "Chapter Four", seriesFromFolder = true),
+        Row(
+            "Comics/Saga v05/020 - Chapter Four.cbz",
+            "Saga", 20.0, volume = 5, title = "Chapter Four", seriesFromFolder = true,
+        ),
         Row("Downloads/Kaiju No. 8 v02/003.cbz", "Kaiju No. 8", 3.0, volume = 2, seriesFromFolder = true),
         Row("Library/Mob Psycho 100/099.5.cbz", "Mob Psycho 100", 99.5, seriesFromFolder = true),
         // The folder keeps its trailing number (folderSeries never strips one), and the
