@@ -4,6 +4,7 @@ import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.Paint
 import android.graphics.Rect
+import android.os.Trace
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -37,6 +38,8 @@ import com.absolutex.core.decode.TileGrid
 import com.absolutex.core.decode.TileKey
 import com.absolutex.core.gpu.ColourParams
 import com.absolutex.core.gpu.ColourPipeline
+import com.absolutex.core.gpu.CropMath
+import com.absolutex.core.gpu.CropRect
 import com.absolutex.core.gpu.Upscaler
 import com.absolutex.model.FitGeometry
 import com.absolutex.model.FitMode
@@ -95,6 +98,10 @@ private fun floorDiv(a: Int, b: Int): Int = if (a >= 0) a / b else -(((-a) + b -
  *    through a separate offscreen pass. At neutral ([ColourParams.isNeutral]) the shader path
  *    is not entered at all: the draw calls below are the pre-shader ones, so correction off
  *    costs nothing by construction.
+ * 5. Border crop (§4) is decided before the first paint and threaded as geometry, not pixels:
+ *    every fit, clamp, fetch and draw computation below asks contentW/H (the cropped size),
+ *    so a cropped page behaves like a smaller page everywhere and layout never snaps. Tiles
+ *    are intersected with the crop per draw; the base layer draws its crop region.
  */
 @Composable
 fun PageCanvas(
@@ -154,6 +161,19 @@ fun PageCanvas(
      * TODO(lead): pass RenderingPrefs.upscaler here alongside `colour` above.
      */
     upscaler: Upscaler = Upscaler.PLATFORM,
+    /**
+     * Smart border crop (§4, milestone 4): uniform scan margins are detected on a thumbnail
+     * before the first paint and the page draws cropped. True by default; a plain param like
+     * `upscaler` — toggles are rare settings edits, and toggling reloads the base layer anyway.
+     * TODO(lead): pass RenderingPrefs.cropEnabled here.
+     */
+    cropEnabled: Boolean = true,
+    /**
+     * Fires once when the border crop is decided (or confirmed absent). Passes the [CropRect] the
+     * page draws at, or null when uncropped / crop disabled. Lets a host re-size the page to the
+     * cropped aspect so a cropped page leaves no clip or gap in a continuous strip.
+     */
+    onCropDecided: ((CropRect?) -> Unit)? = null,
 ) {
     var scale by remember(pageIndex) { mutableFloatStateOf(1f) }
     var offsetX by remember(pageIndex) { mutableFloatStateOf(0f) }
@@ -172,10 +192,16 @@ fun PageCanvas(
     // mid-page cannot leave it turning pages with the old direction.
     val edgeSwipe by rememberUpdatedState(onEdgeSwipe)
     val lockChanged by rememberUpdatedState(onPagerLockChanged)
+    val cropDecidedCb by rememberUpdatedState(onCropDecided)
     // True while a pinch or a claimed pan owns this page. The draw lambda reads it to pick the
     // sampling kernel: kernel upscalers refine only at rest, so gesture frames never pay for
     // taps. Draw-observed like scale above — no recomposition on touch down or release.
     var gestureActive by remember(pageIndex) { mutableStateOf(false) }
+    // Border crop, decided before the first paint so layout never snaps (decision 5 above).
+    // cropDecided gates the base layer: with detection on, nothing paints until the thumbnail
+    // has been analysed. Both reset with the toggle, so flipping it reloads the page cleanly.
+    var crop by remember(pageIndex, cropEnabled) { mutableStateOf<CropRect?>(null) }
+    var cropDecided by remember(pageIndex, cropEnabled) { mutableStateOf(!cropEnabled) }
 
     val src = remember { Rect() }
     val dst = remember { Rect() }
@@ -203,13 +229,28 @@ fun PageCanvas(
         (context as? Activity)?.intent?.getStringExtra(Upscaler.EXTRA_UPSCALER)
             ?.let(Upscaler::decodeExtra)
     }
+    // Crop rides a third: "0" disables it for the off-benchmark.
+    val benchmarkCropOff = remember(pageIndex) {
+        (context as? Activity)?.intent?.getStringExtra(CropMath.EXTRA_CROP) == "0"
+    }
+    val cropActive = cropEnabled && !benchmarkCropOff
+
+    /**
+     * Cropped page size and origin. Every geometry question below asks these, never
+     * page.width/height directly, so a cropped page behaves like a smaller page in fit, pan
+     * limits, tile fetch and draw alike — FitGeometry itself is untouched.
+     */
+    fun contentW(): Int = crop?.width ?: page.width
+    fun contentH(): Int = crop?.height ?: page.height
+    fun cropOx(): Int = crop?.left ?: 0
+    fun cropOy(): Int = crop?.top ?: 0
 
     fun reportLock(atScale: Float, vw: Int, vh: Int) {
-        val s = FitGeometry.baseScale(fitMode, vw, vh, page.width, page.height)
+        val s = FitGeometry.baseScale(fitMode, vw, vh, contentW(), contentH())
         val overflowsPagerAxis = if (pagerVertical) {
-            FitGeometry.maxOffsetY(vh, page.height, s) > 0f
+            FitGeometry.maxOffsetY(vh, contentH(), s) > 0f
         } else {
-            FitGeometry.maxOffsetX(vw, page.width, s) > 0f
+            FitGeometry.maxOffsetX(vw, contentW(), s) > 0f
         }
         val locked = atScale > ZOOM_LOCK_THRESHOLD || overflowsPagerAxis
         if (locked != lastReportedLock) {
@@ -225,33 +266,37 @@ fun PageCanvas(
      * start once the user zooms.
      */
     fun baseTarget(vw: Int, vh: Int): Pair<Int, Int> {
-        val atFit = min(FitGeometry.baseScale(fitMode, vw, vh, page.width, page.height), 1f)
-        val longest = max(page.width, page.height) * atFit
+        val cw = contentW()
+        val ch = contentH()
+        val fitScale = FitGeometry.baseScale(fitMode, vw, vh, cw, ch)
+        val capped = min(fitScale, 1f)
+        val longest = max(page.width, page.height) * capped
         val cap = MAX_BASE_EDGE * max(vw, vh)
-        val k = atFit * if (longest > cap) cap / longest else 1f
+        val k = capped * if (longest > cap) cap / longest else 1f
         return max(1, (page.width * k).toInt()) to max(1, (page.height * k).toInt())
     }
 
     // Reading starts at the top of an overflowing page, on the edge its flow starts from. This runs
     // before the base layer lands (that effect decodes first), so the page never flashes centred.
-    LaunchedEffect(pageIndex, viewport, fitMode, rightToLeft, pagerVertical) {
+    // Keyed on crop: a landing crop re-clamps (never re-positions) into the smaller page.
+    LaunchedEffect(pageIndex, viewport, fitMode, rightToLeft, pagerVertical, crop) {
         val (vw, vh) = viewport
         if (vw <= 0 || vh <= 0) return@LaunchedEffect
         reportLock(scale, vw, vh)
         val layout = fitMode to rightToLeft
         if (positionedFor != layout) {
             // New page or a deliberate layout change: start where that layout starts, at the current zoom.
-            val s = FitGeometry.baseScale(fitMode, vw, vh, page.width, page.height) * scale
-            offsetX = FitGeometry.startOffsetX(vw, page.width, s, rightToLeft)
-            offsetY = FitGeometry.startOffsetY(vh, page.height, s)
+            val s = FitGeometry.baseScale(fitMode, vw, vh, contentW(), contentH()) * scale
+            offsetX = FitGeometry.startOffsetX(vw, contentW(), s, rightToLeft)
+            offsetY = FitGeometry.startOffsetY(vh, contentH(), s)
             positionedFor = layout
         } else {
-            val clamped = clampOffset(Offset(offsetX, offsetY), vw, vh, page.width, page.height, fitMode, scale)
+            val clamped = clampOffset(Offset(offsetX, offsetY), vw, vh, contentW(), contentH(), fitMode, scale)
             offsetX = clamped.x; offsetY = clamped.y
         }
     }
 
-    LaunchedEffect(zoomSteps, viewport) {
+    LaunchedEffect(zoomSteps, viewport, crop) {
         val steps = zoomSteps ?: return@LaunchedEffect
         val (vw, vh) = viewport
         if (vw <= 0 || vh <= 0) return@LaunchedEffect
@@ -260,15 +305,55 @@ fun PageCanvas(
             scale = (scale * factor).coerceIn(MIN_SCALE, MAX_SCALE)
             val ratio = scale / old
             val clamped = clampOffset(
-                Offset(offsetX * ratio, offsetY * ratio), vw, vh, page.width, page.height, fitMode, scale,
+                Offset(offsetX * ratio, offsetY * ratio), vw, vh, contentW(), contentH(), fitMode, scale,
             )
             offsetX = clamped.x; offsetY = clamped.y
             reportLock(scale, vw, vh)
         }
     }
 
-    // Base layer: decoded once at its drawn size, kept resident for the whole page.
-    LaunchedEffect(pageIndex, viewport, fitMode) {
+    // Border-crop detection, before the base layer below: the thumbnail, its readback and
+    // detection run off the main thread, so the crop is decided before the first paint and
+    // layout never snaps. No hardware bitmap is ever touched on Main here: the thumbnail is
+    // allocated software and the work runs entirely on DecodeDispatchers.decode.
+    LaunchedEffect(pageIndex, cropEnabled) {
+        if (!cropActive) {
+            crop = null
+            cropDecided = true
+            cropDecidedCb?.invoke(null)
+            return@LaunchedEffect
+        }
+        if (cropDecided) return@LaunchedEffect
+        val (vw, vh) = viewport
+        if (vw <= 0 || vh <= 0) return@LaunchedEffect
+        if (page.width <= 0 || page.height <= 0) return@LaunchedEffect
+        try {
+            val result = withContext(DecodeDispatchers.decode) {
+                val thumb = runCatching { page.decodeThumbnail(CropMath.THUMB_EDGE) }.getOrNull()
+                if (thumb == null) return@withContext null
+                val sw = thumb.width
+                val sh = thumb.height
+                val pixels = IntArray(sw * sh)
+                Trace.beginSection("absx.cropDetect")
+                try {
+                    thumb.getPixels(pixels, 0, sw, 0, 0, sw, sh)
+                    CropMath.detect(pixels, sw, sh)?.scaleFrom(sw, sh, page.width, page.height)
+                } finally {
+                    Trace.endSection()
+                    thumb.recycle()
+                }
+            }
+            crop = result
+        } finally {
+            cropDecided = true
+            cropDecidedCb?.invoke(crop)
+        }
+    }
+
+    // Base layer: decoded once at its drawn size, kept resident for the whole page. Gated on
+    // the crop decision, so the first paint is already cropped.
+    LaunchedEffect(pageIndex, viewport, fitMode, cropDecided) {
+        if (!cropDecided) return@LaunchedEffect
         val (vw, vh) = viewport
         if (vw <= 0 || vh <= 0) return@LaunchedEffect
         val (tw, th) = baseTarget(vw, vh)
@@ -283,12 +368,12 @@ fun PageCanvas(
      * overflows at the current zoom, and only with room left in that direction.
      */
     fun canPan(travel: Offset, vw: Int, vh: Int): Boolean {
-        val s = FitGeometry.baseScale(fitMode, vw, vh, page.width, page.height) * scale
+        val s = FitGeometry.baseScale(fitMode, vw, vh, contentW(), contentH()) * scale
         return if (abs(travel.x) >= abs(travel.y)) {
-            val limit = FitGeometry.maxOffsetX(vw, page.width, s)
+            val limit = FitGeometry.maxOffsetX(vw, contentW(), s)
             if (travel.x > 0) offsetX < limit else offsetX > -limit
         } else {
-            val limit = FitGeometry.maxOffsetY(vh, page.height, s)
+            val limit = FitGeometry.maxOffsetY(vh, contentH(), s)
             if (travel.y > 0) offsetY < limit else offsetY > -limit
         }
     }
@@ -312,17 +397,17 @@ fun PageCanvas(
     // computed in SOURCE space (offset/effective, not offset/TILE_SIZE) so a fixed source
     // region maps to a fixed bucket at any zoom; distinctUntilChangedBy keeps a steady
     // pinch from respawning the fetch on every frame.
-    LaunchedEffect(pageIndex, viewport, fitMode) {
+    LaunchedEffect(pageIndex, viewport, fitMode, crop) {
         val (vw0, vh0) = viewport
         if (vw0 <= 0 || vh0 <= 0) return@LaunchedEffect
-        if (page.width <= 0 || page.height <= 0) return@LaunchedEffect
-        val fit = FitGeometry.baseScale(fitMode, vw0, vh0, page.width, page.height)
+        if (contentW() <= 0 || contentH() <= 0) return@LaunchedEffect
+        val fit = FitGeometry.baseScale(fitMode, vw0, vh0, contentW(), contentH())
         // Tiles start once the drawn page outresolves the base layer, not at a fixed zoom: fit
         // width and full size draw above the base's resolution at zoom 1 when MAX_BASE_EDGE caps it.
         val baseWidth = baseTarget(vw0, vh0).first
         // A base layer already at source resolution leaves tiles nothing to add.
-        if (baseWidth >= page.width) return@LaunchedEffect
-        val tilesFrom = baseWidth.toFloat() / page.width * TILE_THRESHOLD
+        if (baseWidth >= contentW()) return@LaunchedEffect
+        val tilesFrom = baseWidth.toFloat() / contentW() * TILE_THRESHOLD
         snapshotFlow { Triple(scale, offsetX, offsetY) }
             .distinctUntilChangedBy { (s, ox, oy) ->
                 val eff = fit * s
@@ -340,10 +425,13 @@ fun PageCanvas(
 
                 // Inverse of the draw transform: draw uses
                 // originX=(vw-drawW)/2+ox, so source left=((−ox)−(vw−drawW)/2)/effective.
-                val drawW = page.width * effective
-                val drawH = page.height * effective
-                val left = (((-ox) - (vw0 - drawW) / 2f) / effective).toInt()
-                val top = (((-oy) - (vh0 - drawH) / 2f) / effective).toInt()
+                // Cropped-space rect, shifted by the crop origin for the full-page tile grid.
+                val drawW = contentW() * effective
+                val drawH = contentH() * effective
+                val cox = cropOx()
+                val coy = cropOy()
+                val left = (((-ox) - (vw0 - drawW) / 2f) / effective).toInt() + cox
+                val top = (((-oy) - (vh0 - drawH) / 2f) / effective).toInt() + coy
                 // +1 covers truncation of vw/effective (TileGrid API unchanged).
                 val right = left + (vw0 / effective).toInt() + 1
                 val bottom = top + (vh0 / effective).toInt() + 1
@@ -437,7 +525,7 @@ fun PageCanvas(
                             val ratio = scale / old
                             val clamped = clampOffset(
                                 Offset(offsetX * ratio + pan.x, offsetY * ratio + pan.y),
-                                size.width, size.height, page.width, page.height, fitMode, scale,
+                                size.width, size.height, contentW(), contentH(), fitMode, scale,
                             )
                             offsetX = clamped.x; offsetY = clamped.y
                             claimed = true
@@ -456,7 +544,7 @@ fun PageCanvas(
                                 gestureActive = true
                                 val clamped = clampOffset(
                                     Offset(offsetX + pan.x, offsetY + pan.y),
-                                    size.width, size.height, page.width, page.height, fitMode, scale,
+                                    size.width, size.height, contentW(), contentH(), fitMode, scale,
                                 )
                                 offsetX = clamped.x; offsetY = clamped.y
                                 event.changes.forEach { if (it.positionChanged()) it.consume() }
@@ -482,7 +570,7 @@ fun PageCanvas(
                         val ratio = scale / old
                         val clamped = clampOffset(
                             Offset(offsetX * ratio, offsetY * ratio),
-                            size.width, size.height, page.width, page.height, fitMode, scale,
+                            size.width, size.height, contentW(), contentH(), fitMode, scale,
                         )
                         offsetX = clamped.x; offsetY = clamped.y
                         reportLock(scale, size.width, size.height)
@@ -513,12 +601,17 @@ fun PageCanvas(
         val shade = colourPipeline.shouldShade(activeColour, activeUpscaler, atRest)
 
         val bmp = base ?: return@Canvas
-        if (page.width <= 0 || page.height <= 0) return@Canvas
+        if (contentW() <= 0 || contentH() <= 0) return@Canvas
+        // Crop origin and size, read once: every rect below derives from these locals.
+        val cox = cropOx()
+        val coy = cropOy()
+        val cw = contentW()
+        val ch = contentH()
 
-        val fit = FitGeometry.baseScale(fitMode, vw, vh, page.width, page.height)
+        val fit = FitGeometry.baseScale(fitMode, vw, vh, cw, ch)
         val effective = fit * s
-        val drawW = page.width * effective
-        val drawH = page.height * effective
+        val drawW = cw * effective
+        val drawH = ch * effective
         // A page narrower than its half of a spread moves its spare width to the outside edge, so
         // facing pages meet at the gutter. An overflowing page has none and stays centred.
         val originX = (vw - drawW) / 2f + ox + spreadSide.gutter * max(0f, (vw - drawW) / 2f)
@@ -528,8 +621,12 @@ fun PageCanvas(
             val native = canvas.nativeCanvas
 
             // Base layer always paints first, so a missing tile reveals a lower-res version of
-            // the right pixels rather than a hole.
-            src.set(0, 0, bmp.width, bmp.height)
+            // the right pixels rather than a hole. Source is the crop region in base pixels;
+            // uncropped this is the full bitmap, exactly today's rect.
+            src.set(
+                cox * bmp.width / page.width, coy * bmp.height / page.height,
+                (cox + cw) * bmp.width / page.width, (coy + ch) * bmp.height / page.height,
+            )
             dst.set(
                 originX.toInt(), originY.toInt(),
                 (originX + drawW).toInt(), (originY + drawH).toInt(),
@@ -541,8 +638,8 @@ fun PageCanvas(
             }
 
             // The base layer's own resolution decides, read off the bitmap: no allocation here.
-            if (bmp.width >= page.width) return@drawIntoCanvas
-            if (effective < bmp.width.toFloat() / page.width * TILE_THRESHOLD) return@drawIntoCanvas
+            if (bmp.width >= cw) return@drawIntoCanvas
+            if (effective < bmp.width.toFloat() / cw * TILE_THRESHOLD) return@drawIntoCanvas
 
             val sample = TileGrid.sampleSizeFor(effective)
             val cols = TileGrid.columns(page.width)
@@ -550,9 +647,9 @@ fun PageCanvas(
             if (cols <= 0 || rows <= 0) return@drawIntoCanvas
             // Visible col/row range from the same inverse transform as the fetch path
             // (TileGrid math, overscan 0): look up only on-screen keys instead of scanning
-            // the whole columns×rows grid.
-            val srcLeft = (((-ox) - (vw - drawW) / 2f) / effective).toInt()
-            val srcTop = (((-oy) - (vh - drawH) / 2f) / effective).toInt()
+            // the whole columns×rows grid. Shifted into full-page tile space by the crop origin.
+            val srcLeft = (((-ox) - (vw - drawW) / 2f) / effective).toInt() + cox
+            val srcTop = (((-oy) - (vh - drawH) / 2f) / effective).toInt() + coy
             val srcRight = srcLeft + (vw / effective).toInt() + 1
             val srcBottom = srcTop + (vh / effective).toInt() + 1
             if (srcRight <= srcLeft || srcBottom <= srcTop) return@drawIntoCanvas
@@ -564,13 +661,28 @@ fun PageCanvas(
             for (row in r0..r1) {
                 for (col in c0..c1) {
                     val tile = cache[TileKey(pageIndex, col, row, sample, bookId)] ?: continue
-                    val tl = originX + col * TileGrid.TILE_SIZE * effective
-                    val tt = originY + row * TileGrid.TILE_SIZE * effective
-                    val tr = tl + tile.width * sample * effective
-                    val tb = tt + tile.height * sample * effective
+                    // Tile source coverage intersected with the crop: a tile straddling the
+                    // crop edge draws only its surviving part. Uncropped the intersection is
+                    // the whole tile, exactly today's rects.
+                    val tileSrcL = col * TileGrid.TILE_SIZE
+                    val tileSrcT = row * TileGrid.TILE_SIZE
+                    val tileSrcR = tileSrcL + tile.width * sample
+                    val tileSrcB = tileSrcT + tile.height * sample
+                    val visL = max(tileSrcL, cox)
+                    val visT = max(tileSrcT, coy)
+                    val visR = min(tileSrcR, cox + cw)
+                    val visB = min(tileSrcB, coy + ch)
+                    if (visL >= visR || visT >= visB) continue
+                    val tl = originX + (visL - cox) * effective
+                    val tt = originY + (visT - coy) * effective
+                    val tr = tl + (visR - visL) * effective
+                    val tb = tt + (visB - visT) * effective
                     // Cull off-screen tiles before touching the canvas.
                     if (tr < 0 || tb < 0 || tl > vw || tt > vh) continue
-                    src.set(0, 0, tile.width, tile.height)
+                    src.set(
+                        (visL - tileSrcL) / sample, (visT - tileSrcT) / sample,
+                        (visR - tileSrcL) / sample, (visB - tileSrcT) / sample,
+                    )
                     dst.set(tl.toInt(), tt.toInt(), max(tr.toInt(), tl.toInt() + 1), max(tb.toInt(), tt.toInt() + 1))
                     if (shade) {
                         drawShaded(native, colourPipeline, activeColour, tile, src, dst, paint, activeUpscaler, atRest)
@@ -605,7 +717,14 @@ private fun drawShaded(
     upscaler: Upscaler,
     atRest: Boolean,
 ) {
-    val paint = pipeline.paintFor(params, bitmap, dst.left, dst.top, dst.right, dst.bottom, upscaler, atRest)
+    // src is the crop region in bitmap pixels; passing it through is what makes the shader
+    // path crop correctly (the plain path below uses it directly).
+    val paint = pipeline.paintFor(
+        params, bitmap,
+        src.left, src.top, src.right, src.bottom,
+        dst.left, dst.top, dst.right, dst.bottom,
+        upscaler, atRest,
+    )
     if (paint != null) {
         native.drawRect(dst.left.toFloat(), dst.top.toFloat(), dst.right.toFloat(), dst.bottom.toFloat(), paint)
     } else {
