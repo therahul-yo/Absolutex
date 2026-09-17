@@ -30,9 +30,7 @@ class SmbStreamingSource private constructor(
         val page = pages.getOrNull(index)
             ?: throw IndexOutOfBoundsException("page $index of ${pages.size}")
         val entry = entries[page.index]
-        if (entry.compressedSize > MAX_REMOTE_ENTRY_BYTES) {
-            throw IOException("entry too large: ${entry.compressedSize} bytes")
-        }
+        checkEntrySizes(entry)
         // Local header offsets resolve here, per opened page — indexing never pays a
         // ranged read per entry (item 6: ~600 round trips for a 200-page CBZ).
         val dataOffset = ZipRemoteIndex.dataOffsetOf(reader, entry)
@@ -44,6 +42,7 @@ class SmbStreamingSource private constructor(
                 // a zlib wrapper (RFC 1950) and fails every entry with "incorrect header check".
                 DeflateStream(
                     reader.readAt(dataOffset, entry.compressedSize.toInt()),
+                    maxOutputBytes = entry.uncompressedSize,
                 )
         }
     }
@@ -57,6 +56,27 @@ class SmbStreamingSource private constructor(
     companion object {
         // A page is a few megabytes; larger means hostile input, not a scan (§2 degrade rule).
         const val MAX_REMOTE_ENTRY_BYTES = 32L * 1024 * 1024
+
+        /**
+         * Hard cap on one page's inflated bytes. The declared size is enforced exactly by
+         * [DeflateStream]; this caps a lying declaration, so a bomb entry fails on the
+         * numbers before its output can grow past here.
+         */
+        const val MAX_DECOMPRESSED_BYTES = 64L * 1024 * 1024
+
+        private fun checkEntrySizes(entry: ZipEntryRange) {
+            if (entry.compressedSize > MAX_REMOTE_ENTRY_BYTES) {
+                throw IOException("entry too large: ${entry.compressedSize} bytes")
+            }
+            // DEFLATE's ~1000:1 ratio turns a 1 MB entry into 1 GB of output: the compressed
+            // bound above is no bound on what the inflater produces. uncompressedSize is the
+            // stored image file's size (not decoded pixels), so anything past the hard cap is
+            // hostile input, not a scan — and the stream enforces the declared size exactly,
+            // so a lying directory aborts mid-stream instead of OOMing.
+            if (entry.uncompressedSize > MAX_DECOMPRESSED_BYTES) {
+                throw IOException("entry too large when inflated: ${entry.uncompressedSize} bytes")
+            }
+        }
         @Throws(IOException::class)
         fun open(transport: SmbTransport, remotePath: String): SmbStreamingSource {
             val size = transport.sizeBytes(remotePath)
@@ -94,20 +114,58 @@ class SmbStreamingSource private constructor(
 }
 
 /**
- * Raw-DEFLATE entry bytes with an owned [Inflater]. InflaterInputStream does not end a
- * caller-supplied inflater on close, which leaks native zlib state per DEFLATED page —
- * so this stream owns it and ends it, whatever path close takes.
+ * Raw-DEFLATE entry bytes with an owned [Inflater] and an exact output bound.
+ * InflaterInputStream does not end a caller-supplied inflater on close, which leaks native
+ * zlib state per DEFLATED page — so this stream owns it and ends it, whatever path close
+ * takes. Reads past [maxOutputBytes] throw instead of returning: a valid entry inflates to
+ * exactly its declared size, so anything beyond is a bomb or a corrupt stream.
  */
 internal class DeflateStream(
     data: ByteArray,
     private val inflater: Inflater = Inflater(true),
+    private val maxOutputBytes: Long,
 ) : InputStream() {
     private val inner = InflaterInputStream(ByteArrayInputStream(data), inflater)
     private var closed = false
+    private var emitted = 0L
 
-    override fun read(): Int = inner.read()
+    override fun read(): Int {
+        if (emitted < maxOutputBytes) {
+            val byte = inner.read()
+            if (byte >= 0) {
+                emitted++
+            }
+            return byte
+        }
+        return probePastCap()
+    }
 
-    override fun read(buffer: ByteArray, off: Int, len: Int): Int = inner.read(buffer, off, len)
+    override fun read(buffer: ByteArray, off: Int, len: Int): Int {
+        // Cap the request, not the result: the inflater cannot return more than asked, so
+        // no output past the bound is ever produced.
+        val remaining = maxOutputBytes - emitted
+        if (remaining > 0) {
+            val got = inner.read(buffer, off, minOf(len.toLong(), remaining).toInt())
+            if (got > 0) {
+                emitted += got
+            }
+            return got
+        }
+        return probePastCap()
+    }
+
+    /**
+     * At the bound, one scratch byte distinguishes a finished stream (EOF: return -1, so a
+     * page inflating to exactly its declared size still terminates) from a bomb (a further
+     * byte exists: throw, and it is never delivered).
+     */
+    private fun probePastCap(): Int {
+        return if (inner.read() == -1) {
+            -1
+        } else {
+            throw IOException("decompressed output past declared size")
+        }
+    }
 
     override fun close() {
         if (closed) return

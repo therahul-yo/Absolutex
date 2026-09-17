@@ -44,6 +44,12 @@ class SmbLocationTest {
             assertTrue(expected.message?.contains("port") == true)
         }
     }
+
+    @Test fun `signing opt-out defaults off`() {
+        // Flipping this default exposes every share to response rewriting; pin it.
+        val location = SmbLocation(host = "h", share = "s", path = "b.cbz", port = 445, username = "u")
+        assertEquals(false, location.allowUnsigned)
+    }
 }
 
 class InMemoryCredentialStoreTest {

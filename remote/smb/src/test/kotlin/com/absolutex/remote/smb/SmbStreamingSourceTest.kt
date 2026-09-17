@@ -109,7 +109,7 @@ class SmbStreamingSourceTest {
         val compressedLen = deflater.deflate(compressed)
         deflater.end()
         val spy = SpyInflater()
-        DeflateStream(compressed.copyOf(compressedLen), spy).use { stream ->
+        DeflateStream(compressed.copyOf(compressedLen), spy, raw.size.toLong()).use { stream ->
             assertTrue(stream.readBytes().contentEquals(raw))
         }
         assertTrue("inflater was not ended on close", spy.ended)

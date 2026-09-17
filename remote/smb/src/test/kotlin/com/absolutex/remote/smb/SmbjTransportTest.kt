@@ -1,7 +1,6 @@
 package com.absolutex.remote.smb
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -43,6 +42,7 @@ class SmbjTransportTest {
         private val onOpen: () -> Unit = {},
     ) : SmbConnection {
         var opens = 0
+        var closes = 0
 
         override fun openFile(remotePath: String): RemoteFileHandle {
             opens++
@@ -50,7 +50,9 @@ class SmbjTransportTest {
             return handle
         }
 
-        override fun close() = Unit
+        override fun close() {
+            closes++
+        }
     }
 
     private class FakeConnector(
@@ -88,7 +90,7 @@ class SmbjTransportTest {
         }
     }
 
-    @Test fun `a failed login is not retried automatically`() {
+    @Test fun `a failed login is remembered and never retried`() {
         val connector = FakeConnector(failures = Int.MAX_VALUE)
         val transport = transport(connector)
         val first = failureOf { transport.readAt("books/b.cbz", 0, 8) }
@@ -96,7 +98,11 @@ class SmbjTransportTest {
         // The remembered failure, not a second logon: with a stale password and five
         // queued pages this is the difference between one failure and a locked account.
         assertEquals(1, connector.connects)
-        assertSame(first.message, second.message)
+        // Fresh instances: rethrowing the stored error itself makes the retry path call
+        // e.addSuppressed(e), which is IllegalArgumentException, not IOException.
+        assertTrue(first !== second)
+        assertTrue(first.message?.contains("logon failure") == true)
+        assertTrue(second.message?.contains("authentication failed") == true)
     }
 
     @Test fun `missing credentials fail without touching the network`() {

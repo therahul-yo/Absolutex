@@ -2,6 +2,7 @@ package com.absolutex.remote.smb
 
 import com.absolutex.model.Page
 import java.io.Closeable
+import java.io.IOException
 import java.io.InputStream
 
 /**
@@ -26,5 +27,10 @@ interface RemoteComicSource : Closeable {
     fun openPage(index: Int): InputStream
 
     /** Cover without downloading the archive: central directory plus the first entry only. */
-    fun openCover(): InputStream = openPage(0)
+    fun openCover(): InputStream {
+        // Empty archive: openPage(0) would throw IndexOutOfBounds, which is a bug report,
+        // not a book. Fail with a message like every other unreadable book.
+        if (pages.isEmpty()) throw IOException("archive has no pages")
+        return openPage(0)
+    }
 }
