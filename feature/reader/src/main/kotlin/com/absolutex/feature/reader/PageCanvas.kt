@@ -4,6 +4,7 @@ import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.Paint
 import android.graphics.Rect
+import android.os.Trace
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -160,6 +161,8 @@ fun PageCanvas(
     val edgeSwipe by rememberUpdatedState(onEdgeSwipe)
     val lockChanged by rememberUpdatedState(onPagerLockChanged)
 
+    // Plain holder: tracing the first successful draw must not invalidate composition or draw.
+    val firstDraw = remember(bookId, pageIndex) { booleanArrayOf(true) }
     val src = remember { Rect() }
     val dst = remember { Rect() }
     val paint = remember { Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG) }
@@ -485,6 +488,9 @@ fun PageCanvas(
         val originX = (vw - drawW) / 2f + ox + spreadSide.gutter * max(0f, (vw - drawW) / 2f)
         val originY = (vh - drawH) / 2f + oy
 
+        val traceFirstDraw = firstDraw[0]
+        if (traceFirstDraw) Trace.beginSection("absx.firstDraw")
+        try {
         drawIntoCanvas { canvas ->
             val native = canvas.nativeCanvas
 
@@ -539,6 +545,12 @@ fun PageCanvas(
                         native.drawBitmap(tile, src, dst, paint)
                     }
                 }
+            }
+        }
+        } finally {
+            if (traceFirstDraw) {
+                firstDraw[0] = false
+                Trace.endSection()
             }
         }
     }

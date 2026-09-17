@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
 import android.graphics.ImageDecoder
+import android.os.Trace
 import java.io.Closeable
 import java.nio.ByteBuffer
 
@@ -39,12 +40,17 @@ interface PageImage : Closeable {
          * (check width/height, do not cache), but [from] itself still returns.
          */
         fun from(bytes: ByteArray): PageImage {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-            val rd = runCatching {
-                BitmapRegionDecoder.newInstance(bytes, 0, bytes.size)
-            }.getOrNull()
-            return EncodedPageImage(bytes, bounds.outWidth, bounds.outHeight, rd)
+            Trace.beginSection("absx.headerParse")
+            try {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                val rd = runCatching {
+                    BitmapRegionDecoder.newInstance(bytes, 0, bytes.size)
+                }.getOrNull()
+                return EncodedPageImage(bytes, bounds.outWidth, bounds.outHeight, rd)
+            } finally {
+                Trace.endSection()
+            }
         }
     }
 }
@@ -68,15 +74,18 @@ private class EncodedPageImage(
      * decoding full-res and downscaling would cost ~24 MB and a copy per page (§3).
      */
     override fun decodeBase(targetWidth: Int, targetHeight: Int): Bitmap {
-        val src = ImageDecoder.createSource(ByteBuffer.wrap(bytes))
-        return ImageDecoder.decodeBitmap(src) { decoder, info, _ ->
-            val (w, h) = PageImage.fitInside(info.size.width, info.size.height, targetWidth, targetHeight)
-            decoder.setTargetSize(w, h)
-            // Hardware bitmaps are the default allocation path (§1). They are immutable and
-            // cannot be read back, which is exactly why colour correction is an AGSL shader at
-            // draw time rather than a pixel edit.
-            decoder.allocator = ImageDecoder.ALLOCATOR_HARDWARE
-            decoder.isMutableRequired = false
+        Trace.beginSection("absx.baseDecode")
+        try {
+            val src = ImageDecoder.createSource(ByteBuffer.wrap(bytes))
+            return ImageDecoder.decodeBitmap(src) { decoder, info, _ ->
+                val (w, h) = PageImage.fitInside(info.size.width, info.size.height, targetWidth, targetHeight)
+                decoder.setTargetSize(w, h)
+                // Hardware allocation is unchanged; correction remains a draw-time shader.
+                decoder.allocator = ImageDecoder.ALLOCATOR_HARDWARE
+                decoder.isMutableRequired = false
+            }
+        } finally {
+            Trace.endSection()
         }
     }
 
