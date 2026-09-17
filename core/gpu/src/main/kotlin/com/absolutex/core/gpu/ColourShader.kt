@@ -88,9 +88,14 @@ float lanczos(float x) {
     if (x == 0.0) return 1.0;
     return sinc(x) * sinc(x / 3.0);
 }
-// One kernel tap set at bitmap-pixel p. The child BitmapShader keeps its dst-to-bitmap matrix,
-// so each tap is inverse-mapped back through it; edge taps clamp via the shader's CLAMP tiling.
-// The accumulator renormalises, matching UpscaleMath.resampleChannel at the borders.
+// One kernel tap set at bitmap-pixel p. The child BitmapShader keeps the forward
+// bitmap→canvas matrix (mapScale/mapTrans), so content.eval() takes a canvas-space
+// coordinate and the shader inverse-maps it to the bitmap. Each tap is therefore
+// a bitmap pixel forward-mapped back to canvas space: eval(tap * mapScale + mapTrans).
+// (Evaluating (tap - mapTrans) / mapScale here was the second half of the M3 bug:
+// that re-inverse-maps an already-bitmap tap, so every tap lands near the center
+// and the kernel collapses.) Edge taps clamp via the shader's CLAMP tiling. The
+// accumulator renormalises, matching UpscaleMath.resampleChannel at the borders.
 vec3 sampleMitchell(vec2 p) {
     vec2 base = floor(p) - 1.0;
     vec3 acc = vec3(0.0);
@@ -99,7 +104,7 @@ vec3 sampleMitchell(vec2 p) {
         for (int i = 0; i < 4; i++) {
             vec2 tap = base + vec2(float(i), float(j)) + 0.5;
             float w = mitchell(tap.x - p.x) * mitchell(tap.y - p.y);
-            acc += content.eval((tap - mapTrans) / mapScale).rgb * w;
+            acc += content.eval(tap * mapScale + mapTrans).rgb * w;
             wsum += w;
         }
     }
@@ -113,7 +118,7 @@ vec3 sampleLanczos(vec2 p) {
         for (int i = 0; i < 6; i++) {
             vec2 tap = base + vec2(float(i), float(j)) + 0.5;
             float w = lanczos(tap.x - p.x) * lanczos(tap.y - p.y);
-            acc += content.eval((tap - mapTrans) / mapScale).rgb * w;
+            acc += content.eval(tap * mapScale + mapTrans).rgb * w;
             wsum += w;
         }
     }
@@ -124,11 +129,17 @@ vec4 main(vec2 fragCoord) {
     vec3 c = src.rgb;
     // Grading a kernel sample costs the taps; the platform path keeps the single hardware tap.
     // Branches are on uniforms, so no fragment divergence on either side.
+    //
+    // The sampling position must be in bitmap space. mapScale/mapTrans are the forward
+    // bitmap→canvas placement (contentMatrix), so the canvas fragment coordinate is inverse-
+    // mapped: bmp = (fragCoord - mapTrans) / mapScale. (The forward map here was the M3 bug: it
+    // collapsed a Mitchell/Lanczos window to a sub-pixel footprint, so the upscaler silently did
+    // almost nothing.) The kernel taps are bitmap pixels around that center.
     if (upscaler == 1) {
-        vec2 p = fragCoord * mapScale + mapTrans;
+        vec2 p = (fragCoord - mapTrans) / mapScale;
         c = sampleMitchell(p);
     } else if (upscaler == 2) {
-        vec2 p = fragCoord * mapScale + mapTrans;
+        vec2 p = (fragCoord - mapTrans) / mapScale;
         c = sampleLanczos(p);
     }
     float shift = temperature * aggression * WB_STRENGTH;

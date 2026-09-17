@@ -89,6 +89,20 @@ class PrefCodecTest {
     }
 
     @Test
+    fun `removing the last location clears the stored key, not just the decoded value`() {
+        // The bug this guards: encodeApp used to skip the write for an empty set rather than
+        // clearing it, so a bag that already held a location from an earlier encode kept it
+        // forever — every later "remove the last one" silently did nothing.
+        val bag = MapPrefBag()
+        PrefCodec.encodeApp(AppPrefs(locations = setOf("content://tree/a")), bag)
+        assertEquals(setOf("content://tree/a"), bag.snapshot()[PrefCodec.KEY_LOCATIONS])
+
+        PrefCodec.encodeApp(AppPrefs(locations = emptySet()), bag)
+        assertTrue("the key must be gone, not merely empty", PrefCodec.KEY_LOCATIONS !in bag.snapshot().keys)
+        assertEquals(emptySet<String>(), PrefCodec.decodeApp(bag).locations)
+    }
+
+    @Test
     fun `every page layout survives a round-trip`() {
         for (layout in PageLayout.entries) {
             val original = ReaderPrefs(pageLayout = layout)
@@ -408,16 +422,21 @@ class PrefCodecTest {
 
     @Test
     fun `a wrongly typed rendering value falls back to its default`() {
-        val bag = MapPrefBag(
-            mapOf(
-                PrefCodec.KEY_COLOUR_BRIGHTNESS to "bright",
-                PrefCodec.KEY_COLOUR_CONTRAST to true,
-                PrefCodec.KEY_COLOUR_SATURATION to listOf(1f),
-                PrefCodec.KEY_COLOUR_TEMPERATURE to 1,
-                PrefCodec.KEY_COLOUR_VIBRANCE to "some",
-                PrefCodec.KEY_COLOUR_GAMMA to listOf("1.0"),
-            )
+        // What a store written by an older build looks like: right keys, wrong types. DataStore
+        // would throw ClassCastException on each of these. Every ColourParams field is covered.
+        val corrupt: Map<String, Any> = mapOf(
+            PrefCodec.KEY_COLOUR_BRIGHTNESS to "bright",
+            PrefCodec.KEY_COLOUR_CONTRAST to true,
+            PrefCodec.KEY_COLOUR_SATURATION to listOf(1f),
+            PrefCodec.KEY_COLOUR_TEMPERATURE to 1,
+            PrefCodec.KEY_COLOUR_AGGRESSION to "strong",
+            PrefCodec.KEY_COLOUR_VIBRANCE to "some",
+            PrefCodec.KEY_COLOUR_GAMMA to listOf("1.0"),
+            PrefCodec.KEY_COLOUR_GAMMA_R to false,
+            PrefCodec.KEY_COLOUR_GAMMA_G to "high",
+            PrefCodec.KEY_COLOUR_GAMMA_B to listOf(2f),
         )
+        val bag = MapPrefBag(corrupt)
         assertEquals(RenderingPrefs(), PrefCodec.decodeRendering(bag))
     }
 

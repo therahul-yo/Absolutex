@@ -79,9 +79,9 @@ class ColourShaderTest {
     }
 
     @Test
-    fun `kernel taps inverse-map through the placement and renormalise`() {
+    fun `kernel taps forward-map through the placement and renormalise`() {
         val src = ColourShader.SOURCE.replace(" ", "").replace("\n", "")
-        assertTrue(src.contains("content.eval((tap-mapTrans)/mapScale).rgb"))
+        assertTrue(src.contains("content.eval(tap*mapScale+mapTrans).rgb"))
         assertTrue(src.contains("returnacc/wsum;"))
     }
 }

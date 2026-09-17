@@ -3,7 +3,9 @@ package com.absolutex.core.thumbnails
 import android.graphics.Bitmap
 import com.absolutex.source.ComicSource
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -40,10 +42,11 @@ class ThumbnailPipeline(
     cacheDir: File,
     memoryBytes: Long = DEFAULT_MEMORY_BYTES,
     diskBytes: Long = ThumbDiskCache.DISK_CAP_BYTES,
+    dispatcher: CoroutineDispatcher = ThumbnailDispatchers.thumbnails,
 ) {
     private val memory = ThumbMemoryCache(memoryBytes)
     private val disk = ThumbDiskCache(cacheDir, diskBytes)
-    private val scope = CoroutineScope(SupervisorJob() + ThumbnailDispatchers.thumbnails)
+    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val inFlight = ConcurrentHashMap<ThumbRequest, Deferred<Bitmap>>()
 
     /**
@@ -61,17 +64,20 @@ class ThumbnailPipeline(
         config: Bitmap.Config = Bitmap.Config.HARDWARE,
     ): Bitmap {
         memory.get(request)?.let { return it }
-        val deferred = inFlight.computeIfAbsent(request) { key ->
-            val job = scope.async {
+        val deferred = inFlight.computeIfAbsent(request) {
+            // Registered LAZY so the job cannot run inside this mapping function: a job that
+            // finished before computeIfAbsent returned would run its completion cleanup while the
+            // table is still inserting, which ConcurrentHashMap rejects as a recursive update
+            // (IllegalStateException) where the load's own failure should surface.
+            scope.async(start = CoroutineStart.LAZY) {
                 ensureActive()
                 loadFromDisk(request, config) ?: loadFromSource(source, request, config)
             }
-            // Removed on completion (success, failure or cancellation) rather than in the caller's
-            // finally: several callers can be awaiting the same key, and the entry must go away
-            // exactly once, whether or not any of them is still around to run cleanup.
-            job.invokeOnCompletion { inFlight.remove(key, job) }
-            job
         }
+        // Hooked after registration for the same reason: the entry must be removed exactly once on
+        // completion (success, failure or cancellation), whether or not any awaiting caller remains.
+        deferred.invokeOnCompletion { inFlight.remove(request, deferred) }
+        deferred.start()
         return deferred.await()
     }
 

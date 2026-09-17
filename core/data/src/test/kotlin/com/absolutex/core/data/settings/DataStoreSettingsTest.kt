@@ -218,6 +218,23 @@ class DataStoreSettingsTest {
         job.cancelAndJoin()
     }
 
+    @Test fun `removing the last library location persists, including across reopening`() = runBlocking {
+        val f = file()
+        val (settings, job) = open(f)
+        settings.updateApp { it.copy(locations = setOf("content://tree/a")) }
+        assertEquals(setOf("content://tree/a"), settings.currentAppPrefs().locations)
+
+        settings.updateApp { it.copy(locations = emptySet()) }
+        assertEquals(emptySet<String>(), settings.currentAppPrefs().locations)
+        job.cancelAndJoin()
+
+        // Reopening reads straight off disk: proves the key was actually removed by the empty-set
+        // write, not just masked in memory until the next decode of the same live store.
+        val (reopened, reopenedJob) = open(f)
+        assertEquals(emptySet<String>(), reopened.currentAppPrefs().locations)
+        reopenedJob.cancelAndJoin()
+    }
+
     @Test fun `a wrongly typed app entry falls back for that field only, and a write repairs it`() = runBlocking {
         val f = file()
         seed(f) {

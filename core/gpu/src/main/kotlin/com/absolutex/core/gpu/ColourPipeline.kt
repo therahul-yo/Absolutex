@@ -35,6 +35,7 @@ class ColourPipeline {
     private var paint: Paint? = null
     private var matrix: Matrix? = null
     private var lastParams: ColourParams? = null
+    private var lastMode: Upscaler? = null
 
     private val contents = object : LinkedHashMap<Bitmap, BitmapShader>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Bitmap, BitmapShader>): Boolean =
@@ -98,6 +99,7 @@ class ColourPipeline {
         val rt = runtime ?: RuntimeShader(ColourShader.SOURCE).also {
             runtime = it
             lastParams = null
+            lastMode = null
         }
         // Uniform writes are CPU-side until draw; still, skip them when nothing changed so a
         // static page costs one input swap per tile and nothing else.
@@ -115,7 +117,13 @@ class ColourPipeline {
         m.postTranslate(placement.transX, placement.transY)
         content.setLocalMatrix(m)
         rt.setInputShader(ColourShader.UNIFORM_CONTENT, content)
-        rt.setIntUniform(ColourShader.UNIFORM_UPSCALER, mode.code)
+        // Upscaler uniform only on mode change (entering/leaving the kernel path), so a static
+        // magnified page with a kernel selected doesn't re-upload every draw. The placement
+        // uniforms (scale/trans) ride every draw because the dst-to-bitmap map differs per tile.
+        if (mode != lastMode) {
+            rt.setIntUniform(ColourShader.UNIFORM_UPSCALER, mode.code)
+            lastMode = mode
+        }
         rt.setFloatUniform(ColourShader.UNIFORM_MAP_SCALE, placement.scaleX, placement.scaleY)
         rt.setFloatUniform(ColourShader.UNIFORM_MAP_TRANS, placement.transX, placement.transY)
         return (paint ?: Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG).also { paint = it })

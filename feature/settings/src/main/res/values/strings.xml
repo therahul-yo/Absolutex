@@ -37,6 +37,10 @@
     <string name="settings_layout_double">Double</string>
     <string name="settings_layout_cover">Cover, then double</string>
     <string name="settings_layout_continuous">Continuous vertical</string>
+    <string name="settings_page_turn_value">Page turn: %1$d ms</string>
+    <string name="settings_page_turn_desc">Page turn duration, currently %1$d milliseconds</string>
+    <string name="settings_scroll_step_value">Scroll step: %1$d%% of a screen</string>
+    <string name="settings_scroll_step_desc">Scroll step, currently %1$d percent of a screen</string>
     <string name="settings_transition_slide">Slide</string>
     <string name="settings_transition_page_over">Page over</string>
     <string name="settings_transition_reveal">Reveal in place</string>

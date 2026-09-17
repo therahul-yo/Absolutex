@@ -10,7 +10,8 @@ package com.absolutex.core.gpu
  *
  * Ranges are the single source of truth for the settings sliders ([ColourPanel]) and the
  * persisted store ([PrefCodec] clamps to these): the shader itself stays total over any float.
- * All maths happens in the encoded (sRGB) space the bitmap is sampled in.
+ * the encoded colour space — sRGB or Display-P3 — the bitmap is sampled in. P3 preservation
+ * then hinges on the destination colour space; see [ColourShader] for the destination handling.
  */
 data class ColourParams(
     /** Additive lift after contrast, in encoded units. 0 is identity. */

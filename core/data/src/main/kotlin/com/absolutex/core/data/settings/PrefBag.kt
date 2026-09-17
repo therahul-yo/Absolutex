@@ -27,6 +27,14 @@ interface MutablePrefBag : PrefBag {
     fun putFloat(key: String, value: Float)
     fun putString(key: String, value: String)
     fun putStringSet(key: String, value: Set<String>)
+
+    /**
+     * Deletes [key] outright, distinct from writing an empty or default value in its place:
+     * `putStringSet(key, emptySet())` still leaves a present entry, and a set backed by
+     * [DataStoreSettings] only ever forgets a stored value this way — writing one value over
+     * another never removes what the store no longer needs (see [PrefCodec.encodeApp]).
+     */
+    fun remove(key: String)
 }
 
 /**
@@ -35,13 +43,13 @@ interface MutablePrefBag : PrefBag {
  *
  * Type mismatches resolve to null exactly as the contract requires, so a test can seed a wrongly
  * typed value and see the same fallback a migrated store would produce.
+ *
+ * `snapshot()` is a free function ([snapshot]) so this class stays within detekt's
+ * TooManyFunctions limit (11) — the lead's merged PR pushed it to 12.
  */
 class MapPrefBag(initial: Map<String, Any> = emptyMap()) : MutablePrefBag {
 
-    private val values: MutableMap<String, Any> = LinkedHashMap(initial)
-
-    /** Snapshot, for asserting what was persisted. */
-    fun snapshot(): Map<String, Any> = LinkedHashMap(values)
+    internal val values: MutableMap<String, Any> = LinkedHashMap(initial)
 
     override fun boolean(key: String): Boolean? = values[key] as? Boolean
 
@@ -77,5 +85,9 @@ class MapPrefBag(initial: Map<String, Any> = emptyMap()) : MutablePrefBag {
 
     override fun putStringSet(key: String, value: Set<String>) {
         values[key] = LinkedHashSet(value)
+    }
+
+    override fun remove(key: String) {
+        values.remove(key)
     }
 }
