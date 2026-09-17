@@ -184,4 +184,38 @@ class ContentMatrixTest {
         assertTrue(m.scaleX.isFinite() && m.scaleY.isFinite())
         assertTrue(m.transX.isFinite() && m.transY.isFinite())
     }
+
+    @Test
+    fun `a cropped src rect maps to the dst rect with adjusted translate`() {
+        // A 100×200 bitmap cropped to its right half (src rect 50,0-100,200) drawn
+        // into a 100×200 canvas rect: scale = 1.0, but the translate must account for
+        // the src origin (50,0) so the cropped content lands at the dst origin.
+        val m = contentMatrix(50, 0, 100, 200, 0, 0, 100, 200)
+        assertEquals(1f, m.scaleX, 1e-5f)
+        assertEquals(1f, m.scaleY, 1e-5f)
+        assertEquals(-50f, m.transX, 1e-5f) // dstLeft(0) - srcLeft(50) * scale(1)
+        assertEquals(0f, m.transY, 1e-5f)
+    }
+}
+
+class IsMagnifyingTest {
+
+    @Test
+    fun `a cropped page that fills the viewport is magnifying at base resolution`() {
+        // A 100×200 bitmap cropped to 50×200, drawn into a 50×200 rect: dst == src,
+        // so not magnifying (srcW/dstW == 1.0). The full bitmap would have said
+        // magnifying=true at the same dst — this is why the crop must be part of the test.
+        assertFalse(isMagnifying(50, 200, 0, 0, 50, 200))
+    }
+
+    @Test
+    fun `dst larger than cropped src is magnifying`() {
+        assertFalse(isMagnifying(50, 200, 0, 0, 50, 200)) // base
+        assertTrue(isMagnifying(50, 200, 0, 0, 100, 200)) // 2x magnify on the crop
+    }
+
+    @Test
+    fun `a one-to-one draw of the full bitmap is not magnifying`() {
+        assertFalse(isMagnifying(100, 200, 0, 0, 100, 200))
+    }
 }
