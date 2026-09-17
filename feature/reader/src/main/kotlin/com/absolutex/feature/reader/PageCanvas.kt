@@ -168,6 +168,12 @@ fun PageCanvas(
      * TODO(lead): pass RenderingPrefs.cropEnabled here.
      */
     cropEnabled: Boolean = true,
+    /**
+     * Fires once when the border crop is decided (or confirmed absent). Passes the [CropRect] the
+     * page draws at, or null when uncropped / crop disabled. Lets a host re-size the page to the
+     * cropped aspect so a cropped page leaves no clip or gap in a continuous strip.
+     */
+    onCropDecided: ((CropRect?) -> Unit)? = null,
 ) {
     var scale by remember(pageIndex) { mutableFloatStateOf(1f) }
     var offsetX by remember(pageIndex) { mutableFloatStateOf(0f) }
@@ -261,11 +267,12 @@ fun PageCanvas(
     fun baseTarget(vw: Int, vh: Int): Pair<Int, Int> {
         val cw = contentW()
         val ch = contentH()
-        val atFit = min(FitGeometry.baseScale(fitMode, vw, vh, cw, ch), 1f)
-        val longest = max(cw, ch) * atFit
+        val fitScale = FitGeometry.baseScale(fitMode, vw, vh, cw, ch)
+        val capped = min(fitScale, 1f)
+        val longest = max(page.width, page.height) * capped
         val cap = MAX_BASE_EDGE * max(vw, vh)
-        val k = atFit * if (longest > cap) cap / longest else 1f
-        return max(1, (cw * k).toInt()) to max(1, (ch * k).toInt())
+        val k = capped * if (longest > cap) cap / longest else 1f
+        return max(1, (page.width * k).toInt()) to max(1, (page.height * k).toInt())
     }
 
     // Reading starts at the top of an overflowing page, on the edge its flow starts from. This runs
@@ -308,12 +315,13 @@ fun PageCanvas(
     // thread, so the crop is decided before the first paint and layout never snaps. The thumb
     // copy is the only readback in this workstream — ~14 K pixels once per page, traced as
     // `absx.cropDetect` so the lead can read the per-page cost in Perfetto.
-    LaunchedEffect(pageIndex, viewport, fitMode, cropEnabled) {
+    LaunchedEffect(pageIndex, cropEnabled) {
         if (!cropActive) {
             crop = null
             cropDecided = true
             return@LaunchedEffect
         }
+        if (cropDecided) return@LaunchedEffect
         val (vw, vh) = viewport
         if (vw <= 0 || vh <= 0) return@LaunchedEffect
         if (page.width <= 0 || page.height <= 0) return@LaunchedEffect
