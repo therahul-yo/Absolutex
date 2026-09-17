@@ -43,13 +43,13 @@ interface MutablePrefBag : PrefBag {
  *
  * Type mismatches resolve to null exactly as the contract requires, so a test can seed a wrongly
  * typed value and see the same fallback a migrated store would produce.
+ *
+ * `snapshot()` is a free function ([snapshot]) so this class stays within detekt's
+ * TooManyFunctions limit (11) — the lead's merged PR pushed it to 12.
  */
 class MapPrefBag(initial: Map<String, Any> = emptyMap()) : MutablePrefBag {
 
-    private val values: MutableMap<String, Any> = LinkedHashMap(initial)
-
-    /** Snapshot, for asserting what was persisted. */
-    fun snapshot(): Map<String, Any> = LinkedHashMap(values)
+    internal val values: MutableMap<String, Any> = LinkedHashMap(initial)
 
     override fun boolean(key: String): Boolean? = values[key] as? Boolean
 
