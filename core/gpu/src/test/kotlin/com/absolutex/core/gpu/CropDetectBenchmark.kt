@@ -26,8 +26,8 @@ class CropDetectBenchmark {
         val pixels = IntArray(w * h) { i ->
             val x = i % w
             val y = i / w
-            if (x < margin || x >= w - margin || y < margin || y >= h - margin) {
-                0xFF0000.toInt() // black margin
+            if (x !in margin until (w - margin) || y !in margin until (h - margin)) {
+                0x000000 // black margin
             } else {
                 0xFFFFFF.toInt() // white interior
             }
