@@ -364,8 +364,9 @@ class SyncWiringTest {
             )
         }
 
-        private fun seriesPage(path: String): MockResponse {            // PageNumber comes in the query: page 0 lists, later pages end the walk. Keyed
-            // on the request (not a call counter) so repeated sync triggers re-list cleanly.
+        // PageNumber comes in the query: page 0 lists, later pages end the walk. Keyed
+        // on the request (not a call counter) so repeated sync triggers re-list cleanly.
+        private fun seriesPage(path: String): MockResponse {
             val first = "PageNumber=0" in path
             if (expireSeriesOnce && seriesCalls++ == 0) {
                 return respond(401)
