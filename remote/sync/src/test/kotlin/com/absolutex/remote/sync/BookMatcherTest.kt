@@ -20,7 +20,7 @@ class BookMatcherTest {
         sizeBytes = size,
     )
 
-    private fun kavitaFile(name: String, bytes: Long) = KavitaFileRef(fileName = name, bytes = bytes)
+    private fun kavitaFile(name: String, bytes: Long) = KavitaFileRef(fileName = name, bytes = bytes, pages = null)
 
     private fun kavitaChapter(id: Int, vararg files: KavitaFileRef) = KavitaChapterFiles(
         chapterId = id,
@@ -81,7 +81,7 @@ class BookMatcherTest {
         assertEquals(3, chapters[0].volumeId)
         assertEquals(7, chapters[0].seriesId)
         assertEquals(
-            listOf(KavitaFileRef("Batman 001.cbz", 2000L)),
+            listOf(KavitaFileRef("Batman 001.cbz", 2000L, 24)),
             chapters[0].files,
         )
     }

@@ -53,10 +53,12 @@ interface ServerSync {
  *   reader chrome and show a non-moving snackbar/dialog for non-null values (adopting only
  *   on tap, then call `consumeOffer()`); a pull landing after the first page must never
  *   move the page on its own.
- * TODO(library): wire app start and background — in `AbsolutexApp.onCreate` (or the first
- *   MainActivity composition), inject this controller and call `onAppStart()` in a scope;
- *   observe the app lifecycle there and call `onAppBackgrounded()` when it leaves the
- *   foreground while reading.
+ * TODO(library): wire app start and background — in `AbsolutexApp.onCreate`, inject this
+ *   controller and call `onAppStart()` in a scope; register an `ActivityLifecycleCallbacks`
+ *   (or a `DefaultLifecycleObserver` on the reader activity) that calls the zero-argument
+ *   `SyncController.onAppBackgrounded()` on stop. No book id is passed: the controller
+ *   remembers the open book from `onBookOpened`/`onBookClosed`, which is the only place
+ *   that information exists — neither `AbsolutexApp` nor the activity knows it.
  */
 @Singleton
 class SyncController @Inject constructor(
@@ -80,6 +82,12 @@ class SyncController @Inject constructor(
     /** Newer remote positions for the already-open book; the reader offers, never applies. */
     val progressOffers: StateFlow<RemoteProgressOffer?> = _offers.asStateFlow()
 
+    /**
+     * Server ids whose credentials were refused. The UI offers "sign in again" for these;
+     * any success unstops automatically, so this needs no manual clearing.
+     */
+    val stoppedServers: StateFlow<Set<String>> = runner.stoppedServers
+
     /** Book the reader currently holds open, if any — pulls for it become offers. */
     private var openBookId: String? = null
 
@@ -95,12 +103,17 @@ class SyncController @Inject constructor(
     }
 
     /**
-     * App to background while reading: push the open book first (the reader may not be
-     * torn down, so its close flush may never run), then the manual pass.
+     * App to background while reading: push the remembered open book first (the reader may
+     * not be torn down, so its close flush may never run), then the manual pass. Zero
+     * arguments by design — the app shell has no book id to give; the open book is
+     * remembered from [onBookOpened]/[onBookClosed].
      */
-    suspend fun onAppBackgrounded(bookId: String?) = withContext(Dispatchers.IO) {
-        if (bookId != null) {
-            runner.pushBook(bookId)
+    suspend fun onAppBackgrounded() = withContext(Dispatchers.IO) {
+        val open = openBookId
+        if (open != null) {
+            // Explicit pass: attempt even stopped servers, so a fixed password recovers
+            // here instead of waiting for a manual sync. Automatic triggers stay quiet.
+            runner.pushBook(open, attemptStopped = true)
         }
         runner.drainQueue()
         runner.pullKnownBooks(openBookId) { _offers.value = it }
@@ -137,7 +150,7 @@ class SyncController @Inject constructor(
     suspend fun syncBooks(bookIds: List<String>) = withContext(Dispatchers.IO) {
         for (bookId in bookIds) {
             runner.pushBook(bookId)
-            runner.pullBook(bookId, offerWhenOpen = true, openBookId) { _offers.value = it }
+            runner.pullBook(bookId, offerWhenOpen = true, openBookId, attemptStopped = true) { _offers.value = it }
         }
     }
 
