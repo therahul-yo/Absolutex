@@ -139,12 +139,33 @@ class LibArchiveSource private constructor(
                     bytes?.takeIf { it.size <= MAX_COMIC_INFO_BYTES }?.let { ordinal to it }
                 }
             }.getOrNull()
-            // Only recovery pays for payload validation. Header discovery alone overcounts the
-            // final cut-off entry; metadata can also reveal a cut exactly between entries.
+            // runCatching rather than catch (Exception): detekt rejects the broad catch and the
+            // swallow, and there is nothing useful to do with the exception here.
+            //
+            // Only recovery pays for payload validation. A single password probe verifies the
+            // session passphrase before any page is read; readability is counted in a single
+            // pass over the discovered ordinals.
             val recovery = !complete[0] || (info?.pageCount ?: 0) > pages.size
-            val readability = if (recovery) {
-                PageReadability.inspect(ordinals.toList(), info?.pageCount) { ordinal ->
-                    openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinal, password) }?.isNotEmpty() == true
+            val readability = if (recovery || encrypted[0]) {
+                // Single descriptor reused for both probe and readability to avoid many
+                // independent archive scans before the first page.
+                openFd().use { probeFd ->
+                    val probePassword = password?.copyOf() ?: password
+                    // Single password probe: read the first discovered page. A wrong/rejected
+                    // password fails closed here, never mid-session.
+                    if (encrypted[0]) {
+                        val firstOrdinal = ordinals.getOrNull(0) ?: -1
+                        if (firstOrdinal >= 0) {
+                            val probeBytes = LibArchive.nativeExtract(probeFd.fd, firstOrdinal, probePassword)
+                            if (probeBytes == null) {
+                                throw IOException("Archive password rejected or entry unreadable")
+                            }
+                        }
+                    }
+                    // Single-pass readability count: one descriptor scans all page ordinals.
+                    PageReadability.inspect(ordinals.toList(), info?.pageCount) { ordinal ->
+                        LibArchive.nativeExtract(probeFd.fd, ordinal, password)?.isNotEmpty() == true
+                    }
                 }
             } else {
                 null
