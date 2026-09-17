@@ -1,5 +1,6 @@
 package com.absolutex.remote.sync
 
+import java.io.IOException
 import java.net.URI
 
 // LAN servers may sleep and spin up slowly; connect 10s, read 30s.
@@ -11,6 +12,7 @@ internal const val HTTP_PARTIAL = 206
 internal const val HTTP_NO_CONTENT = 204
 internal const val HTTP_BAD_REQUEST = 400
 internal const val HTTP_UNAUTHORIZED = 401
+internal const val HTTP_FORBIDDEN = 403
 internal const val HTTP_NOT_FOUND = 404
 
 internal const val AUTHORIZATION = "Authorization"
@@ -22,13 +24,31 @@ internal val JSON_HEADERS: Map<String, String> = mapOf("Content-Type" to "applic
 internal const val DATE_HEADER = "Date"
 
 /**
+ * A failed HTTP exchange with its status attached. An [IOException] so every existing
+ * catch-and-queue path keeps compiling — but the runner matches on [code] first: 401/403
+ * stop the server instead of retrying it (retried auth is an account lockout), and 404 on
+ * a mapped book invalidates the mapping instead of pushing into the void.
+ */
+class HttpStatusException(val code: Int, message: String) : IOException(message)
+
+/**
  * Text response. [serverDateMs] is the server's `Date` header in epoch millis, or null when
  * the server sent none (or it did not parse): the clock-skew correction observes the server
  * clock through this field, never through the body.
  */
-data class HttpResponse(val code: Int, val body: String, val serverDateMs: Long? = null)
+data class HttpResponse(
+    val code: Int,
+    val body: String,
+    val serverDateMs: Long? = null,
+    val headers: Map<String, List<String>> = emptyMap(),
+)
 
-class HttpBytesResponse(val code: Int, val bytes: ByteArray, val serverDateMs: Long? = null)
+class HttpBytesResponse(
+    val code: Int,
+    val bytes: ByteArray,
+    val serverDateMs: Long? = null,
+    val headers: Map<String, List<String>> = emptyMap(),
+)
 
 interface HttpCall {
     fun request(method: String, url: String, headers: Map<String, String>, body: String?): HttpResponse
@@ -49,7 +69,12 @@ class HttpUrlConnectionCall(
         val connection = openConnection(method, url, headers)
         try {
             if (body != null) connection.writeBody(body)
-            return HttpResponse(connection.responseCode, connection.readBody(), connection.serverDate())
+            return HttpResponse(
+                connection.responseCode,
+                connection.readBody(),
+                connection.serverDate(),
+                connection.responseHeaders(),
+            )
         } finally {
             connection.disconnect()
         }
@@ -62,7 +87,12 @@ class HttpUrlConnectionCall(
     ): HttpBytesResponse {
         val connection = openConnection(method, url, headers)
         try {
-            return HttpBytesResponse(connection.responseCode, connection.readBytesBody(), connection.serverDate())
+            return HttpBytesResponse(
+                connection.responseCode,
+                connection.readBytesBody(),
+                connection.serverDate(),
+                connection.responseHeaders(),
+            )
         } finally {
             connection.disconnect()
         }
@@ -78,8 +108,9 @@ class HttpUrlConnectionCall(
         connection.connectTimeout = connectTimeoutMs
         connection.readTimeout = readTimeoutMs
         connection.requestMethod = method
-        // Komga/Kavita often sit behind reverse proxies; follow their redirects platform-side.
-        connection.instanceFollowRedirects = true
+        // Redirects are followed manually by CleartextHttpCall, never here: an https URL
+        // silently landing on http would bypass the per-server cleartext opt-in.
+        connection.instanceFollowRedirects = false
         headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
         return connection
     }
@@ -106,4 +137,13 @@ class HttpUrlConnectionCall(
      */
     private fun java.net.HttpURLConnection.serverDate(): Long? =
         getHeaderFieldDate(DATE_HEADER, 0L).takeIf { it > 0L }
+
+    /** Response headers without the null-keyed status line. */
+    private fun java.net.HttpURLConnection.responseHeaders(): Map<String, List<String>> {
+        val out = HashMap<String, List<String>>()
+        headerFields.forEach { (name, values) ->
+            if (name != null) out[name] = values
+        }
+        return out
+    }
 }

@@ -119,14 +119,15 @@ class SyncTriggersTest {
     private fun local(bookId: String, pageIndex: Int, updatedAt: Long) =
         ReadingProgress(bookId, pageIndex, 24, updatedAt)
 
-    @Test fun `background pushes the open book without a close`() = runTest {
+    @Test fun `background pushes the remembered open book without a close`() = runTest {
         val fake = FakeHttpCall()
         val (controller, dao) = controller(fake)
         dao.upsert(local(bookA, 9, 1_800_000_000_000L))
-        repeat(2) {
-            enqueueBook(fake, "b1", "Batman 001.cbz", 2000, 5, "2026-09-02T12:00:00Z", withPatchSlot = true)
-        }
-        controller.onAppBackgrounded(bookA)
+        // Open first so the controller remembers the book; the call takes no id.
+        enqueueBook(fake, "b1", "Batman 001.cbz", 2000, 5, "2026-09-02T12:00:00Z")
+        controller.onBookOpened(bookA)
+        enqueueBook(fake, "b1", "Batman 001.cbz", 2000, 5, "2026-09-02T12:00:00Z", withPatchSlot = true)
+        controller.onAppBackgrounded()
         val patch = JSONObject(fake.requests.single { it.method == "PATCH" }.body)
         assertEquals(10, patch.getInt("page"))
     }

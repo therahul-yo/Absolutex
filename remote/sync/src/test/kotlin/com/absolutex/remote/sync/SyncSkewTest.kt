@@ -67,6 +67,27 @@ class SyncSkewTest {
         fake.enqueue(HttpResponse(200, "{\"content\":[${komgaBook(null)}],\"last\":true}", serverDateMs))
     }
 
+    @Test fun `two-hour skew the other way does not pull a stale remote`() = runTest {
+        // Mirror image: the server runs 2h ahead. True order: remote page 5 written 2h ago,
+        // local page 10 written 10 min ago. Uncorrected, the inflated remote stamp wins and
+        // the fresh page 10 rewinds to 5; corrected, the local page pushes instead.
+        val now = System.currentTimeMillis()
+        val serverDate = now + 7_200_000L
+        val remoteWrite = now
+        val localStamp = now - 600_000L
+        val fake = FakeHttpCall()
+        enqueueKomgaListing(fake, serverDateMs = serverDate)
+        val progress = "{\"page\":5,\"completed\":false,\"lastModified\":\"${Instant.ofEpochMilli(remoteWrite)}\"}"
+        fake.enqueue(HttpResponse(200, komgaBook(progress), serverDate))
+        fake.enqueue(HttpResponse(204, "", serverDate))
+        val dao = daoWith(pageIndex = 10, updatedAt = localStamp)
+        val local = SyncProgress(bookId, 10, 24, localStamp)
+        KomgaSync(fake, komgaSecrets(), dao, ServerClock()).sync(komgaServer(), local)
+        val patch = JSONObject(fake.requests.single { it.method == "PATCH" }.body)
+        assertEquals(11, patch.getInt("page"))
+        assertEquals(10, dao.get(bookId)?.pageIndex)
+    }
+
     @Test fun `two-hour skew does not push stale local over newer komga remote`() = runTest {
         // True order: remote page 20 written 10 min ago; local page 10 written 30 min ago on a
         // phone whose clock runs 2h fast. Uncorrected, the local stamp wins by 100 minutes and
@@ -153,6 +174,27 @@ class SyncSkewTest {
         val adopted = dao.get(bookId)!!
         assertEquals(19, adopted.pageIndex)
         assertTrue(kotlin.math.abs(adopted.updatedAt - (remoteWrite + 7_200_000L)) < 60_000L)
+    }
+
+    @Test fun `two-hour skew the other way does not pull a stale kavita remote`() = runTest {
+        // Mirror image through the same decision path: the server runs 2h ahead, so the
+        // stale remote stamp inflates past the fresh local one. Corrected, local pushes.
+        val now = System.currentTimeMillis()
+        val serverDate = now + 7_200_000L
+        val remoteWrite = now
+        val localStamp = now - 600_000L
+        val fake = FakeHttpCall()
+        enqueueKavitaListing(fake, serverDateMs = serverDate)
+        val remoteJson = kavitaProgressJson(4, Instant.ofEpochMilli(remoteWrite).toString())
+        fake.enqueue(HttpResponse(200, remoteJson, serverDate))
+        fake.enqueue(HttpResponse(200, "{\"libraryId\":1}", serverDate))
+        fake.enqueue(HttpResponse(200, "", serverDate))
+        val dao = daoWith(pageIndex = 10, updatedAt = localStamp)
+        val local = SyncProgress(bookId, 10, 24, localStamp)
+        KavitaSync(fake, kavitaSecrets(), dao, ServerClock()).sync(kavitaServer(), local)
+        val save = JSONObject(fake.requests.single { it.url.endsWith("/api/Reader/progress") }.body)
+        assertEquals(10, save.getInt("pageNum"))
+        assertEquals(10, dao.get(bookId)?.pageIndex)
     }
 
     @Test fun `kavita push clamps into the local book`() = runTest {

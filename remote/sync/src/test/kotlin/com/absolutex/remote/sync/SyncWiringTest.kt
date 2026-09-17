@@ -257,20 +257,41 @@ class SyncWiringTest {
         assertTrue(fake.patches.isEmpty())
     }
 
-    @Test fun `a 401 queues the push for retry`() = runTest {
-        val (controller, _, queue) = komgaController({ patchCode = 401 }, JdkHttpCall())
+    @Test fun `a 401 stops the server without queueing`() = runTest {
+        val (controller, fake, queue) = komgaController({ patchCode = 401 }, JdkHttpCall())
         dao.upsert(local(updatedAt = 1_800_000_000_000L))
         controller.onBookClosed("Batman 001.cbz:2000")
-        val due = queue.due(Long.MAX_VALUE)
-        assertEquals(1, due.size)
-        assertEquals(1, due[0].attempts)
+        // Retried auth is an account lockout: no queue entry, and the server is marked.
+        assertTrue(queue.due(Long.MAX_VALUE).isEmpty())
+        assertEquals(setOf("srv"), controller.stoppedServers.value)
+        // A second trigger makes no new requests at all.
+        val calls = fake.calls
+        controller.onBookClosed("Batman 001.cbz:2000")
+        assertEquals(calls, fake.calls)
     }
 
-    @Test fun `a 404 on progress reads as missing and pushes`() = runTest {
-        val (controller, fake, _) = komgaController({ remoteAbsent = true }, JdkHttpCall())
+    @Test fun `a stopped server recovers on success`() = runTest {
+        val (controller, fake, _) = komgaController({ patchCode = 401 }, JdkHttpCall())
         dao.upsert(local(updatedAt = 1_800_000_000_000L))
         controller.onBookClosed("Batman 001.cbz:2000")
-        assertEquals(1, fake.patches.size)
+        assertEquals(setOf("srv"), controller.stoppedServers.value)
+        // The server heals: the next explicit pass attempts it (success unstops), and the
+        // following close pushes again. (The fake records the refused attempt too.)
+        fake.patchCode = 204
+        controller.onManualSync()
+        assertTrue(controller.stoppedServers.value.isEmpty())
+        controller.onBookClosed("Batman 001.cbz:2000")
+        assertEquals(2, fake.patches.size)
+    }
+
+    @Test fun `a 404 on a mapped book invalidates without pushing or queueing`() = runTest {
+        // The listing matched, but the book itself is gone server-side: pushing into the
+        // void would loop, so the mapping is dropped silently instead.
+        val (controller, fake, queue) = komgaController({ remoteAbsent = true }, JdkHttpCall())
+        dao.upsert(local(updatedAt = 1_800_000_000_000L))
+        controller.onBookClosed("Batman 001.cbz:2000")
+        assertTrue(fake.patches.isEmpty())
+        assertTrue(queue.due(Long.MAX_VALUE).isEmpty())
     }
 
     @Test fun `a 500 queues the push for retry`() = runTest {
@@ -281,6 +302,7 @@ class SyncWiringTest {
     }
 
     private suspend fun kavitaController(
+        apiKey: Boolean = false,
         configure: FakeKavita.() -> Unit = {},
     ): Triple<SyncController, FakeKavita, SyncQueue> {
         val fake = FakeKavita().apply(configure)
@@ -288,10 +310,21 @@ class SyncWiringTest {
         val base = server.url("/").toString().trimEnd('/')
         val stores = SyncServers(dataStore("servers.preferences_pb"))
         stores.save(
-            SyncServer(id = "srv", kind = ServerKind.KAVITA, baseUrl = base, allowCleartext = true, username = "alice"),
+            SyncServer(
+                id = "srv",
+                kind = ServerKind.KAVITA,
+                baseUrl = base,
+                allowCleartext = true,
+                username = if (apiKey) null else "alice",
+                usesApiKey = apiKey,
+            ),
         )
         val secrets = SyncSecrets(InMemoryCredentialStore())
-        secrets.savePassword("srv", "s3cret".toCharArray())
+        if (apiKey) {
+            secrets.saveApiKey("srv", "key".toCharArray())
+        } else {
+            secrets.savePassword("srv", "s3cret".toCharArray())
+        }
         val queue = SyncQueue(dataStore("queue.preferences_pb"))
         val controller = SyncController(dao, stores, secrets, queue, HttpUrlConnectionCall(), ServerClock())
         return Triple(controller, fake, queue)
@@ -302,12 +335,21 @@ class SyncWiringTest {
         var saveCode = 200
         var remotePageNum = 8
         var remoteStamp: String? = "2026-09-02T12:00:00Z"
+        var progressGone = false
+        var remotePages = 24
+        var exchanges = 0
+        var refreshCalls = 0
+        var expireSeriesOnce = false
+        private var seriesCalls = 0
         val saves = mutableListOf<JSONObject>()
 
         private fun seriesPage(path: String): MockResponse {
             // PageNumber comes in the query: page 0 lists, later pages end the walk. Keyed
             // on the request (not a call counter) so repeated sync triggers re-list cleanly.
             val first = "PageNumber=0" in path
+            if (expireSeriesOnce && seriesCalls++ == 0) {
+                return respond(401)
+            }
             return if (first) {
                 respond(200, "[{\"id\":7,\"name\":\"S\"}]")
             } else {
@@ -315,32 +357,48 @@ class SyncWiringTest {
             }
         }
 
-        override fun dispatch(request: RecordedRequest): MockResponse {
-            val path = request.target.orEmpty()
-            return when {
-                path == "/api/Account/login" ->
-                    respond(200, "{\"token\":\"t\",\"refreshToken\":\"r\"}")
-                path == "/api/Library/libraries" ->
-                    respond(200, "[{\"id\":1,\"name\":\"L\"}]")
-                path.startsWith("/api/Series/v2") -> seriesPage(path)
-                path.startsWith("/api/Series/volumes") ->
-                    respond(200, "[{\"id\":3}]")
-                path.startsWith("/api/Series/volume") ->
-                    respond(200, 
-                        "{\"id\":3,\"seriesId\":7,\"chapters\":[{" +
-                            "\"id\":10,\"volumeId\":3,\"files\":[" +
-                            "{\"id\":1,\"filePath\":\"/comics/Batman 001.cbz\",\"pages\":24,\"bytes\":2000}" +
-                            "]}]}",
-                    )
-                path.startsWith("/api/Reader/get-progress") ->
-                    if (remoteStamp == null) {
-                        respond(404)
-                    } else {
-                        respond(200, 
-                            "{\"volumeId\":1,\"chapterId\":10,\"pageNum\":$remotePageNum," +
-                                "\"seriesId\":7,\"libraryId\":1,\"lastModifiedUtc\":\"$remoteStamp\"}",
-                        )
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val path = request.target.orEmpty()
+                return when {
+                    path == "/api/Account/login" ->
+                        respond(200, "{\"token\":\"t\",\"refreshToken\":\"r\"}")
+                    path.startsWith("/api/Plugin/authenticate") -> {
+                        exchanges++
+                        respond(200, "{\"token\":\"jwt-k\",\"refreshToken\":\"r-k\"}")
                     }
+                    path == "/api/Account/refresh-token" -> {
+                        refreshCalls++
+                        respond(200, "{\"token\":\"jwt-2\",\"refreshToken\":\"r-2\"}")
+                    }
+                    path == "/api/Library/libraries" ->
+                        respond(200, "[{\"id\":1,\"name\":\"L\"}]")
+                    path.startsWith("/api/Series/v2") -> seriesPage(path)
+                    path.startsWith("/api/Series/volumes") ->
+                        respond(200, "[{\"id\":3}]")
+                    path.startsWith("/api/Series/volume") ->
+                        respond(200,
+                            "{\"id\":3,\"seriesId\":7,\"chapters\":[{" +
+                                "\"id\":10,\"volumeId\":3,\"files\":[" +
+                                "{\"id\":1,\"filePath\":\"/comics/Batman 001.cbz\"," +
+                                "\"pages\":$remotePages,\"bytes\":2000}" +
+                                "]}]}",
+                        )
+                    path.startsWith("/api/Reader/get-progress") ->
+                        if (progressGone) {
+                            respond(404)
+                        } else if (remoteStamp == null) {
+                            // The server's real absent shape: 200 with pageNum 0 and no
+                            // stamp — adopting that would rewind, so it reads as missing.
+                            respond(200,
+                                "{\"volumeId\":1,\"chapterId\":10,\"pageNum\":0," +
+                                    "\"seriesId\":7,\"libraryId\":1}",
+                            )
+                        } else {
+                            respond(200,
+                                "{\"volumeId\":1,\"chapterId\":10,\"pageNum\":$remotePageNum," +
+                                    "\"seriesId\":7,\"libraryId\":1,\"lastModifiedUtc\":\"$remoteStamp\"}",
+                            )
+                        }
                 path == "/api/Reader/progress" -> {
                     saves += JSONObject(request.body?.utf8().orEmpty())
                     respond(saveCode)
@@ -378,6 +436,42 @@ class SyncWiringTest {
         dao.upsert(local(pageIndex = 5, updatedAt = 1_800_000_000_000L))
         assertNull(controller.onBookOpened("Batman 001.cbz:2000"))
         controller.onBookClosed("Batman 001.cbz:2000")
+        assertEquals(1, fake.saves.size)
+    }
+
+    @Test fun `kavita 404 on a mapped chapter invalidates`() = runTest {
+        val (controller, fake, queue) = kavitaController { progressGone = true }
+        dao.upsert(local(pageIndex = 5, updatedAt = 1_800_000_000_000L))
+        controller.onBookClosed("Batman 001.cbz:2000")
+        assertTrue(fake.saves.isEmpty())
+        assertTrue(queue.due(Long.MAX_VALUE).isEmpty())
+    }
+
+    @Test fun `kavita push clamps into the remote chapter count`() = runTest {
+        // Remote chapter has 20 pages, local file 24: finishing locally at index 23 must
+        // push the remote last page (19), never a page number past the chapter.
+        val (controller, fake, _) = kavitaController { remotePages = 20 }
+        dao.upsert(local(pageIndex = 23, updatedAt = 1_800_000_000_000L))
+        controller.onBookClosed("Batman 001.cbz:2000")
+        assertEquals(1, fake.saves.size)
+        assertEquals(19, fake.saves[0].getInt("pageNum"))
+    }
+
+    @Test fun `kavita api key exchanges once across syncs`() = runTest {
+        val (controller, fake, _) = kavitaController(apiKey = true)
+        dao.upsert(local(updatedAt = 1_800_000_000_000L))
+        controller.onBookClosed("Batman 001.cbz:2000")
+        controller.onBookClosed("Batman 001.cbz:2000")
+        assertEquals(1, fake.exchanges)
+        assertEquals(2, fake.saves.size)
+    }
+
+    @Test fun `kavita expired cached token refreshes without re-exchange`() = runTest {
+        val (controller, fake, _) = kavitaController(apiKey = true) { expireSeriesOnce = true }
+        dao.upsert(local(updatedAt = 1_800_000_000_000L))
+        controller.onBookClosed("Batman 001.cbz:2000")
+        assertEquals(1, fake.exchanges)
+        assertEquals(1, fake.refreshCalls)
         assertEquals(1, fake.saves.size)
     }
 }

@@ -84,9 +84,12 @@ class KomgaSync(
 
     /**
      * Every response's server `Date` feeds this server's clock slot (see [ServerClock]), so
-     * by decision time the offset is measured, not assumed. The clients stay clock-unaware.
+     * by decision time the offset is measured, not assumed — and every request re-checks
+     * the cleartext opt-in, including redirect hops the platform must never follow blindly.
+     * The clients stay clock- and policy-unaware.
      */
-    private fun clockedHttp(server: SyncServer): HttpCall = http.withClock(server.id, clock)
+    private fun clockedHttp(server: SyncServer): HttpCall =
+        http.withClock(server.id, clock).withCleartextPolicy(server.allowCleartext)
 
     private suspend fun bookMap(client: KomgaClient): List<BookRef> =
         client.listAllSeries().flatMap { client.listAllBooksInSeries(it.id) }

@@ -2,7 +2,11 @@ package com.absolutex.remote.sync
 
 import com.absolutex.core.data.ProgressDao
 import com.absolutex.core.data.ReadingProgress
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import java.io.IOException
 
 /**
@@ -11,6 +15,11 @@ import java.io.IOException
  * runs on the caller's dispatcher (the controller confines it to Dispatchers.IO), and every
  * network failure surfaces as IOException for the queue. Open-book tracking and offers live
  * on the controller — the runner only takes them as arguments.
+ *
+ * Failure policy by status (see [HttpStatusException]): 401/403 stop the server — retried
+ * auth is an account lockout — and surface on [stoppedServers] for a "sign in again" UI;
+ * any success unstops. 404 on a mapped book invalidates the mapping (skip, never queue:
+ * pushing into a deleted book loops). 5xx and transport failures keep the bounded backoff.
  */
 class SyncRunner(
     private val progressDao: ProgressDao,
@@ -19,12 +28,26 @@ class SyncRunner(
     private val komga: ServerSync,
     private val kavita: ServerSync,
 ) {
-    suspend fun pushBook(bookId: String) {
+    private val _stoppedServers = MutableStateFlow<Set<String>>(emptySet())
+
+    /** Server ids whose credentials were refused; the UI offers "sign in again" for these. */
+    val stoppedServers: StateFlow<Set<String>> = _stoppedServers.asStateFlow()
+
+    suspend fun pushBook(bookId: String, attemptStopped: Boolean = false) {
         val local = progressDao.get(bookId)?.toSync() ?: return
         var queued = false
         for (server in servers.current()) {
+            if (!attemptStopped && server.id in _stoppedServers.value) continue
             try {
                 runnerFor(server).sync(server, local)
+                _stoppedServers.update { it - server.id }
+            } catch (e: HttpStatusException) {
+                if (isAuthFailure(e)) {
+                    _stoppedServers.update { it + server.id }
+                } else if (e.code != HTTP_NOT_FOUND) {
+                    queue.enqueue(local.toPending(server.id), e.message)
+                    queued = true
+                }
             } catch (e: IOException) {
                 queue.enqueue(local.toPending(server.id), e.message)
                 queued = true
@@ -43,11 +66,16 @@ class SyncRunner(
         bookId: String,
         offerWhenOpen: Boolean,
         openBookId: String?,
+        attemptStopped: Boolean = false,
         onOffer: (RemoteProgressOffer) -> Unit,
     ): SyncProgress? {
         val local = progressDao.get(bookId)?.toSync() ?: return null
         for (server in servers.current()) {
-            val pulled = runnerFor(server).pull(server, local) ?: continue
+            val pulled = if (!attemptStopped && server.id in _stoppedServers.value) {
+                null
+            } else {
+                pullOrNull(server, local)
+            } ?: continue
             val offered = openBookId == bookId && offerWhenOpen
             if (offered) {
                 onOffer(RemoteProgressOffer(bookId, pulled.pageIndex, server.id, server.baseUrl))
@@ -59,7 +87,30 @@ class SyncRunner(
         return null
     }
 
+    /**
+     * One server's pull with the status policy folded in: auth failures stop the server,
+     * invalid mappings read as nothing-newer, and anything else propagates like before.
+     * Any clean answer — newer position or not — proves the credentials work and unstops.
+     */
+    private suspend fun pullOrNull(server: SyncServer, local: SyncProgress): SyncProgress? {
+        try {
+            val pulled = runnerFor(server).pull(server, local)
+            _stoppedServers.update { it - server.id }
+            return pulled
+        } catch (e: HttpStatusException) {
+            if (isAuthFailure(e)) {
+                _stoppedServers.update { it + server.id }
+            } else if (e.code != HTTP_NOT_FOUND) {
+                throw e
+            }
+        }
+        return null
+    }
+
     suspend fun pullKnownBooks(openBookId: String?, onOffer: (RemoteProgressOffer) -> Unit) {
+        // Explicit passes always attempt: a fixed password recovers here (success unstops),
+        // and a still-dead one re-stops without queueing. Within one server, the first
+        // auth failure stops the rest of its books — no point hammering a dead credential.
         val locals = progressDao.observeAll().first()
         for (server in servers.current()) {
             pullFromServer(server, locals, openBookId, onOffer)
@@ -79,18 +130,26 @@ class SyncRunner(
         openBookId: String?,
         onOffer: (RemoteProgressOffer) -> Unit,
     ) {
-        val runner = runnerFor(server)
         var failure: IOException? = null
+        var halted = false
         for (local in locals) {
-            if (failure != null) break
+            if (failure != null || halted) break
             try {
-                val pulled = runner.pull(server, local.toSync())
+                val pulled = runnerFor(server).pull(server, local.toSync())
+                _stoppedServers.update { it - server.id }
                 if (pulled != null) {
                     if (openBookId == local.bookId) {
                         onOffer(RemoteProgressOffer(local.bookId, pulled.pageIndex, server.id, server.baseUrl))
                     } else {
                         adopt(local, pulled)
                     }
+                }
+            } catch (e: HttpStatusException) {
+                if (isAuthFailure(e)) {
+                    _stoppedServers.update { it + server.id }
+                    halted = true
+                } else if (e.code != HTTP_NOT_FOUND) {
+                    failure = e
                 }
             } catch (e: IOException) {
                 failure = e
@@ -118,6 +177,18 @@ class SyncRunner(
             try {
                 runner.sync(server, entry.toSync())
                 queue.remove(server.id, entry.bookId)
+                _stoppedServers.update { it - server.id }
+            } catch (e: HttpStatusException) {
+                // Auth failures and invalid mappings can never succeed on retry: drop the
+                // entry instead of re-queueing it, and stop (auth) or skip (mapping) the server.
+                if (isAuthFailure(e)) {
+                    _stoppedServers.update { it + server.id }
+                    queue.remove(server.id, entry.bookId)
+                } else if (e.code == HTTP_NOT_FOUND) {
+                    queue.remove(server.id, entry.bookId)
+                } else {
+                    queue.recordFailure(entry, now, e.message)
+                }
             } catch (e: IOException) {
                 queue.recordFailure(entry, now, e.message)
             }
@@ -132,6 +203,10 @@ class SyncRunner(
     private fun runnerFor(server: SyncServer): ServerSync =
         if (server.kind == ServerKind.KOMGA) komga else kavita
 }
+
+/** Auth refusals stop a server; every other status keeps its own path (retry or skip). */
+internal fun isAuthFailure(e: HttpStatusException): Boolean =
+    e.code == HTTP_UNAUTHORIZED || e.code == HTTP_FORBIDDEN
 
 private fun ReadingProgress.toSync(): SyncProgress =
     SyncProgress(bookId = bookId, pageIndex = pageIndex, pageCount = pageCount, updatedAt = updatedAt)

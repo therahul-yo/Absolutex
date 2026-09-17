@@ -14,12 +14,16 @@ class ServerClockTest {
         assertEquals(1_700_000_000_000L, clock.toClientTime("srv", 1_700_000_000_000L))
     }
 
-    @Test fun `a dated response sets the offset`() {
+    @Test fun `a dated response sets the offset in either direction`() {
         val clock = ServerClock()
         // Server clock two hours behind ours: server stamps shift forward by two hours.
         clock.noteServerDate("srv", serverDateMs = 1_000_000L, nowMs = 8_200_000L)
         assertEquals(-7_200_000L, clock.offsetMs("srv"))
         assertEquals(8_200_000L, clock.toClientTime("srv", 1_000_000L))
+        // And two hours ahead: stamps shift back by two hours.
+        clock.noteServerDate("srv", serverDateMs = 8_200_000L, nowMs = 1_000_000L)
+        assertEquals(7_200_000L, clock.offsetMs("srv"))
+        assertEquals(1_000_000L, clock.toClientTime("srv", 8_200_000L))
     }
 
     @Test fun `the newest observation wins`() {

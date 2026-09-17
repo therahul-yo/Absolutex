@@ -18,12 +18,19 @@ class KavitaSync(
 
     private val libraryIds = ConcurrentHashMap<Int, Int>()
 
+    /** API-key sessions by server: one exchange per server, not one per book per trigger. */
+    private val apiKeySessions = ConcurrentHashMap<String, ApiSession>()
+
+    private data class ApiSession(val token: String, val refreshToken: String)
+
     /** Full compare-then-push; throws on transport failure (the caller queues). */
     override suspend fun sync(server: SyncServer, local: SyncProgress) {
         val (client, secret, library) = connected(server)
         try {
             val target = matchKavitaFile(local.bookId, library.allChapterFiles()) ?: return
-            val remote = client.getProgress(target.first.chapterId)?.atClientTime(server)?.toKavitaSync(local.pageCount)
+            val remote = client.getProgress(target.first.chapterId)
+                ?.atClientTime(server)
+                ?.toKavitaSync(local.pageCount)
             if (remote != null && syncDecision(local, remote, SYNC_TOLERANCE_MS) == SyncDecision.PULL) {
                 progressDao.get(local.bookId)?.let {
                     progressDao.upsert(it.copy(pageIndex = remote.pageIndex, updatedAt = remote.updatedAt))
@@ -31,9 +38,12 @@ class KavitaSync(
                 return
             }
             if (remote == null || syncDecision(local, remote, SYNC_TOLERANCE_MS) == SyncDecision.PUSH) {
-                // Clamped into the local book: pageNum past the last page must not push a
-                // position the server (or a later pull) cannot land on.
-                val pageNum = local.pageIndex.coerceIn(0, maxOf(0, local.pageCount - 1))
+                // Clamped into the remote chapter: the server carries its own page count and
+                // the parsers may disagree with the local file (replaced edition), so a push
+                // past the chapter's real last page must be impossible. Falls back to the
+                // local count when the server omits the field.
+                val lastPage = maxOf(0, (target.second.pages ?: local.pageCount) - 1)
+                val pageNum = local.pageIndex.coerceIn(0, lastPage)
                 client.saveProgress(
                     KavitaProgress(
                         volumeId = target.first.volumeId,
@@ -44,6 +54,11 @@ class KavitaSync(
                     ),
                 )
             }
+        } catch (e: HttpStatusException) {
+            // A dead cached token must not poison the next run: evict it so the next call
+            // re-exchanges, then let the runner stop the server like any other auth failure.
+            if (isAuthFailure(e)) apiKeySessions.remove(server.id)
+            throw e
         } finally {
             secret?.fill(Char.MIN_VALUE)
         }
@@ -61,6 +76,9 @@ class KavitaSync(
             } else {
                 null
             }
+        } catch (e: HttpStatusException) {
+            if (isAuthFailure(e)) apiKeySessions.remove(server.id)
+            throw e
         } finally {
             secret?.fill(Char.MIN_VALUE)
         }
@@ -77,7 +95,8 @@ class KavitaSync(
     }
 
     private suspend fun connected(server: SyncServer): Connected {
-        val client = KavitaClient(http.withClock(server.id, clock), server.baseUrl)
+        val call = http.withClock(server.id, clock).withCleartextPolicy(server.allowCleartext)
+        val client = KavitaClient(call, server.baseUrl)
         if (server.usesApiKey) {
             return apiKeyClient(server, client)
         }
@@ -97,9 +116,28 @@ class KavitaSync(
     private fun apiKeyClient(server: SyncServer, client: KavitaClient): Connected {
         // Auth keys exchange for a JWT via /api/Plugin/authenticate (verified against
         // Kavita's source + OpenAPI) — the raw key is not a bearer token and 401s as one.
+        // The session caches per server: one exchange, not one per book per trigger. A 401
+        // first runs the client's refresh (exercising that path); only a dead refresh
+        // evicts, so the next run re-exchanges instead of serving a dead token forever.
+        apiKeySessions[server.id]?.let { session ->
+            client.restoreSession(session.token, session.refreshToken)
+            return Connected(client, null, KavitaLibrary(client))
+        }
         val key = secrets.loadApiKey(server.id) ?: throw IOException("no API key for ${server.id}")
-        client.exchangeApiKey(key, KAVITA_PLUGIN_NAME)
-        return Connected(client, key, KavitaLibrary(client))
+        try {
+            client.exchangeApiKey(key, KAVITA_PLUGIN_NAME)
+        } finally {
+            key.fill(Char.MIN_VALUE)
+        }
+        val session = exchangedSession(client)
+        apiKeySessions[server.id] = session
+        return Connected(client, null, KavitaLibrary(client))
+    }
+
+    private fun exchangedSession(client: KavitaClient): ApiSession {
+        val token = client.token ?: throw IOException("kavita API-key exchange returned no token")
+        val refreshToken = client.refreshToken ?: throw IOException("kavita API-key exchange returned no token")
+        return ApiSession(token, refreshToken)
     }
 
     private suspend fun loginClient(server: SyncServer, client: KavitaClient): Connected {

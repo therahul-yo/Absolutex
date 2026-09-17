@@ -41,7 +41,7 @@ data class KavitaChapterFiles(
     val files: List<KavitaFileRef>,
 )
 
-data class KavitaFileRef(val fileName: String, val bytes: Long)
+data class KavitaFileRef(val fileName: String, val bytes: Long, val pages: Int?)
 
 internal fun parseKavitaVolumeIds(body: String): List<Int> = parseJsonArray(body) { array ->
     List(array.length(), array::getJSONObject).map { req(it, "id", it::getInt) }
@@ -59,7 +59,11 @@ internal fun parseKavitaVolume(body: String): List<KavitaChapterFiles> = parseJs
             files = optObjects(chapter, "files").mapNotNull { file ->
                 val path = optString(file, "filePath") ?: return@mapNotNull null
                 val bytes = optLong(file, "bytes") ?: return@mapNotNull null
-                KavitaFileRef(fileName = path.substringAfterLast('/').substringAfterLast('\\'), bytes = bytes)
+                KavitaFileRef(
+                    fileName = path.substringAfterLast('/').substringAfterLast('\\'),
+                    bytes = bytes,
+                    pages = optInt(file, "pages"),
+                )
             },
         )
     }
