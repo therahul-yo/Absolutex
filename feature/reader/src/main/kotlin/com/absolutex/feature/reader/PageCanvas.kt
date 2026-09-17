@@ -468,6 +468,7 @@ fun PageCanvas(
                         // with the kernel, if one is selected.
                         gestureActive = false
                     }
+                }
             }
             // rightToLeft is a key: onTap mirrors the grid by it, and a flow change mid-page would
             // otherwise leave taps turning pages the old way while swipes already go the new way.
