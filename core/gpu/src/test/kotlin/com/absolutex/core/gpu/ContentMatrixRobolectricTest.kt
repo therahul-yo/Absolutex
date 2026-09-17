@@ -27,7 +27,7 @@ class ContentMatrixRobolectricTest {
      * mapping the bitmap's full rect through it lands on the destination rect.
      */
     private fun assertMapsToDst(bitmapW: Int, bitmapH: Int, left: Int, top: Int, right: Int, bottom: Int) {
-        val placement = contentMatrix(bitmapW, bitmapH, left, top, right, bottom)
+        val placement = contentMatrix(0, 0, bitmapW, bitmapH, left, top, right, bottom)
         val m = Matrix()
         m.setScale(placement.scaleX, placement.scaleY)
         m.postTranslate(placement.transX, placement.transY)
