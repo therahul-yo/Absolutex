@@ -121,7 +121,8 @@ class SyncRunner(
     /** Folder browse / refresh for one server: its outbox, then a pull through it. */
     suspend fun syncServer(serverId: String, openBookId: String?, onOffer: (RemoteProgressOffer) -> Unit) {
         val server = servers.current().firstOrNull { it.id == serverId }?.toSyncServer() ?: return
-        drainQueueFor(server)
+        val now = System.currentTimeMillis()
+        drainEntries(server, queue.due(now).filter { it.serverId == server.id }, now)
         pullFromServer(server, progressDao.observeAll().first(), openBookId, onOffer)
     }
 
@@ -165,11 +166,6 @@ class SyncRunner(
             val server = servers.current().firstOrNull { it.id == serverId }?.toSyncServer() ?: continue
             drainEntries(server, entries, now)
         }
-    }
-
-    private suspend fun drainQueueFor(server: SyncServer) {
-        val now = System.currentTimeMillis()
-        drainEntries(server, queue.due(now).filter { it.serverId == server.id }, now)
     }
 
     private suspend fun drainEntries(server: SyncServer, entries: List<PendingPush>, now: Long) {

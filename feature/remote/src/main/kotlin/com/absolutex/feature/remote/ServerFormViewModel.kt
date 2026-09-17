@@ -81,6 +81,14 @@ class ServerFormViewModel @Inject constructor(
     /** Validation, test and save status for the screen. */
     val status: StateFlow<ServerFormStatus> = _status.asStateFlow()
 
+    /**
+     * The record's kind when editing started. A kind change would carry the prefilled
+     * secret into the new kind's slot (and the next test would send it to that server),
+     * so changing kind means deleting and adding — the save and the test both refuse it.
+     * Null for new servers and until prefill lands, where there is nothing to protect.
+     */
+    private var originalKind: RemoteKind? = null
+
     init {
         savedStateHandle.get<String>("serverId")?.let { id ->
             viewModelScope.launch {
@@ -99,6 +107,9 @@ class ServerFormViewModel @Inject constructor(
     fun testConnection() {
         val form = _form.value
         val invalid = invalidFields(form).toMutableSet()
+        if (kindChanged(form)) {
+            invalid += FIELD_KIND
+        }
         if (invalid.isNotEmpty()) {
             _status.value = _status.value.copy(invalidFields = invalid, saveBlocked = true)
             return
@@ -125,6 +136,9 @@ class ServerFormViewModel @Inject constructor(
     fun save() {
         val form = _form.value
         val invalid = invalidFields(form).toMutableSet()
+        if (kindChanged(form)) {
+            invalid += FIELD_KIND
+        }
         // A new server with no secret anywhere would save a record that can never connect.
         if (form.serverId == null && secretText(form).isEmpty() && !hasSecret(form)) {
             invalid += secretField(form)
@@ -197,6 +211,7 @@ class ServerFormViewModel @Inject constructor(
         stored?.fill(Char.MIN_VALUE)
         val apiKeyKind = (server is KomgaServer && server.usesApiKey) ||
             (server is KavitaServer && server.usesApiKey)
+        originalKind = server.kind
         _form.value = if (apiKeyKind) base.copy(apiKey = text) else base.copy(password = text)
     }
 
@@ -266,6 +281,12 @@ class ServerFormViewModel @Inject constructor(
         RemoteKind.KOMGA, RemoteKind.KAVITA -> syncInvalidFields(form)
     }
 
+    /** True when editing changed the record's kind — the secret must not follow it. */
+    private fun kindChanged(form: ServerForm): Boolean {
+        val original = originalKind
+        return form.serverId != null && original != null && form.kind != original
+    }
+
     /** Fresh secret copy (typed text first, storage second) or null when neither has one. */
     private fun takeSecret(form: ServerForm): CharArray? {
         val text = secretText(form)
@@ -293,6 +314,7 @@ class ServerFormViewModel @Inject constructor(
         const val FIELD_PASSWORD = "password"
         const val FIELD_API_KEY = "api_key"
         const val FIELD_BASE_URL = "base_url"
+        const val FIELD_KIND = "kind"
     }
 }
 

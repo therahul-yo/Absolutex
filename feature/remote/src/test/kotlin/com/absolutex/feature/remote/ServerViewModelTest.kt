@@ -272,6 +272,45 @@ class ServerViewModelTest {
         assertEquals("u", form.username)
     }
 
+    @Test fun `changing kind while editing blocks save without leaking secrets`() = runTest {
+        val servers = stores()
+        val store = secrets()
+        servers.save(SmbServer("x", "nas", "comics", "books", username = "u"))
+        store.saveSmbPassword("x", "nas-pw".toCharArray())
+        val viewModel = ServerFormViewModel(
+            SavedStateHandle(mapOf("serverId" to "x")),
+            servers,
+            store,
+            KomgaConnectionProbe(FakeHttp()),
+            KavitaConnectionProbe(FakeHttp()),
+            FtpConnectionProbe(),
+        )
+        viewModel.form.first { it.serverId == "x" }
+        // Switch SMB -> Komga with the prefilled NAS password still in the field.
+        viewModel.update(
+            ServerForm(
+                serverId = "x",
+                kind = RemoteKind.KOMGA,
+                baseUrl = "https://k:8080",
+                username = "u",
+                password = "nas-pw",
+            ),
+        )
+        viewModel.save()
+        val status = viewModel.status.first { it.saveBlocked }
+        assertTrue(status.invalidFields.contains(ServerFormViewModel.FIELD_KIND))
+        // Record untouched, and the NAS password never reached the Komga slot.
+        assertTrue(servers.current().single() is SmbServer)
+        assertNull(store.loadApiKey("x"))
+        assertTrue(store.loadSmbPassword("x")?.contentEquals("nas-pw".toCharArray()) == true)
+        // The live test is gated the same way: nothing is sent anywhere.
+        viewModel.testConnection()
+        val tested = viewModel.status.first {
+            it.saveBlocked && it.invalidFields.contains(ServerFormViewModel.FIELD_KIND)
+        }
+        assertNull(tested.testResult)
+    }
+
     @Test fun `ftp mapping covers the result variants`() {
         assertEquals(ConnectionResult.AuthFailed, mapFtpFailure(IOException("FTP login refused: x")))
         assertEquals(ConnectionResult.NotFound, mapFtpFailure(IOException("cannot list FTP path: x")))

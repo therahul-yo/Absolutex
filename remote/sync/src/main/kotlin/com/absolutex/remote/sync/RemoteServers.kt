@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
+import java.io.IOException
 import org.json.JSONObject
 
 private val Context.remoteServersStore by preferencesDataStore(name = "remote_servers")
@@ -25,6 +26,7 @@ private const val MAX_PORT = 65535
  */
 fun validateServerUrl(baseUrl: String, allowCleartext: Boolean): String? {
     if (baseUrl.isBlank()) return "URL is blank"
+    if (baseUrl.length > MAX_URL_LENGTH) return "URL too long"
     val uri = try {
         java.net.URI(baseUrl.trim())
     } catch (e: IllegalArgumentException) {
@@ -32,7 +34,10 @@ fun validateServerUrl(baseUrl: String, allowCleartext: Boolean): String? {
     } catch (e: java.net.URISyntaxException) {
         return "URL does not parse (${e.message})"
     }
-    if (uri.host.isNullOrBlank()) return "URL has no host"
+    val host = uri.host
+    if (host.isNullOrBlank()) return "URL has no host"
+    if (host.length > MAX_HOST_LENGTH) return "URL host too long"
+    if (uri.port != -1 && uri.port !in MIN_PORT..MAX_PORT) return "URL port out of range: ${uri.port}"
     return when (uri.scheme?.lowercase()) {
         "https" -> null
         "http" -> if (allowCleartext) null else "plain HTTP needs the per-host cleartext opt-in"
@@ -50,6 +55,14 @@ enum class RemoteKind {
     KOMGA,
     KAVITA,
 }
+
+// Field lengths: persistence sanity, not protocol limits — a 100 000-character value must
+// never reach the store. Hosts follow the 253-octet DNS cap; the rest are round, generous
+// ceilings far above any real server record.
+private const val MAX_HOST_LENGTH = 253
+private const val MAX_NAME_LENGTH = 256
+private const val MAX_PATH_LENGTH = 4096
+private const val MAX_URL_LENGTH = 2048
 
 /**
  * One persisted remote server for the future servers screen. Secrets never live here — only
@@ -130,6 +143,10 @@ fun validateSmb(server: SmbServer): String? {
     if (server.username.isBlank()) return "SMB username must not be blank"
     if (server.port !in MIN_PORT..MAX_PORT) return "SMB port out of range: ${server.port}"
     if (hasParentEscape(server.path)) return "SMB path must not escape its root: ${server.path}"
+    if (server.host.length > MAX_HOST_LENGTH) return "SMB host too long"
+    if (server.share.length > MAX_NAME_LENGTH) return "SMB share too long"
+    if (server.path.length > MAX_PATH_LENGTH) return "SMB path too long"
+    if (server.username.length > MAX_NAME_LENGTH) return "SMB username too long"
     return null
 }
 
@@ -147,6 +164,9 @@ fun validateFtp(server: FtpServer): String? {
     if (server.username.isBlank()) return "FTP username must not be blank"
     if (server.path.isBlank()) return "FTP path must not be blank"
     if (hasParentEscape(server.path)) return "FTP path must not escape its root: ${server.path}"
+    if (server.host.length > MAX_HOST_LENGTH) return "FTP host too long"
+    if (server.username.length > MAX_NAME_LENGTH) return "FTP username too long"
+    if (server.path.length > MAX_PATH_LENGTH) return "FTP path too long"
     return null
 }
 
@@ -234,8 +254,7 @@ class RemoteServers(private val store: DataStore<Preferences>) {
     constructor(context: Context) : this(context.remoteServersStore)
 
     val servers: Flow<List<RemoteServer>> = store.data.map { prefs ->
-        val raw = prefs[SERVERS_KEY] ?: return@map emptyList()
-        parseServers(raw)
+        parseServersOrNull(prefs[SERVERS_KEY]) ?: emptyList()
     }
 
     suspend fun current(): List<RemoteServer> = servers.first()
@@ -244,16 +263,18 @@ class RemoteServers(private val store: DataStore<Preferences>) {
         val error = validateOf(server)
         if (error != null) throw IllegalArgumentException(error)
         store.edit { prefs ->
-            val kept = parseServers(prefs[SERVERS_KEY]).filterNot { it.id == server.id }
+            val kept = keptOrThrow(prefs[SERVERS_KEY]).filterNot { it.id == server.id }
             prefs[SERVERS_KEY] = serialise(kept + normalised(server))
         }
     }
 
     suspend fun remove(id: String) {
         store.edit { prefs ->
-            prefs[SERVERS_KEY] = serialise(parseServers(prefs[SERVERS_KEY]).filterNot { it.id == id })
+            prefs[SERVERS_KEY] = serialise(keptOrThrow(prefs[SERVERS_KEY]).filterNot { it.id == id })
         }
     }
+
+
 
     /**
      * One-time import from the pre-unification sync-servers document (the M5 store that held
@@ -268,7 +289,11 @@ class RemoteServers(private val store: DataStore<Preferences>) {
      */
     suspend fun importLegacySyncServers(legacy: DataStore<Preferences>) {
         val raw = legacy.data.first()[LEGACY_SERVERS_KEY] ?: return
+        // Unparseable is not empty: clearing the legacy over a torn document would lose
+        // every server with the secrets left orphaned. Keep it, surface the failure, and
+        // retry on the next start.
         val incoming = parseLegacyServers(raw)
+            ?: throw IOException("legacy sync servers document is corrupt - keeping it for retry")
         val present = current().map { it.id }.toSet()
         for (server in incoming) {
             if (server.id !in present) {
@@ -337,33 +362,50 @@ class RemoteServers(private val store: DataStore<Preferences>) {
         return obj
     }
 
-    private fun parseServers(raw: String?): List<RemoteServer> {
-        // One bad record (renamed kind, torn write) is skipped, never fatal to its neighbours.
-        val array = runCatching { JSONArray(raw ?: "") }.getOrNull() ?: return emptyList()
-        return List(array.length(), array::getJSONObject).mapNotNull(::parseOne)
-    }
+/**
+ * Fail-closed read for writers: a missing document is an empty list, but an unparseable
+ * one throws instead of degrading — degrading here would let the very next save persist
+ * an empty list over every stored server. Throwing inside the DataStore transformer
+ * aborts the edit: nothing is written.
+ */
+private fun keptOrThrow(raw: String?): List<RemoteServer> {
+    if (raw == null) return emptyList()
+    return parseServersOrNull(raw)
+        ?: throw IOException("servers store is corrupt - refusing to overwrite it")
+}
 
-    private fun parseOne(obj: JSONObject): RemoteServer? {
+/**
+ * Null means the whole document is unparseable (torn write, truncated file) as opposed
+ * to merely containing bad records, which are skipped per record below. Callers that
+ * would overwrite the document must treat null as fatal (see [keptOrThrow]); display
+ * paths degrade it to empty.
+ */
+private fun parseServersOrNull(raw: String?): List<RemoteServer>? {
+    // One bad record (renamed kind, torn write) is skipped, never fatal to its neighbours.
+    val array = runCatching { JSONArray(raw ?: "") }.getOrNull() ?: return null
+    return List(array.length(), array::getJSONObject).mapNotNull { obj ->
         val id = optString(obj, "id")
         val kindName = optString(obj, "kind")
-        if (id == null || kindName == null) return null
+        if (id == null || kindName == null) return@mapNotNull null
         val kind = RemoteKind.entries.firstOrNull { it.name == kindName }
-        if (kind == null) return null
-        return when (kind) {
+        if (kind == null) return@mapNotNull null
+        when (kind) {
             RemoteKind.SMB -> parseSmb(obj, id)
             RemoteKind.FTP -> parseFtp(obj, id)
             RemoteKind.KOMGA -> parseKomga(obj, id)
             RemoteKind.KAVITA -> parseKavita(obj, id)
         }
     }
+}
+
 
     /**
      * Legacy M5 shape: `{id, kind: KOMGA|KAVITA, baseUrl, allowCleartext, username,
      * usesApiKey}`. Anything else (unknown kinds, torn records) is skipped like any other
      * corrupt record — and the import aborts nothing over it.
      */
-    private fun parseLegacyServers(raw: String): List<RemoteServer> {
-        val array = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
+    private fun parseLegacyServers(raw: String): List<RemoteServer>? {
+        val array = runCatching { JSONArray(raw) }.getOrNull() ?: return null
         return List(array.length(), array::getJSONObject).mapNotNull { obj ->
             val id = optString(obj, "id") ?: return@mapNotNull null
             val baseUrl = optString(obj, "baseUrl") ?: return@mapNotNull null
@@ -379,7 +421,8 @@ class RemoteServers(private val store: DataStore<Preferences>) {
     }
 
     companion object {
-        private val SERVERS_KEY = stringPreferencesKey("servers")
+        // Visible for tests: seeding a corrupt document exercises the fail-closed paths.
+        internal val SERVERS_KEY = stringPreferencesKey("servers")
 
         /** Key inside the legacy `sync_servers` document; frozen since M5, never renamed. */
         private val LEGACY_SERVERS_KEY = stringPreferencesKey("servers")

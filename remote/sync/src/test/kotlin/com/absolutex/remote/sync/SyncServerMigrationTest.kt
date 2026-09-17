@@ -12,9 +12,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.IOException
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -81,6 +83,50 @@ class SyncServerMigrationTest {
         RemoteServers(store("remote.preferences_pb")).importLegacySyncServers(legacy)
         assertTrue(secrets.loadPassword("a")?.contentEquals("pw".toCharArray()) == true)
         assertTrue(secrets.loadApiKey("a")?.contentEquals("key".toCharArray()) == true)
+    }
+
+    @Test fun `corrupt legacy document is kept, not deleted`() = runTest {
+        val legacy = store("legacy.preferences_pb")
+        legacy.edit { it[legacyKey] = "{torn" }
+        val remote = RemoteServers(store("remote.preferences_pb"))
+        try {
+            remote.importLegacySyncServers(legacy)
+            fail("expected IOException")
+        } catch (expected: IOException) {
+            assertTrue(expected.message?.contains("corrupt") == true)
+        }
+        // Nothing imported, and the torn document is still there for the next start.
+        assertTrue(remote.current().isEmpty())
+        assertEquals("{torn", legacy.data.first()[legacyKey])
+    }
+
+    @Test fun `failed import resumes without loss or duplication`() = runTest {
+        val legacy = store("legacy.preferences_pb")
+        legacy.edit {
+            it[legacyKey] =
+                """[{"id":"a","kind":"KOMGA","baseUrl":"https://a.lan","username":"u"},""" +
+                """{"id":"bad","kind":"KOMGA","baseUrl":"","username":"u"},""" +
+                """{"id":"b","kind":"KAVITA","baseUrl":"https://b.lan"}]"""
+        }
+        val remote = RemoteServers(store("remote.preferences_pb"))
+        try {
+            remote.importLegacySyncServers(legacy)
+            fail("expected IllegalArgumentException")
+        } catch (expected: IllegalArgumentException) {
+            assertTrue(expected.message?.contains("blank") == true)
+        }
+        // A imported before the failure; B never ran; the legacy is intact for retry.
+        assertEquals(listOf("a"), remote.current().map { it.id })
+        assertTrue(legacy.data.first()[legacyKey]?.contains("bad") == true)
+        // Fix the document and re-run: B imports, A is skipped, legacy clears.
+        legacy.edit {
+            it[legacyKey] =
+                """[{"id":"a","kind":"KOMGA","baseUrl":"https://a.lan","username":"u"},""" +
+                """{"id":"b","kind":"KAVITA","baseUrl":"https://b.lan"}]"""
+        }
+        remote.importLegacySyncServers(legacy)
+        assertEquals(listOf("a", "b"), remote.current().map { it.id }.sorted())
+        assertEquals(null, legacy.data.first()[legacyKey])
     }
 
     @Test fun `unknown kinds skip while known import`() = runTest {

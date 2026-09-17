@@ -70,7 +70,13 @@ fun ServerFormScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            KindPicker(kind = form.kind, onKind = { viewModel.update(form.copy(kind = it)) })
+            // Kind is fixed while editing: changing it would carry the prefilled secret
+            // into the new kind's slot, so that means deleting and adding instead.
+            KindPicker(
+                kind = form.kind,
+                enabled = form.serverId == null,
+                onKind = { viewModel.update(form.copy(kind = it)) },
+            )
             FormFields(form = form, status = status, onUpdate = viewModel::update)
             if (form.kind == RemoteKind.SMB) {
                 Text(stringResource(R.string.remote_test_pending_smb))
@@ -214,12 +220,12 @@ private fun SyncFields(
 }
 
 @Composable
-private fun KindPicker(kind: RemoteKind, onKind: (RemoteKind) -> Unit) {
+private fun KindPicker(kind: RemoteKind, enabled: Boolean, onKind: (RemoteKind) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        KindChip(RemoteKind.SMB, R.string.remote_kind_smb, kind, onKind)
-        KindChip(RemoteKind.FTP, R.string.remote_kind_ftp, kind, onKind)
-        KindChip(RemoteKind.KOMGA, R.string.remote_kind_komga, kind, onKind)
-        KindChip(RemoteKind.KAVITA, R.string.remote_kind_kavita, kind, onKind)
+        KindChip(RemoteKind.SMB, R.string.remote_kind_smb, kind, enabled, onKind)
+        KindChip(RemoteKind.FTP, R.string.remote_kind_ftp, kind, enabled, onKind)
+        KindChip(RemoteKind.KOMGA, R.string.remote_kind_komga, kind, enabled, onKind)
+        KindChip(RemoteKind.KAVITA, R.string.remote_kind_kavita, kind, enabled, onKind)
     }
 }
 
@@ -228,10 +234,12 @@ private fun KindChip(
     value: RemoteKind,
     labelRes: Int,
     selected: RemoteKind,
+    enabled: Boolean,
     onKind: (RemoteKind) -> Unit,
 ) {
     FilterChip(
         selected = selected == value,
+        enabled = enabled,
         onClick = { onKind(value) },
         label = { Text(stringResource(labelRes)) },
     )

@@ -1,14 +1,17 @@
 package com.absolutex.remote.sync
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.edit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -16,6 +19,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
+import java.io.IOException
 
 /** Robolectric provides the real org.json on the JVM (see KomgaClientTest). */
 @RunWith(RobolectricTestRunner::class)
@@ -121,6 +125,57 @@ class RemoteServersTest {
         assertTrue(servers.current().isEmpty())
         job.cancelAndJoin()
     }
+
+    @Test fun `oversize fields and out-of-range url ports are rejected`() {
+        val smb = SmbServer(id = "s", host = "nas", share = "media", path = "comics", username = "a")
+        assertTrue(validateSmb(smb.copy(host = "h".repeat(300))) != null)
+        assertTrue(validateSmb(smb.copy(share = "m".repeat(300))) != null)
+        assertTrue(validateSmb(smb.copy(path = "c".repeat(5000))) != null)
+        assertTrue(validateSmb(smb.copy(username = "u".repeat(300))) != null)
+        val ftp = FtpServer(id = "f", host = "nas", path = "/pub", username = "b", useTls = true)
+        assertTrue(validateFtp(ftp.copy(host = "h".repeat(300))) != null)
+        assertTrue(validateServerUrl("https://h:99999", false) != null)
+        assertTrue(validateServerUrl("https://" + "h".repeat(300), false) != null)
+        assertTrue(validateServerUrl("https://" + "h".repeat(300) + ".lan", false) != null)
+        assertNull(validateServerUrl("https://nas:8443", false))
+        assertNull(validateServerUrl("http://nas:8080", true))
+    }
+
+    @Test fun `corrupt document refuses writes without losing data`() = runTest {
+        val f = file("corrupt.preferences_pb")
+        val job = Job()
+        val store = PreferenceDataStoreFactory.create(
+            scope = CoroutineScope(Dispatchers.IO + job),
+            produceFile = { f },
+        )
+        val servers = RemoteServers(store)
+        servers.save(SmbServer(id = "good", host = "nas", share = "media", path = "comics", username = "a"))
+        // Torn write through the key: the next save or remove must refuse, not persist an
+        // empty list over the good record.
+        store.edit { it[RemoteServers.SERVERS_KEY] = "{torn" }
+        try {
+            servers.save(FtpServer(id = "new", host = "nas", path = "/pub", username = "b", useTls = true))
+            fail("expected IOException")
+        } catch (expected: IOException) {
+            assertTrue(expected.message?.contains("corrupt") == true)
+        }
+        try {
+            servers.remove("good")
+            fail("expected IOException")
+        } catch (expected: IOException) {
+            assertTrue(expected.message?.contains("corrupt") == true)
+        }
+        assertEquals("{torn", store.data.first()[RemoteServers.SERVERS_KEY])
+        // Repair the document and the store accepts writes again (follow-up save).
+        store.edit {
+            it[RemoteServers.SERVERS_KEY] =
+                """[{"id":"good","kind":"SMB","host":"nas","share":"media","path":"comics","username":"a"}]"""
+        }
+        servers.save(FtpServer(id = "new", host = "nas", path = "/pub", username = "b", useTls = true))
+        assertEquals(listOf("good", "new"), servers.current().map { it.id })
+        job.cancelAndJoin()
+    }
+
 
     @Test fun `one corrupt record is skipped, never fatal to its neighbours`() = runTest {
         val f = file()
