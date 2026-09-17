@@ -5,7 +5,7 @@ import dagger.Module
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 
-/** One persisted settings instance behind all three contracts, so a write is seen by every reader. */
+/** One persisted settings instance behind all four contracts, so a write is seen by every reader. */
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class SettingsDataModule {
@@ -15,6 +15,9 @@ abstract class SettingsDataModule {
 
     @Binds
     abstract fun appPrefs(settings: DataStoreSettings): AppPrefsSource
+
+    @Binds
+    abstract fun renderingPrefs(settings: DataStoreSettings): RenderingPrefsSource
 
     @Binds
     abstract fun writer(settings: DataStoreSettings): SettingsWriter

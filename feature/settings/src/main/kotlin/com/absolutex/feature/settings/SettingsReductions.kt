@@ -3,6 +3,8 @@ package com.absolutex.feature.settings
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.data.settings.ReaderPrefs
+import com.absolutex.core.data.settings.RenderingPrefs
+import com.absolutex.core.gpu.ColourParams
 import com.absolutex.model.FitMode
 import com.absolutex.model.FitModeMemory
 import com.absolutex.model.ReadingFlow
@@ -42,3 +44,6 @@ fun ReaderPrefs.withReadingFlow(flow: ReadingFlow): ReaderPrefs = copy(readingFl
  */
 fun ReaderPrefs.withFitMode(mode: FitMode): ReaderPrefs =
     copy(fitMode = mode, fitMemory = FitModeMemory.everywhere(mode))
+
+/** Colour edits clamp into the slider ranges on the way in (see ColourParams.clamped). */
+fun RenderingPrefs.withColour(colour: ColourParams): RenderingPrefs = copy(colour = colour.clamped())
