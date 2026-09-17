@@ -31,32 +31,37 @@ class ContentResolverTree @Inject constructor(
         }.getOrNull() ?: return emptyList()
         return runCatching {
             context.contentResolver.query(childrenUri, PROJECTION, null, null, null)?.use { cursor ->
+                // Resolved once per cursor, not per row: nothing here says a provider must return
+                // the requested projection in the requested order, only that these columns exist.
+                val columns = Columns(
+                    id = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
+                    name = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+                    mime = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE),
+                    size = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_SIZE),
+                )
                 buildList {
-                    while (cursor.moveToNext()) entryOf(cursor, parent)?.let(::add)
+                    while (cursor.moveToNext()) entryOf(cursor, parent, columns)?.let(::add)
                 }
             }
         }.getOrNull().orEmpty()
     }
 
     /** Null for a document with no id or name: it can be neither opened nor sorted, so it is not a book. */
-    private fun entryOf(cursor: Cursor, parent: Uri): TreeEntry? {
-        val id = cursor.getString(COLUMN_ID) ?: return null
-        val name = cursor.getString(COLUMN_NAME) ?: return null
+    private fun entryOf(cursor: Cursor, parent: Uri, columns: Columns): TreeEntry? {
+        val id = cursor.getString(columns.id) ?: return null
+        val name = cursor.getString(columns.name) ?: return null
         return TreeEntry(
             uri = DocumentsContract.buildDocumentUriUsingTree(parent, id).toString(),
             name = name,
-            isDirectory = cursor.getString(COLUMN_MIME) == DocumentsContract.Document.MIME_TYPE_DIR,
-            sizeBytes = if (cursor.isNull(COLUMN_SIZE)) 0 else cursor.getLong(COLUMN_SIZE),
+            isDirectory = cursor.getString(columns.mime) == DocumentsContract.Document.MIME_TYPE_DIR,
+            sizeBytes = if (cursor.isNull(columns.size)) 0 else cursor.getLong(columns.size),
         )
     }
 
-    private companion object {
-        // Column indices are this projection's order: a cursor has no names to look up by.
-        const val COLUMN_ID = 0
-        const val COLUMN_NAME = 1
-        const val COLUMN_MIME = 2
-        const val COLUMN_SIZE = 3
+    /** This cursor's column positions, looked up by name once rather than assumed from the projection. */
+    private data class Columns(val id: Int, val name: Int, val mime: Int, val size: Int)
 
+    private companion object {
         val PROJECTION = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,

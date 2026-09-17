@@ -13,6 +13,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
     kotlin { jvmToolchain(21) }
+    // ReaderViewModel touches a real Context (cacheDir, string resources); Robolectric is what
+    // lets its open/cancel-race tests construct one on the JVM (see :core:data for the same need).
+    testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 dependencies {
     implementation(project(":core:model"))
@@ -33,4 +36,7 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
 }
