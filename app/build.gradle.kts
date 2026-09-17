@@ -52,6 +52,7 @@ dependencies {
     implementation(project(":feature:reader"))
     implementation(project(":feature:library"))
     implementation(project(":feature:settings"))
+    implementation(project(":feature:widget")) // manifest merge for the widget receiver
 
     implementation(platform(libs.compose.bom))
     implementation(libs.androidx.core.ktx)

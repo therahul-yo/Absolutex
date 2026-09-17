@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_title">Continue reading</string>
+    <string name="widget_empty_title">Nothing in progress yet</string>
+    <string name="widget_empty_cta">Open Absolutex</string>
+    <string name="widget_progress">Page %1$d of %2$d · %3$d%%</string>
+    <string name="widget_desc">Jump back into the book you were reading</string>
+</resources>
