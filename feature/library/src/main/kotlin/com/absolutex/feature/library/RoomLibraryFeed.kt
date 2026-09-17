@@ -17,7 +17,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
-import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -58,9 +57,21 @@ internal class RoomLibraryFeed @Inject constructor(
     override suspend fun search(query: String): List<LibraryBookUi> {
         val progress = progressDao.observeAll().first().associateBy { it.bookId }
         val prefs = appPrefsSource.currentAppPrefs()
-        return repository.search(query)
+        val daoResults = repository.search(query)
             .deduplicatedByIdentity()
-            .map { it.toUi(progress, prefs.useOriginalFilename) }
+        // Ensure SAF books match against the decoded visible filename, not the percent-encoded
+        // path. A full parsed-label search (e.g. #1 vs stored 001) is noted for M5.
+        val filtered = daoResults.filter { book ->
+            val filename = decodedFilename(book.path)
+            val matchesFile = filename.contains(query, ignoreCase = true)
+            val matchesPath = book.path.contains(query, ignoreCase = true)
+            val matchesSeries = book.series?.contains(query, ignoreCase = true) == true
+            val matchesTitle = book.title?.contains(query, ignoreCase = true) == true
+            val displayName = if (prefs.useOriginalFilename) filename else (book.series ?: "")
+            val matchesDisplay = displayName.contains(query, ignoreCase = true)
+            matchesFile || matchesPath || matchesSeries || matchesTitle || matchesDisplay
+        }
+        return filtered.map { it.toUi(progress, prefs.useOriginalFilename) }
     }
 
     override suspend fun setFavorite(paths: Set<String>, favorite: Boolean): LibraryNotice =
@@ -111,7 +122,7 @@ internal class RoomLibraryFeed @Inject constructor(
         return LibraryBookUi(
             path = path,
             displayName = displayNameOf(this, useOriginalFilename),
-            originalFilename = File(path).name,
+            originalFilename = decodedFilename(path),
             series = series,
             sizeBytes = sizeBytes,
             lastModified = lastModified,
@@ -135,14 +146,14 @@ internal class RoomLibraryFeed @Inject constructor(
          * the label for both display and search, which is what the switch's "escape hatch" means.
          */
         fun displayNameOf(book: LibraryBook, useOriginalFilename: Boolean): String {
-            if (useOriginalFilename) return File(book.path).name
+            if (useOriginalFilename) return decodedFilename(book.path)
             return ParsedName(
                 series = book.series,
                 issue = book.issue?.let { value -> IssueNumber(value, book.issueRaw ?: value.toString()) },
                 volume = book.volume,
                 year = book.year,
                 title = book.title,
-                originalFilename = File(book.path).name,
+                originalFilename = decodedFilename(book.path),
             ).displayName
         }
     }

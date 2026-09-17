@@ -5,8 +5,7 @@ import com.absolutex.model.PageTransition
 import com.absolutex.model.FitModeMemory
 import com.absolutex.model.PageLayout
 import com.absolutex.model.ReadingFlow
-import com.absolutex.core.data.settings.LibraryPrefCodec.decodeApp
-import com.absolutex.core.data.settings.LibraryPrefCodec.encodeApp
+
 
 /**
  * Translates between the preference models and a [PrefBag].
@@ -60,7 +59,8 @@ object PrefCodec {
             locations = bag.stringSet(KEY_LOCATIONS) ?: defaults.locations,
             // Lane keys decode in their own codec; this one line keeps them in the single
             // AppPrefs snapshot without growing PrefCodec per feature.
-            useOriginalFilename = LibraryPrefCodec.decodeApp(bag).useOriginalFilename,
+            useOriginalFilename = bag.boolean(LibraryPrefKeys.USE_ORIGINAL_FILENAME)
+                ?: AppPrefs().useOriginalFilename,
         )
     }
 
