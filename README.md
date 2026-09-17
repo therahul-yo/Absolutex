@@ -127,22 +127,6 @@ UnRAR-derived.
 
 ## Notes for contributors
 
-### Who works here, and how commits are attributed
-
-Work lands through parallel agent lanes coordinated by pull requests. Commits carry the
-repository identity, and every agent-authored commit ends with a `Co-authored-by:` trailer
-naming the agent that wrote it, so contributors are visible on the commit and not only in a
-PR body:
-
-| Agent | Lane | Co-authored-by trailer |
-|---|---|---|
-| Claude Code (lead) | reviews, merges, on-device checks | `Claude Code <noreply@anthropic.com>` (varies by session) |
-| Factory Droid | library, formats, settings, design, release | `factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>` |
-
-A PR description additionally ends with a `🤖 Generated with ...` line from the tool that
-wrote it. If you review this repository, treat those trailers as the attribution record and
-match the convention in your own commits.
-
 ### Never `dup()` a file descriptor to share it across threads
 
 This cost two debugging cycles, in two different disguises.
