@@ -36,7 +36,7 @@ class WidgetCompositionTest {
         val model = WidgetModel.from("Batman 001.cbz:100", "Absolute Batman", 3, 10, null)
         val rowIntent = WidgetIntents.tapIntent(
             context,
-            WidgetIntents.tapUri(model.bookId, "/sd/Comics/Batman 001.cbz")?.toString(),
+            WidgetIntents.tapUri("/sd/Comics/Batman 001.cbz")?.toString(),
         )
         runGlanceAppWidgetUnitTest {
             setContext(context)

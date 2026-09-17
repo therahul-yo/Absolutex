@@ -51,7 +51,7 @@ internal fun Content(rows: List<Pair<WidgetModel, String?>>) {
             Text(text = context.getString(R.string.widget_title))
             rows.forEach { (model, path) ->
                 // No library path -> no fabricated Uri (review item 2): the tap opens the app.
-                val uri = WidgetIntents.tapUri(model.bookId, path)?.toString()
+                val uri = WidgetIntents.tapUri(path)?.toString()
                 Column(
                     modifier = GlanceModifier.fillMaxWidth()
                         .clickable(actionStartActivity(WidgetIntents.tapIntent(context, uri))),

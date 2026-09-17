@@ -16,8 +16,7 @@ object WidgetIntents {
      * than a Uri parsed from a bare BookIdentity id — Uri.parse on "Name.cbz:104857600"
      * fabricates a scheme nothing resolves (lead review, item 2).
      */
-    fun tapUri(bookId: String, libraryPath: String?): Uri? =
-        if (libraryPath != null) Uri.fromFile(File(libraryPath)) else null
+    fun tapUri(libraryPath: String?): Uri? = libraryPath?.let { Uri.fromFile(File(it)) }
 
     /**
      * Explicit to our own package: an implicit ACTION_VIEW would resolve to any installed
