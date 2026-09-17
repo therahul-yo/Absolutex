@@ -9,6 +9,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.util.zip.DataFormatException
 import java.util.zip.Inflater
 
 /**
@@ -16,16 +17,18 @@ import java.util.zip.Inflater
  *
  * Traffic discipline (asserted with a counting transport): opening indexes from the tail
  * plus the central directory only; a page fetches its local header plus its entry bytes;
- * opened pages sit in a small LRU, so paging back costs zero transport calls. Thread-safe
- * per the ComicSource contract: the decode pool fans pages out across cores.
+ * opened pages sit in a byte-bounded LRU, so paging back costs zero transport calls.
+ * Thread-safe per the ComicSource contract: the decode pool fans pages out across cores.
  *
  * Cancellation: [close] latches — every later transport read throws instead of running,
  * the page cache drops, and already-open streams keep only their materialised bytes (no
- * handles escape this class). A call already blocked inside the transport is bounded by
- * that transport's own timeouts (SMB/FTP both configure connect and socket timeouts);
- * nothing here can pin a decode thread past them.
+ * handles escape this class). The transport itself closes outside every lock, so a
+ * stalled in-flight read never holds up closing the book; a call already blocked inside
+ * the transport is bounded by that transport's own timeouts (SMB/FTP both configure
+ * connect and socket timeouts), and in-flight bytes discard on the next [ensureOpen].
  */
 class CoreComicSource private constructor(
+    private val transport: RangeTransport,
     private val reader: SeekableReader,
     private val entries: List<ZipDirectory.Entry>,
     override val pages: List<Page>,
@@ -36,10 +39,8 @@ class CoreComicSource private constructor(
     @Volatile
     private var closed = false
 
-    private val pageCache = object : LinkedHashMap<Int, ByteArray>(CACHE_SLOTS, LOAD_FACTOR, true) {
-        override fun removeEldestEntry(eldest: Map.Entry<Int, ByteArray>): Boolean =
-            size > MAX_CACHED_PAGES
-    }
+    private val pageCache = LinkedHashMap<Int, ByteArray>(CACHE_SLOTS, LOAD_FACTOR, true)
+    private var cachedBytes = 0L
 
     override fun openPage(index: Int): InputStream {
         val page = pages.getOrNull(index)
@@ -47,11 +48,12 @@ class CoreComicSource private constructor(
         synchronized(cacheLock) {
             pageCache[page.index]?.let { return ByteArrayInputStream(it) }
         }
+        // No single-flight: two threads opening the same uncached page fetch it twice. On
+        // a LAN that duplicates one ranged read instead of serialising every decode behind
+        // a shared in-flight map.
         val data = fetchPage(entries[page.index])
-        synchronized(cacheLock) {
-            pageCache[page.index] = data
-            return ByteArrayInputStream(data)
-        }
+        cachePage(page.index, data)
+        return ByteArrayInputStream(data)
     }
 
     override fun openCover(): InputStream {
@@ -60,15 +62,16 @@ class CoreComicSource private constructor(
     }
 
     override fun close() {
-        closed = true
         synchronized(cacheLock) {
+            if (closed) return
+            closed = true
             pageCache.clear()
+            cachedBytes = 0L
         }
-        // Deliberately no reader.evictAll(): it takes the reader lock, which a stalled
-        // in-flight read may hold until its socket timeout — and close must return promptly
-        // while a logon or read is stalled (same argument as the transport's own close).
-        // The block cache is bounded and dies with this source; in-flight reads fail on
-        // their next ensureOpen instead of delivering bytes past the close.
+        // Outside every lock, exactly once: a backend close is a session teardown round
+        // trip, and an in-flight stalled read must never hold up closing the book. A
+        // failing close must not fail the book close, so it is contained, not propagated.
+        runCatching { transport.close() }
     }
 
     private fun fetchPage(entry: ZipDirectory.Entry): ByteArray {
@@ -79,7 +82,25 @@ class CoreComicSource private constructor(
         return if (entry.method == ZipDirectory.METHOD_STORED) {
             data
         } else {
-            inflateEntry(data, entry.uncompressedSize)
+            inflateEntry(data, entry)
+        }
+    }
+
+    /**
+     * Caches one opened page under a byte budget, evicting least-recently-used first. The
+     * inflation cap bounds every page, so eviction always terminates with room: no single
+     * page can outgrow the budget alone.
+     */
+    private fun cachePage(index: Int, data: ByteArray) {
+        synchronized(cacheLock) {
+            val previous = pageCache.put(index, data)
+            cachedBytes += data.size.toLong() - (previous?.size ?: 0)
+            val eldest = pageCache.entries.iterator()
+            while (cachedBytes > MAX_CACHED_BYTES && eldest.hasNext()) {
+                val victim = eldest.next()
+                eldest.remove()
+                cachedBytes -= victim.value.size.toLong()
+            }
         }
     }
 
@@ -99,8 +120,12 @@ class CoreComicSource private constructor(
         /** Hard cap on one page's inflated bytes; the declared size is enforced exactly. */
         const val MAX_DECOMPRESSED_BYTES = 64L * 1024 * 1024
 
-        /** Opened pages kept for zero-cost back-navigation; evicted least-recently-used first. */
-        const val MAX_CACHED_PAGES = 8
+        /**
+         * Opened pages kept for zero-cost back-navigation, evicted least-recently-used
+         * first past this many bytes. Sized to hold several pages without approaching the
+         * reader's own tile budget.
+         */
+        const val MAX_CACHED_BYTES = 64L * 1024 * 1024
 
         private const val MAGIC_SIZE = 4
         private const val ZIP_MAGIC_0 = 0x50
@@ -123,7 +148,7 @@ class CoreComicSource private constructor(
             val pages = entries.mapIndexed { index, entry ->
                 Page(index = index, entryName = entry.name, sizeBytes = entry.uncompressedSize)
             }
-            val source = CoreComicSource(reader, entries, pages)
+            val source = CoreComicSource(transport, reader, entries, pages)
             return RemoteOpenResult.Ready(source, BookIdentity.of(displayName, size), displayName, size)
         }
 
@@ -168,7 +193,8 @@ class CoreComicSource private constructor(
          * exactly its declared size, so anything beyond is a bomb or a corrupt stream.
          * The owned inflater always ends — native zlib state must not leak per page.
          */
-        private fun inflateEntry(data: ByteArray, declared: Long): ByteArray {
+        private fun inflateEntry(data: ByteArray, entry: ZipDirectory.Entry): ByteArray {
+            val declared = entry.uncompressedSize
             checkDeclaredSize(declared)
             if (data.isEmpty() && declared == 0L) return ByteArray(0)
             val inflater = Inflater(true)
@@ -179,15 +205,30 @@ class CoreComicSource private constructor(
                 var total = 0L
                 while (!inflater.finished()) {
                     if (inflater.needsInput()) throw IOException("truncated deflated entry")
-                    val count = inflater.inflate(chunk)
+                    val count = inflateOnce(inflater, chunk, entry.name)
                     total += count
                     if (total > declared) throw IOException("decompressed output past declared size")
                     out.write(chunk, 0, count)
                 }
+                ensureExactSize(entry, total, declared)
                 return out.toByteArray()
             } finally {
                 inflater.end()
             }
+        }
+
+        /** One inflation step: corrupt DEFLATE surfaces as IOException, never unchecked. */
+        private fun inflateOnce(inflater: Inflater, chunk: ByteArray, entryName: String): Int {
+            try {
+                return inflater.inflate(chunk)
+            } catch (e: DataFormatException) {
+                throw IOException("deflate error: $entryName", e)
+            }
+        }
+
+        /** A stream that ends cleanly short of its declared size is corrupt, not short. */
+        private fun ensureExactSize(entry: ZipDirectory.Entry, total: Long, declared: Long) {
+            if (total < declared) throw IOException("decompressed output shorter than declared: ${entry.name}")
         }
 
         private const val BYTE_MASK = 0xFF

@@ -2,6 +2,7 @@ package com.absolutex.remote.core
 
 import com.absolutex.model.BookIdentity
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -43,10 +44,12 @@ class CoreComicSourceTest {
         val result = CoreComicSource.open(transport, "book.cbz")
         assertTrue(result is RemoteOpenResult.Ready)
         assertEquals(400, (result as RemoteOpenResult.Ready).source.pages.size)
-        // No read per entry: the magic sniff plus block-quantised tail/directory spans.
-        // Block alignment may widen the tail span to a block edge, but every byte is
-        // fetched at most once — traffic never exceeds the file.
+        // No read per entry: the 4-byte magic sniff plus block-quantised tail/directory
+        // spans. Block alignment may widen the tail span to a block edge, but every byte
+        // is fetched at most once — traffic never exceeds the file.
         assertTrue("open took ${transport.ranges.size} round trips", transport.ranges.size <= 3)
+        assertEquals(0L, transport.ranges[0].offset)
+        assertEquals(4, transport.ranges[0].length)
         assertTrue("indexed ${transport.bytesServed} of ${bytes.size}", transport.bytesServed <= bytes.size + 4)
     }
 
@@ -143,6 +146,128 @@ class CoreComicSourceTest {
                 assertTrue(expected.message?.contains("no pages") == true)
             }
         }
+    }
+
+    @Test fun `garbage deflate bytes fail as IOException, never unchecked`() {
+        // Overwrite the entry's compressed bytes with an invalid block type: nowrap
+        // inflation must surface DataFormatException as IOException for the page pipeline.
+        val bytes = archive(2)
+        val probe = FakeRangeTransport(bytes)
+        val entries = ZipDirectory.open(probe::readAt, bytes.size.toLong())
+        val dataOffset = ZipDirectory.localDataOffsetOf(probe::readAt, entries[0])
+        val patched = bytes.copyOf()
+        patched.fill(0xFF.toByte(), dataOffset.toInt(), dataOffset.toInt() + 16)
+        val (source, _) = opened(patched)
+        source.use {
+            try {
+                it.openPage(0).use { stream -> stream.readBytes() }
+                fail("expected IOException")
+            } catch (expected: IOException) {
+                assertTrue(expected.cause is java.util.zip.DataFormatException)
+            }
+        }
+    }
+
+    @Test fun `declared output shorter than real fails instead of serving short`() {
+        // A clean stream that ends at 100 bytes for a 1 MB declaration is corrupt input,
+        // not a short page: the exact-size rule fails it like a bomb.
+        val bytes = ZipBytes.cbz("page01.jpg" to ZipBytes.pageBytes(1, 100))
+        val patched = bytes.copyOf()
+        ZipBytes.le32(patched, cdOffsetOf(patched) + 24, 1_000_000L)
+        val (source, _) = opened(patched)
+        source.use {
+            try {
+                it.openPage(0).use { stream -> stream.readBytes() }
+                fail("expected IOException")
+            } catch (expected: IOException) {
+                assertTrue(expected.message?.contains("shorter than declared") == true)
+            }
+        }
+    }
+
+    @Test fun `page cache evicts least-recently-used past the byte bound`() {
+        // STORED, so on-disk size equals inflated size: deflated zeros would fit the whole
+        // file in the block cache and the page cache would never be exercised. 25 + 25 +
+        // 20 MiB of working set against the 64 MiB bound evicts exactly the oldest page.
+        val pages = listOf(25_000_000, 25_000_000, 20_000_000).mapIndexed { index, size ->
+            "page%02d.jpg".format(index + 1) to ByteArray(size)
+        }
+        val bytes = ZipBytes.cbz(*pages.toTypedArray(), stored = true)
+        val transport = FakeRangeTransport(bytes)
+        val result = CoreComicSource.open(transport, "book.cbz")
+        assertTrue(result is RemoteOpenResult.Ready)
+        val source = (result as RemoteOpenResult.Ready).source as CoreComicSource
+        source.use {
+            repeat(3) { page ->
+                it.openPage(page).use { stream -> stream.readBytes() }
+            }
+            // Page 1 fell out; reopening it costs transport calls again...
+            val before = transport.ranges.size
+            it.openPage(0).use { stream -> stream.readBytes() }
+            assertTrue(transport.ranges.size > before)
+            // ...while the most recent page is still resident at zero cost.
+            val cached = transport.ranges.size
+            it.openPage(2).use { stream -> stream.readBytes() }
+            assertEquals(cached, transport.ranges.size)
+        }
+    }
+
+    @Test fun `close releases the transport exactly once`() {
+        val bytes = archive(2)
+        val transport = FakeRangeTransport(bytes)
+        val result = CoreComicSource.open(transport, "book.cbz")
+        assertTrue(result is RemoteOpenResult.Ready)
+        val source = (result as RemoteOpenResult.Ready).source
+        source.close()
+        source.close()
+        assertEquals(1, transport.closes)
+    }
+
+    @Test fun `close returns promptly during a stalled read`() {
+        // Straddling layout like the discard test: page 2's header sits outside every
+        // block the open fetched, so the worker's first read must hit the transport.
+        // (A small archive would serve everything from the block cache and never stall.)
+        val bytes = ZipBytes.cbz(
+            "page001.jpg" to ByteArray(100_000) { it.toByte() },
+            "page002.jpg" to ZipBytes.pageBytes(2),
+            "page003.jpg" to ByteArray(100_000) { it.toByte() },
+            stored = true,
+        )
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val baseline = java.util.concurrent.atomic.AtomicInteger(-1)
+        val reads = java.util.concurrent.atomic.AtomicInteger(0)
+        var transportCloses = 0
+        val stalled = object : RangeTransport {
+            val delegate = FakeRangeTransport(bytes)
+            override fun sizeBytes(): Long = delegate.sizeBytes()
+            override fun readAt(offset: Long, length: Int): ByteArray {
+                if (baseline.get() >= 0 && reads.incrementAndGet() > baseline.get()) {
+                    entered.countDown()
+                    assertTrue(release.await(10, TimeUnit.SECONDS))
+                }
+                return delegate.readAt(offset, length)
+            }
+            override fun close() {
+                transportCloses++
+            }
+        }
+        val result = CoreComicSource.open(stalled, "book.cbz")
+        assertTrue(result is RemoteOpenResult.Ready)
+        val source = (result as RemoteOpenResult.Ready).source
+        baseline.set(reads.get())
+        val worker = thread { runCatching { source.openPage(1).use { it.readBytes() } } }
+        assertTrue(entered.await(10, TimeUnit.SECONDS))
+        // The read is parked inside the transport, yet close returns at once — it never
+        // takes a lock the read holds, and the transport close runs outside every lock.
+        val start = System.nanoTime()
+        source.close()
+        val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)
+        assertTrue("close blocked for ${elapsedMs}ms", elapsedMs < 2_000)
+        release.countDown()
+        worker.join(10_000)
+        assertFalse(worker.isAlive)
+        assertEquals(1, transportCloses)
     }
 
     @Test fun `close cancels future reads and freezes traffic`() {
