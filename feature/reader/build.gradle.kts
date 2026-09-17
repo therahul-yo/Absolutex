@@ -19,8 +19,11 @@ dependencies {
     implementation(project(":core:ui"))
     implementation(project(":core:data"))
     implementation(project(":core:decode"))
+    implementation(project(":core:gpu"))
     implementation(project(":source:api"))
     implementation(project(":source:libarchive"))
+    implementation(project(":source:pdf"))
+    implementation(project(":core:thumbnails"))
     implementation(platform(libs.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
@@ -29,4 +32,5 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.kotlinx.coroutines.android)
+    testImplementation(libs.junit)
 }

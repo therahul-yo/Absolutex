@@ -6,4 +6,31 @@
     <string name="reader_page_unreadable">This page couldn’t be read</string>
     <string name="reader_no_pages">No readable pages</string>
     <string name="reader_retry">Retry</string>
+
+    <!-- Reader chrome. The indicator is 1-based: page 1 of 45, not 0 of 44. -->
+    <string name="reader_page_indicator">%1$d / %2$d</string>
+    <string name="reader_page_indicator_desc">Page %1$d of %2$d</string>
+    <string name="reader_seek_desc">Jump to a page</string>
+    <string name="reader_close">Close</string>
+    <string name="reader_settings">Settings</string>
+    <string name="reader_contents">Contents</string>
+    <string name="reader_options">Options</string>
+    <string name="reader_flow_ltr">L to R</string>
+    <string name="reader_flow_rtl">R to L</string>
+    <string name="reader_flow_vertical">Vertical</string>
+    <string name="reader_layout_single">Single</string>
+    <string name="reader_layout_double">Double</string>
+    <string name="reader_layout_cover">Cover+</string>
+    <string name="reader_layout_continuous">Strip</string>
+    <string name="reader_fit_screen">Screen</string>
+    <string name="reader_fit_width">Width</string>
+    <string name="reader_fit_height">Height</string>
+    <string name="reader_fit_full">Full</string>
+    <string name="reader_export">Export page</string>
+    <string name="reader_export_saved">Saved to Pictures/Absolutex</string>
+    <string name="reader_export_open">Open</string>
+    <string name="reader_export_failed">Couldn’t save this page</string>
+    <string name="reader_bookmark_add">Bookmark</string>
+    <string name="reader_bookmark_remove">Remove bookmark</string>
+    <string name="reader_bookmark_page">p. %1$d</string>
 </resources>

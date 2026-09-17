@@ -1,7 +1,42 @@
 {
-  "_comment": "Compressed on-disk size of the release APK, in bytes. Armed from CI run 34868113646 (commit 04ea42d), which was fully green: detekt, lintRelease, test + testDebugUnitTest and :app:assembleRelease all passed. The gate fails past 2% or 64 KiB over this, whichever is larger — so the effective ceiling is 2274441 bytes. Regenerate deliberately with: python3 tools/check-apk-size.py --apk app/build/outputs/apk/release/app-release-unsigned.apk --update",
-  "_source_run": "https://github.com/therahul-yo/Absolutex/actions/runs/34868113646",
+  "_comment": "Compressed on-disk size of the release APK. Regenerate with: python3 tools/check-apk-size.py --apk <path> --update",
   "apk": "app-release-unsigned.apk",
-  "categories": {},
-  "total_bytes": 2208905
+  "categories": {
+    "assets": {
+      "compressed": 56599,
+      "entries": 20,
+      "uncompressed": 145453
+    },
+    "dex": {
+      "compressed": 2783516,
+      "entries": 1,
+      "uncompressed": 2783516
+    },
+    "manifest": {
+      "compressed": 1873,
+      "entries": 1,
+      "uncompressed": 6548
+    },
+    "native": {
+      "compressed": 6826000,
+      "entries": 5,
+      "uncompressed": 6826000
+    },
+    "other": {
+      "compressed": 13205,
+      "entries": 9,
+      "uncompressed": 55740
+    },
+    "resources": {
+      "compressed": 155320,
+      "entries": 1,
+      "uncompressed": 155320
+    },
+    "signing": {
+      "compressed": 30610,
+      "entries": 96,
+      "uncompressed": 84604
+    }
+  },
+  "total_bytes": 9923784
 }

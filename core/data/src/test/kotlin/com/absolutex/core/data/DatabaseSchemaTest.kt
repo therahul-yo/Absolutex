@@ -45,6 +45,14 @@ class DatabaseSchemaTest {
         assertEquals(listOf("library_book", "reading_progress"), tables(2))
     }
 
+    @Test fun `version 3 adds bookmarks and keeps everything before it`() {
+        assertEquals(listOf("bookmark", "library_book", "reading_progress"), tables(3))
+    }
+
+    @Test fun `version 4 adds per-book overrides and keeps everything before it`() {
+        assertEquals(listOf("book_prefs", "bookmark", "library_book", "reading_progress"), tables(4))
+    }
+
     @Test fun `the library table is indexed for the queries the library actually runs`() {
         val entities = schema(2).getJSONArray("entities")
         val library = (0 until entities.length())

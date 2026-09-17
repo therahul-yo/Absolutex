@@ -95,6 +95,13 @@ interface LibraryDao {
     suspend fun search(query: String): List<LibraryBook>
 
     /**
+     * Removes every row for [path] — for a path the watcher reported as gone (§5.1 file
+     * monitoring). Scoped to the single row: a one-file delete must never reach another path.
+     */
+    @Query("DELETE FROM library_book WHERE path = :path")
+    suspend fun deletePath(path: String): Int
+
+    /**
      * Removes rows the latest scan did not see — the files are gone from disk (§5.1 file
      * monitoring). Scoped to [pathPrefix] so scanning one location never deletes another's books.
      */
