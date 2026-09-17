@@ -75,6 +75,21 @@ class LibArchiveSourceTest {
         }
     }
 
+    @Test fun comicinfo_is_loaded_through_the_jni_bridge() {
+        // Corpus 01_basic_ltr.cbz writes ComicInfo.xml at raw ordinal 0, before the pages.
+        open("01_basic_ltr.cbz").use { src ->
+            assertEquals("Absolutex Corpus", src.comicInfo?.series)
+            assertEquals(12, src.comicInfo?.pageCount)
+        }
+    }
+
+    @Test fun an_archive_without_comicinfo_opens_with_null_metadata() {
+        open("02_no_comicinfo.cbz").use { src ->
+            assertEquals(12, src.pages.size)
+            assertEquals(null, src.comicInfo)
+        }
+    }
+
     @Test fun concurrent_reads_return_identical_bytes_to_serial_reads() {
         open("absolute-batman-001.cbr").use { src ->
             val serial = (0 until 6).map { src.openPage(it).readBytes().size }

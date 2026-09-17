@@ -1,7 +1,9 @@
 package com.absolutex.source.libarchive
 
 import android.os.ParcelFileDescriptor
+import com.absolutex.model.ComicInfo
 import com.absolutex.model.Page
+import com.absolutex.source.ComicInfoLoader
 import com.absolutex.source.ComicSource
 import com.absolutex.source.EntryFilter
 import com.absolutex.source.NaturalOrder
@@ -30,6 +32,7 @@ class LibArchiveSource private constructor(
     override val pages: List<Page>,
     /** Archive ordinal of each page, parallel to [pages]. Sorting reorders pages, not ordinals. */
     private val ordinals: IntArray,
+    override val comicInfo: ComicInfo?,
 ) : ComicSource {
 
     override fun openPage(index: Int): InputStream {
@@ -64,7 +67,12 @@ class LibArchiveSource private constructor(
                 .sortedWith(compareBy(NaturalOrder) { it.second })
             val pages = kept.mapIndexed { i, (_, name) -> Page(index = i, entryName = name) }
             val ordinals = IntArray(kept.size) { kept[it].first }
-            return LibArchiveSource(openFd, pages, ordinals)
+            // Locate against the RAW entry list (ordinals must match nativeExtract), parse once;
+            // a missing, unreadable or malformed ComicInfo costs the metadata, not the open.
+            val info = ComicInfoLoader.from(raw.map { String(it, Charsets.UTF_8) }) { ordinal ->
+                openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinal) }?.let { ordinal to it }
+            }
+            return LibArchiveSource(openFd, pages, ordinals, info)
         }
     }
 }
