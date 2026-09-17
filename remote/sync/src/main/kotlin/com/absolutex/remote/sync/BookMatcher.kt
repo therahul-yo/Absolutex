@@ -14,8 +14,9 @@ import com.absolutex.model.BookIdentity
 // markBookReadProgress docs). Local page indexes count from 0.
 const val KOMGA_FIRST_PAGE = 1
 
-// Kavita pageNum counts from 0 like the local index (assumption — the lead validates on a
-// live server: push from local page N, confirm the server shows N; pull and confirm landing).
+// Kavita pageNum counts from 0 like the local index (verified against Kavita's source:
+// ReaderController.GetImage clamps `page < 0` to 0 and indexes the page cache with it, the
+// 0-based convention — the lead still confirms push-N-shows-N live on the device checklist).
 fun komgaPageToIndex(page: Int): Int = (page - KOMGA_FIRST_PAGE).coerceAtLeast(0)
 
 fun komgaIndexToPage(pageIndex: Int): Int = pageIndex + KOMGA_FIRST_PAGE

@@ -12,6 +12,7 @@ class KomgaSync(
     private val http: HttpCall,
     private val secrets: SyncSecrets,
     private val progressDao: ProgressDao,
+    private val clock: ServerClock,
 ) : ServerSync {
 
     /** Full compare-then-push; throws on transport failure (the caller queues). */
@@ -19,19 +20,19 @@ class KomgaSync(
         val (client, secret) = clientFor(server)
         try {
             val target = matchKomgaBook(local.bookId, bookMap(client)) ?: return
-            val remote = client.getProgress(target.id)?.toKomgaSync(local.pageCount)
-            if (remote != null && syncDecision(local, remote) == SyncDecision.PULL) {
+            val remote = client.getProgress(target.id)?.atClientTime(server)?.toKomgaSync(local.pageCount)
+            if (remote != null && syncDecision(local, remote, SYNC_TOLERANCE_MS) == SyncDecision.PULL) {
                 progressDao.get(local.bookId)?.let {
                     progressDao.upsert(it.copy(pageIndex = remote.pageIndex, updatedAt = remote.updatedAt))
                 }
                 return
             }
-            if (remote == null || syncDecision(local, remote) == SyncDecision.PUSH) {
-                client.putProgress(
-                    target.id,
-                    komgaIndexToPage(local.pageIndex),
-                    local.pageIndex >= local.pageCount - 1,
-                )
+            if (remote == null || syncDecision(local, remote, SYNC_TOLERANCE_MS) == SyncDecision.PUSH) {
+                // Clamped into the remote book: a local index past the server's page count
+                // (re-scanned file, replaced edition) must not push a page that does not exist.
+                val page = komgaIndexToPage(local.pageIndex)
+                    .coerceIn(KOMGA_FIRST_PAGE, maxOf(target.pageCount, KOMGA_FIRST_PAGE))
+                client.putProgress(target.id, page, local.pageIndex >= local.pageCount - 1)
             }
         } finally {
             secret?.fill(Char.MIN_VALUE)
@@ -43,9 +44,9 @@ class KomgaSync(
         val (client, secret) = clientFor(server)
         try {
             val target = matchKomgaBook(local.bookId, bookMap(client))
-            val remote = target?.let { client.getProgress(it.id) }
+            val remote = target?.let { client.getProgress(it.id)?.atClientTime(server) }
             val position = remote?.toKomgaSync(local.pageCount)
-            return if (position != null && syncDecision(local, position) == SyncDecision.PULL) {
+            return if (position != null && syncDecision(local, position, SYNC_TOLERANCE_MS) == SyncDecision.PULL) {
                 position
             } else {
                 null
@@ -54,6 +55,14 @@ class KomgaSync(
             secret?.fill(Char.MIN_VALUE)
         }
     }
+
+    /**
+     * Server stamps arrive on the server's clock; decisions below run on ours. Converted once
+     * here, at the observation boundary — adopting the converted value keeps later runs
+     * consistent without ever double-shifting.
+     */
+    private fun RemoteProgress.atClientTime(server: SyncServer): RemoteProgress =
+        copy(updatedAt = clock.toClientTime(server.id, updatedAt))
 
     private fun clientFor(server: SyncServer): Pair<KomgaClient, CharArray?> =
         if (server.usesApiKey) {
@@ -64,14 +73,20 @@ class KomgaSync(
 
     private fun apiKeyClient(server: SyncServer): Pair<KomgaClient, CharArray?> {
         val key = secrets.loadApiKey(server.id) ?: throw IOException("no API key for ${server.id}")
-        return KomgaClient(http, server.baseUrl, KomgaAuth.ApiKey(key)) to key
+        return KomgaClient(clockedHttp(server), server.baseUrl, KomgaAuth.ApiKey(key)) to key
     }
 
     private fun basicClient(server: SyncServer): Pair<KomgaClient, CharArray?> {
         val username = server.username ?: throw IOException("server has no credentials: ${server.id}")
         val password = secrets.loadPassword(server.id) ?: throw IOException("no password for ${server.id}")
-        return KomgaClient(http, server.baseUrl, KomgaAuth.Basic(username, password)) to password
+        return KomgaClient(clockedHttp(server), server.baseUrl, KomgaAuth.Basic(username, password)) to password
     }
+
+    /**
+     * Every response's server `Date` feeds this server's clock slot (see [ServerClock]), so
+     * by decision time the offset is measured, not assumed. The clients stay clock-unaware.
+     */
+    private fun clockedHttp(server: SyncServer): HttpCall = http.withClock(server.id, clock)
 
     private suspend fun bookMap(client: KomgaClient): List<BookRef> =
         client.listAllSeries().flatMap { client.listAllBooksInSeries(it.id) }

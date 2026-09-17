@@ -110,4 +110,30 @@ class KavitaClientTest {
         val fake = FakeHttpCall()
         assertThrows(java.io.IOException::class.java) { client(fake).libraries() }
     }
+
+    @Test fun apiKeyExchangesForJwtInsteadOfRidingAsBearer() {
+        // The raw key is not a JWT (verified against Kavita's PluginController + OpenAPI):
+        // it trades for one at /api/Plugin/authenticate, then rides the bearer path.
+        val fake = FakeHttpCall()
+        val underTest = client(fake)
+        fake.enqueue(HttpResponse(200, session("jwt-k", "r-k")))
+        underTest.exchangeApiKey("raw-key".toCharArray(), "Absolutex")
+        val exchange = fake.requests[0]
+        assertEquals("POST", exchange.method)
+        assertTrue(exchange.url.contains("/api/Plugin/authenticate?"))
+        assertTrue(exchange.url.contains("apiKey=raw-key"))
+        assertTrue(exchange.url.contains("pluginName=Absolutex"))
+        fake.enqueue(HttpResponse(200, "[]"))
+        underTest.libraries()
+        assertEquals("Bearer jwt-k", fake.last.headers["Authorization"])
+    }
+
+    @Test fun rejectedApiKeyFailsTheExchange() {
+        val fake = FakeHttpCall()
+        val underTest = client(fake)
+        fake.enqueue(HttpResponse(401, ""))
+        assertThrows(java.io.IOException::class.java) {
+            underTest.exchangeApiKey("bad-key".toCharArray(), "Absolutex")
+        }
+    }
 }

@@ -40,4 +40,8 @@ object SyncModule {
     @Provides
     @Singleton
     fun httpCall(): HttpCall = HttpUrlConnectionCall()
+
+    @Provides
+    @Singleton
+    fun serverClock(): ServerClock = ServerClock()
 }
