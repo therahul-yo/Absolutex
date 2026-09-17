@@ -37,4 +37,18 @@ object DecodeDispatchers {
     val thumbnail: CoroutineDispatcher by lazy {
         pool("thumb", (CpuTopology.bigCoreCount / 2).coerceAtLeast(1))
     }
+
+    /**
+     * PDF page export. Its own single thread, never [extract]'s: a full-resolution export render
+     * can run for hundreds of milliseconds, and sharing a pool with archive extraction would cost
+     * the reader one of [extract]'s few threads for that whole span, mid-book, for a page nobody
+     * is currently reading.
+     *
+     * ponytail: PDFium's own process-wide render lock (see PdfDocument's doc) still serialises
+     * this against a concurrent pan/zoom decode at the native level — moving dispatcher only
+     * stops Kotlin's scheduler from compounding that with a *thread-pool* stall too. Tiling the
+     * export render the way the interactive path already tiles pages would remove the native
+     * contention as well, if a large export ever measures as worse than this.
+     */
+    val export: CoroutineDispatcher by lazy { pool("export", 1) }
 }
