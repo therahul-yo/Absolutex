@@ -115,7 +115,12 @@ slf4j-api-ftp-test            = { module = "org.slf4j:slf4j-api", version.ref = 
 
 # Single Glance artifact: classic RemoteViews needs a layout XML resource, which the
 # brief bans outside splash, so there is no classic fallback to pin (see PR notes).
+# Footprint note (lead review): glance-appwidget 1.2.0 pulls work-runtime-ktx (WorkManager,
+# unused here, updatePeriodMillis=0) and a protobuf runtime; R8 keeps the cost in the dex
+# until excluded or the widget is dropped.
 glance-appwidget           = { module = "androidx.glance:glance-appwidget", version.ref = "glance" }
+# test-only: renders Glance compositions in JVM unit tests.
+glance-appwidget-testing   = { module = "androidx.glance:glance-appwidget-testing", version.ref = "glance" }
 robolectric                  = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 androidx-test-core           = { module = "androidx.test:core", version.ref = "androidxTestCore" }
 room-testing                 = { module = "androidx.room:room-testing", version.ref = "room" }

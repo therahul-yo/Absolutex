@@ -16,6 +16,8 @@ android {
 }
 dependencies {
     implementation(project(":core:data"))
+    // Compose BOM alignment, matching the other Compose feature modules.
+    implementation(platform(libs.compose.bom))
     implementation(libs.glance.appwidget)
     implementation(libs.hilt.android) // EntryPointAccessors only; Hilt codegen stays in :app.
     implementation(libs.kotlinx.coroutines.android)
@@ -26,4 +28,6 @@ dependencies {
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.room.testing)
     testImplementation(libs.kotlinx.coroutines.test)
+    // Renders Glance compositions to a node tree on the JVM; the tap-intent regression above shipped green without it.
+    testImplementation(libs.glance.appwidget.testing)
 }

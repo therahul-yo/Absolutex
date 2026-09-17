@@ -10,16 +10,31 @@ object WidgetIntents {
     /** Explicit refresh; the reader calls requestRefresh after each progress write (lead TODO). */
     const val ACTION_REFRESH = "com.absolutex.feature.widget.action.REFRESH"
 
-    /** file:// paths match MainActivity's VIEW file filter; bare ids fall back to the stored Uri string. */
-    fun deepLinkUri(bookId: String, libraryPath: String?): Uri =
-        if (libraryPath != null) Uri.fromFile(File(libraryPath)) else Uri.parse(bookId)
+    /**
+     * Library books resolve to file:// paths (MainActivity's VIEW filter handles file and
+     * content schemes); SAF books have no library row, so their tap opens the app rather
+     * than a Uri parsed from a bare BookIdentity id — Uri.parse on "Name.cbz:104857600"
+     * fabricates a scheme nothing resolves (lead review, item 2).
+     */
+    fun tapUri(bookId: String, libraryPath: String?): Uri? =
+        if (libraryPath != null) Uri.fromFile(File(libraryPath)) else null
 
-    /** ACTION_VIEW is already handled by MainActivity's VIEW filter (app manifest) — no edit there. */
-    fun viewIntent(bookUri: Uri): Intent = Intent(Intent.ACTION_VIEW, bookUri)
+    /**
+     * Explicit to our own package: an implicit ACTION_VIEW would resolve to any installed
+     * reader (review item 3), and at targetSdk 36 an implicit intent carrying a file:// Uri
+     * throws FileUriExposedException on PendingIntent (review item 1). With the package set,
+     * prepareToLeaveProcess sees no package leave and the Uri is permitted.
+     */
+    fun viewIntent(bookUri: Uri, context: Context): Intent =
+        Intent(Intent.ACTION_VIEW, bookUri).setPackage(context.packageName)
 
     /** Single tap target for the Glance callback: a stored Uri opens the book, null opens the app. */
     fun tapIntent(context: Context, bookUri: String?): Intent {
-        val intent = if (bookUri != null) viewIntent(Uri.parse(bookUri)) else emptyStateIntent(context)
+        val intent = if (bookUri != null) {
+            viewIntent(Uri.parse(bookUri), context)
+        } else {
+            emptyStateIntent(context)
+        }
         return intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 

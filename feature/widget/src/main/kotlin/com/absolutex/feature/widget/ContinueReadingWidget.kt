@@ -36,8 +36,9 @@ internal suspend fun loadRows(source: ContinueReadingSource): List<Pair<WidgetMo
         source.inProgress(WIDGET_MAX_ITEMS).map { it to room?.libraryPathFor(it.bookId) }
     }.getOrDefault(emptyList())
 
+/** Internal so the Glance composition test can render it directly (lead review, item 4). */
 @Composable
-private fun Content(rows: List<Pair<WidgetModel, String?>>) {
+internal fun Content(rows: List<Pair<WidgetModel, String?>>) {
     val context = LocalContext.current
     Column(modifier = GlanceModifier.fillMaxSize().appWidgetBackground()) {
         if (rows.isEmpty()) {
@@ -49,7 +50,8 @@ private fun Content(rows: List<Pair<WidgetModel, String?>>) {
         } else {
             Text(text = context.getString(R.string.widget_title))
             rows.forEach { (model, path) ->
-                val uri = WidgetIntents.deepLinkUri(model.bookId, path).toString()
+                // No library path -> no fabricated Uri (review item 2): the tap opens the app.
+                val uri = WidgetIntents.tapUri(model.bookId, path)?.toString()
                 Column(
                     modifier = GlanceModifier.fillMaxWidth()
                         .clickable(actionStartActivity(WidgetIntents.tapIntent(context, uri))),
