@@ -83,7 +83,6 @@ class ColourPipeline {
             rt.setFloatUniform(ColourShader.UNIFORM_TEMPERATURE, params.temperature)
             rt.setFloatUniform(ColourShader.UNIFORM_AGGRESSION, params.wbAggression)
             rt.setFloatUniform(ColourShader.UNIFORM_VIBRANCE, params.vibrance)
-            val exp = ColourMath.foldedGamma(params)
             // Inlined, not via foldedGamma's array: params change on every slider frame while
             // dragging, and that array would be a per-frame allocation in the draw scope.
             rt.setFloatUniform(
