@@ -90,6 +90,9 @@ compose-ui-tooling-preview   = { module = "androidx.compose.ui:ui-tooling-previe
 compose-material3            = { module = "androidx.compose.material3:material3" }
 # Lists, grids and gestures for the library screens. BOM-managed, so no version to pin here.
 compose-foundation           = { module = "androidx.compose.foundation:foundation" }
+# Filled Add/Refresh/Delete for the servers UI. BOM-managed like foundation; resolved (not
+# memorised) against composeBom 2026.08.00 by the :feature:remote build.
+compose-material-icons-core  = { module = "androidx.compose.material:material-icons-core" }
 compose-material3-adaptive-nav = { module = "androidx.compose.material3:material3-adaptive-navigation-suite", version.ref = "adaptive" }
 
 hilt-android                 = { module = "com.google.dagger:hilt-android", version.ref = "hilt" }

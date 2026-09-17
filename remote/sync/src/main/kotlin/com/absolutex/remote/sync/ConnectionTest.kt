@@ -37,8 +37,11 @@ sealed interface ConnectionResult {
  * cause chain reads as [ConnectionResult.SecurityRefused], while connectivity signals
  * (UnknownHost, refused, no route, timeouts, closed sockets — and anything else, since a
  * server that cannot complete the probe fails the test) read as [ConnectionResult.Unreachable].
+ *
+ * Public so the servers UI (which owns the FTP/SMB probes until their transports merge)
+ * maps with the same rules instead of inventing a second mapping.
  */
-internal fun mapProbeFailure(e: IOException): ConnectionResult {
+fun mapProbeFailure(e: IOException): ConnectionResult {
     return if (hasCause<javax.net.ssl.SSLException>(e)) {
         ConnectionResult.SecurityRefused
     } else {

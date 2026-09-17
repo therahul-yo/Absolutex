@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="remote_title">Remote servers</string>
+    <string name="remote_empty">No servers yet. Add your NAS or comic server to browse and sync.</string>
+    <string name="remote_add_server">Add server</string>
+    <string name="remote_loading">Loading servers…</string>
+    <string name="remote_load_failed">Could not load servers.</string>
+    <string name="remote_retry">Retry</string>
+    <string name="remote_refresh">Refresh and sync</string>
+    <string name="remote_delete">Delete server</string>
+    <string name="remote_delete_confirm">Delete %1$s? Its saved password is wiped too.</string>
+    <string name="remote_confirm">Delete</string>
+    <string name="remote_cancel">Cancel</string>
+
+    <string name="remote_kind_smb">Windows share (SMB)</string>
+    <string name="remote_kind_ftp">FTP / FTPS</string>
+    <string name="remote_kind_komga">Komga</string>
+    <string name="remote_kind_kavita">Kavita</string>
+
+    <string name="remote_field_host">Host</string>
+    <string name="remote_field_share">Share</string>
+    <string name="remote_field_path">Path</string>
+    <string name="remote_field_port">Port</string>
+    <string name="remote_field_username">Username</string>
+    <string name="remote_field_password">Password</string>
+    <string name="remote_field_api_key">API key</string>
+    <string name="remote_field_base_url">Server URL</string>
+    <string name="remote_use_api_key">Use an API key instead of a password</string>
+    <string name="remote_use_tls">Use explicit TLS (FTPS)</string>
+    <string name="remote_allow_cleartext">Allow plain-text connection</string>
+    <string name="remote_allow_unsigned">Allow unsigned guest share</string>
+
+    <string name="remote_test_connection">Test connection</string>
+    <string name="remote_testing">Testing…</string>
+    <string name="remote_save">Save</string>
+    <string name="remote_invalid_details">Check the highlighted fields and try again.</string>
+    <string name="remote_invalid_field">Invalid value</string>
+
+    <string name="remote_result_ok">Connected.</string>
+    <string name="remote_result_auth_failed">The server refused the credentials.</string>
+    <string name="remote_result_unreachable">The server could not be reached.</string>
+    <string name="remote_result_security_refused">The secure connection was refused.</string>
+    <string name="remote_result_not_found">Connected, but nothing expected answers there.</string>
+    <string name="remote_test_pending_smb">Live test for SMB arrives with the SMB transport.</string>
+</resources>
