@@ -79,9 +79,18 @@ class DataStoreSettings internal constructor(
 
 private fun Preferences.toBag() = MapPrefBag(asMap().entries.associate { (key, value) -> key.name to value })
 
-/** Keys compare by name alone, so a typed put also replaces an entry stored under another type. */
+/**
+ * Keys compare by name alone, so a typed put also replaces an entry stored under another type.
+ *
+ * [bag] started as a snapshot of this exact [Preferences] (see [toBag]), so any name it no longer
+ * holds is one [PrefCodec] deliberately removed via [MutablePrefBag.remove] — a set that shrank
+ * to empty, most notably — and only dropping it here, not just skipping its write, makes that
+ * removal reach disk: setting what changed was never the same as forgetting what did.
+ */
 private fun MutablePreferences.putAll(bag: MapPrefBag) {
-    for ((name, value) in bag.snapshot()) {
+    val kept = bag.snapshot()
+    asMap().keys.filter { it.name !in kept }.forEach { remove(it) }
+    for ((name, value) in kept) {
         when (value) {
             is Boolean -> this[booleanPreferencesKey(name)] = value
             is Int -> this[intPreferencesKey(name)] = value
