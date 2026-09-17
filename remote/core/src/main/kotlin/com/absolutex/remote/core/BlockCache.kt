@@ -26,6 +26,9 @@ class BlockCache(
     }
 
     fun put(blockIndex: Long, block: ByteArray) {
+        // Callers chunk to blockSize; an oversized block would silently evict the whole
+        // cache, so the contract fails fast instead of degrading into a pass-through.
+        require(block.size <= blockSize) { "block larger than blockSize" }
         synchronized(guard) {
             val previous = blocks.put(blockIndex, block)
             heldBytes += (block.size - (previous?.size ?: 0)).toLong()

@@ -3,6 +3,7 @@ package com.absolutex.remote.core
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class BlockCacheTest {
@@ -43,11 +44,16 @@ class BlockCacheTest {
         assertTrue(cache.get(0)?.size == 5)
     }
 
-    @Test fun `lone over-budget block degrades to a pass-through`() {
-        // No production path puts one (readers chunk to blockSize); the fail-safe is that a
-        // misbehaving caller cannot pin the cache.
+    @Test fun `oversize block is rejected`() {
+        // No production path puts one (readers chunk to blockSize); without the guard a
+        // misbehaving caller would silently evict the whole cache.
         val cache = BlockCache(blockSize = 8, maxBytes = 16)
-        cache.put(0, ByteArray(64))
+        try {
+            cache.put(0, ByteArray(64))
+            fail("expected IllegalArgumentException")
+        } catch (expected: IllegalArgumentException) {
+            assertTrue(expected.message?.contains("blockSize") == true)
+        }
         assertNull(cache.get(0))
         assertEquals(0, cache.sizeBytes())
     }
