@@ -2,6 +2,7 @@ package com.absolutex.feature.settings
 
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.data.settings.ReaderPrefs
+import com.absolutex.core.data.settings.RenderingPrefs
 import com.absolutex.model.FitMode
 import com.absolutex.model.ReadingFlow
 
@@ -18,4 +19,6 @@ data class SettingsActions(
     /** Every other reader setting: a plain field edit needs no reducer and no action of its own. */
     val onReader: ((ReaderPrefs) -> ReaderPrefs) -> Unit,
     val onCacheSize: (Int) -> Unit,
+    /** Rendering edits, clamped in SettingsReductions before they reach the store. */
+    val onRendering: ((RenderingPrefs) -> RenderingPrefs) -> Unit,
 )

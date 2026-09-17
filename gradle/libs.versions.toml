@@ -36,6 +36,10 @@ robolectric          = "4.17"
 glance               = "1.2.0"
 androidxTestCore     = "1.7.0"
 coroutines           = "1.10.2"
+# smbj: SMB2/SMB3 client for :remote:smb. Resolved 2026-09-15 against the live repo:
+#   curl -s https://repo1.maven.org/maven2/com/hierynomus/smbj/maven-metadata.xml
+# 0.15.0 is latest+release (lastUpdated 20260821). Licence Apache-2.0 per its Central POM.
+smbj                 = "0.15.0"
 # detekt: the 2.x line under the new `dev.detekt` coordinates. Resolved 2026-09-14 against
 # plugins.gradle.org, not from memory. The last 1.x (io.gitlab.arturbosch.detekt 1.23.8,
 # Feb 2025) was published by Gradle 8.12.1 and predates the Gradle 9 API removals; 2.0.0-alpha.6
@@ -125,6 +129,7 @@ robolectric                  = { module = "org.robolectric:robolectric", version
 androidx-test-core           = { module = "androidx.test:core", version.ref = "androidxTestCore" }
 room-testing                 = { module = "androidx.room:room-testing", version.ref = "room" }
 kotlinx-coroutines-test      = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+smbj                           = { module = "com.hierynomus:smbj", version.ref = "smbj" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
