@@ -33,6 +33,11 @@ class FtpZipTest {
         patchU16(bytes, offset + 2, ((value shr 16) and 0xFFFF).toInt())
     }
 
+    private companion object {
+        const val CENTRAL_DIRECTORY_SIG = 0x02014b50
+        const val CENTRAL_UNCOMP_SIZE = 24
+    }
+
     private fun findSig(bytes: ByteArray, sig: Int): Int {
         var cursor = 0
         while (cursor + 3 < bytes.size) {
@@ -217,6 +222,28 @@ class FtpZipTest {
         }
         val message = requireNotNull(requireNotNull(thrown).message)
         assertTrue(message.contains("cover"))
+    }
+
+    @Test fun `deflated stream longer than declared fails instead of truncating`() {
+        // The directory lies small (100 bytes) about a 5 KiB deflated page: once the buffer
+        // fills with the inflater unfinished, the stream must fail, not serve a prefix.
+        // Central-directory order is insertion order, so p02 (DEFLATED) is the first entry.
+        val bytes = archive()
+        val patched = bytes.copyOf()
+        val central = findSig(patched, CENTRAL_DIRECTORY_SIG)
+        assertTrue(central >= 0)
+        patchU32(patched, central + CENTRAL_UNCOMP_SIZE, 100L)
+        val source = FtpZipSource.open(FakeFtpTransport(patched), path)
+        var thrown: IOException? = null
+        try {
+            source.openPage(1).use { it.readBytes() }
+        } catch (expected: IOException) {
+            thrown = expected
+        } finally {
+            source.close()
+        }
+        val message = requireNotNull(requireNotNull(thrown).message)
+        assertTrue(message.contains("longer than declared"))
     }
 
     @Test fun `page index out of bounds`() {

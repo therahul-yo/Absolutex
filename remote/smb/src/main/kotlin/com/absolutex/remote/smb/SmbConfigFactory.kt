@@ -16,13 +16,17 @@ import java.util.concurrent.TimeUnit
 internal object SmbConfigFactory {
 
     // A LAN NAS answers in milliseconds; these bound a stalled server (dead Wi-Fi, sleeping
-    // NAS) instead of pinning a decode thread indefinitely. smbj-0.15.0 has no dedicated
-    // TCP-connect knob: withTimeout covers synchronous establishment, withSoTimeout the socket.
+    // NAS) instead of pinning a decode thread indefinitely. The TCP handshake gets its own
+    // bound via TimeoutSocketFactory: smbj connects with SocketFactory.createSocket(host,
+    // port), which is unbounded, and only sets soTimeout afterwards — none of the
+    // SmbConfig timeouts below cover it.
+    private const val CONNECT_TIMEOUT_MS = 10_000
     private const val SYNC_TIMEOUT_SECONDS = 30L
     private const val SOCKET_TIMEOUT_SECONDS = 30L
 
     fun build(allowUnsigned: Boolean): SmbConfig {
         val builder = SmbConfig.builder()
+            .withSocketFactory(TimeoutSocketFactory(CONNECT_TIMEOUT_MS))
             .withTimeout(SYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .withSoTimeout(SOCKET_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .withReadTimeout(SYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS)

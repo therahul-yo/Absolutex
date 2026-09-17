@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
@@ -44,7 +45,7 @@ private val Context.settingsStore by preferencesDataStore(
 @Singleton
 class DataStoreSettings internal constructor(
     private val store: DataStore<Preferences>,
-) : ReaderPrefsSource, AppPrefsSource, SettingsWriter {
+) : ReaderPrefsSource, AppPrefsSource, RenderingPrefsSource, SettingsWriter {
 
     @Inject constructor(@ApplicationContext context: Context) : this(context.settingsStore)
 
@@ -56,9 +57,14 @@ class DataStoreSettings internal constructor(
 
     override val readerPrefs: Flow<ReaderPrefs> = bags.map(PrefCodec::decodeReader).distinctUntilChanged()
 
+    override val renderingPrefs: Flow<RenderingPrefs> =
+        bags.map(PrefCodec::decodeRendering).distinctUntilChanged()
+
     override suspend fun currentAppPrefs(): AppPrefs = appPrefs.first()
 
     override suspend fun currentReaderPrefs(): ReaderPrefs = readerPrefs.first()
+
+    override suspend fun currentRenderingPrefs(): RenderingPrefs = renderingPrefs.first()
 
     override suspend fun updateApp(transform: (AppPrefs) -> AppPrefs) {
         store.edit { prefs ->
@@ -72,6 +78,14 @@ class DataStoreSettings internal constructor(
         store.edit { prefs ->
             val bag = prefs.toBag()
             PrefCodec.encodeReader(transform(PrefCodec.decodeReader(bag)), bag)
+            prefs.putAll(bag)
+        }
+    }
+
+    override suspend fun updateRendering(transform: (RenderingPrefs) -> RenderingPrefs) {
+        store.edit { prefs ->
+            val bag = prefs.toBag()
+            PrefCodec.encodeRendering(transform(PrefCodec.decodeRendering(bag)), bag)
             prefs.putAll(bag)
         }
     }
@@ -94,6 +108,7 @@ private fun MutablePreferences.putAll(bag: MapPrefBag) {
         when (value) {
             is Boolean -> this[booleanPreferencesKey(name)] = value
             is Int -> this[intPreferencesKey(name)] = value
+            is Float -> this[floatPreferencesKey(name)] = value
             is String -> this[stringPreferencesKey(name)] = value
             is Set<*> -> this[stringSetPreferencesKey(name)] = value.filterIsInstance<String>().toSet()
         }

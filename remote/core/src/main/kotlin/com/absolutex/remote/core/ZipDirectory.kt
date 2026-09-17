@@ -172,9 +172,12 @@ object ZipDirectory {
 
     /**
      * A directory bigger than this is hostile (order of a million entries): a 200-page CBZ
-     * indexes in ~13 KiB, and past the block cache a directory could not be read back anyway.
+     * indexes in ~13 KiB. 32 MiB covers legitimate tens-of-thousands-of-entries archives on
+     * either transport, and oversized spans bypass the block cache and stream instead of
+     * self-evicting it (see SeekableReader) — so the cap is a hostility bound, not a
+     * cache-size bound.
      */
-    private const val CD_MAX_BYTES = 8L * 1024 * 1024
+    internal const val CD_MAX_BYTES = 32L * 1024 * 1024
     private const val ZIP64_U16 = 0xFFFF
     private const val ZIP64_U32 = 0xFFFFFFFFL
     private const val BYTE_MASK = 0xFF

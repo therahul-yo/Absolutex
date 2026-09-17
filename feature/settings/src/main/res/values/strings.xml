@@ -60,4 +60,9 @@
     <!-- AppPrefs.cacheSizeMiB is the decode/page cache, not thumbnails; see lead review on #15. -->
     <string name="settings_cache_value">Page cache: %1$d MiB</string>
     <string name="settings_cache_size_desc">Page cache size, currently %1$d MiB</string>
+
+    <string name="settings_upscaler_desc">Upscaler</string>
+    <string name="settings_upscaler_platform">Platform</string>
+    <string name="settings_upscaler_mitchell">Mitchell</string>
+    <string name="settings_upscaler_lanczos">Lanczos</string>
 </resources>

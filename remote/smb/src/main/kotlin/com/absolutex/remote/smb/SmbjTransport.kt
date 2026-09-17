@@ -41,27 +41,47 @@ class SmbjTransport(
     private var connection: SmbConnection? = null
     private var authFailure: IOException? = null
     private var closed = false
+    private var establishTask: EstablishTask? = null
 
     private fun connectedShare(): SmbConnection {
-        synchronized(guard) {
-            if (closed) throw IOException("transport closed")
-            // Fresh instance every time: rethrowing the stored error itself lets the retry
-            // path below call second.addSuppressed(first) on one object, which is
-            // IllegalArgumentException("Self-suppression not permitted") — not an IOException.
-            authFailure?.let { throw IOException(AUTH_LATCH_MESSAGE, it) }
-            connection?.let { return it }
+        while (true) {
+            var mine = false
+            val task = synchronized(guard) {
+                if (closed) throw IOException("transport closed")
+                // Fresh instance every time: rethrowing the stored error itself lets the retry
+                // path below call second.addSuppressed(first) on one object, which is
+                // IllegalArgumentException("Self-suppression not permitted") — not an IOException.
+                authFailure?.let { throw IOException(AUTH_LATCH_MESSAGE, it) }
+                connection?.let { return it }
+                // Single-flight: one thread establishes while the rest wait on its task.
+                // Without it N threads on a cold transport run N NTLM logons — and with a
+                // bad stored password, N simultaneous failures before the latch is set.
+                val inFlight = establishTask
+                if (inFlight != null) {
+                    inFlight
+                } else {
+                    mine = true
+                    EstablishTask().also { establishTask = it }
+                }
+            }
+            if (mine) {
+                finishEstablish(task)
+            } else {
+                task.awaitEstablished()
+            }
         }
-        // Outside guard: connector.connect blocks on the network (bounded by the timeouts in
-        // SmbConfigFactory), and close() needs the same lock to return promptly.
-        return establish()
     }
 
-    /** Logon off-guard, published under guard. Failure latches: see the class KDoc. */
-    private fun establish(): SmbConnection {
+    /**
+     * The single in-flight logon: off-guard network, under-guard publish. Failure latches
+     * (see the class KDoc); only the seam's IOException latches — an unchecked escape from
+     * a connector is a contract violation and surfaces immediately, unlatched.
+     */
+    private fun finishEstablish(task: EstablishTask) {
         var password: CharArray? = null
         try {
             password = storedPassword()
-            return installEstablished(connector.connect(password))
+            installEstablished(connector.connect(password))
         } catch (e: IOException) {
             synchronized(guard) {
                 if (authFailure == null) {
@@ -71,6 +91,10 @@ class SmbjTransport(
             throw e
         } finally {
             password?.fill(Char.MIN_VALUE)
+            synchronized(guard) {
+                if (establishTask === task) establishTask = null
+            }
+            task.complete()
         }
     }
 
@@ -78,25 +102,35 @@ class SmbjTransport(
      * Publishes a fresh connection under guard. A concurrent establish may have won first,
      * or close() / a latch may have landed mid-logon: in every losing case the spare is
      * closed and the winner (or the failure) stands, so no path swaps a healthy connection
-     * out from under its readers.
+     * out from under its readers. The decision runs under the lock; the loser's close runs
+     * outside it — close() is a network round trip (same rule as dropForReconnect/close()).
      */
     private fun installEstablished(established: SmbConnection): SmbConnection {
+        var spare: SmbConnection? = null
+        var failure: IOException? = null
+        var winner: SmbConnection? = null
         synchronized(guard) {
-            if (closed) {
-                runCatching { established.close() }
-                throw IOException("transport closed")
+            val latched = authFailure
+            val current = connection
+            when {
+                closed -> {
+                    spare = established
+                    failure = IOException("transport closed")
+                }
+                latched != null -> {
+                    spare = established
+                    failure = IOException(AUTH_LATCH_MESSAGE, latched)
+                }
+                current != null -> {
+                    spare = established
+                    winner = current
+                }
+                else -> connection = established
             }
-            authFailure?.let {
-                runCatching { established.close() }
-                throw IOException(AUTH_LATCH_MESSAGE, it)
-            }
-            connection?.let {
-                runCatching { established.close() }
-                return it
-            }
-            connection = established
-            return established
         }
+        spare?.let { runCatching { it.close() } }
+        failure?.let { throw it }
+        return winner ?: established
     }
 
     private fun storedPassword(): CharArray {
@@ -113,14 +147,20 @@ class SmbjTransport(
     /**
      * Drops the share without latching, but only if [failed] is still the live connection:
      * a second thread's teardown must never close a healthy connection another thread just
-     * established. The next read reconnects once.
+     * established. The swap runs under the lock; the close runs outside it, because
+     * TREE_DISCONNECT is a network round trip that can stall a half-dead session up to the
+     * socket timeout while every other reader waits on the lock. The next read reconnects once.
      */
     private fun dropForReconnect(failed: SmbConnection) {
-        synchronized(guard) {
+        val stale = synchronized(guard) {
             if (connection === failed) {
-                runCatching { connection?.close() }
-                connection = null
+                connection.also { connection = null }
+            } else {
+                null
             }
+        }
+        if (stale != null) {
+            runCatching { stale.close() }
         }
     }
 
@@ -200,15 +240,42 @@ class SmbjTransport(
     }
 
     override fun close() {
-        synchronized(guard) {
+        // Swap under the lock, close outside it — same teardown rule as dropForReconnect:
+        // another thread's blocked teardown never stalls this call, and this call never
+        // stalls another thread's teardown.
+        val stale = synchronized(guard) {
             closed = true
-            runCatching { connection?.close() }
-            connection = null
+            connection.also { connection = null }
+        }
+        if (stale != null) {
+            runCatching { stale.close() }
         }
     }
 
     companion object {
         internal const val AUTH_LATCH_MESSAGE = "smb authentication failed"
+    }
+
+    /**
+     * One in-flight logon, shared by every thread that arrives mid-establish. Waiters block
+     * off-guard and re-check the published state on wake; the finisher always completes,
+     * success or failure, so no waiter parks forever.
+     */
+    private class EstablishTask {
+        private val done = java.util.concurrent.CountDownLatch(1)
+
+        fun complete() {
+            done.countDown()
+        }
+
+        fun awaitEstablished() {
+            try {
+                done.await()
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw IOException("interrupted while connecting", e)
+            }
+        }
     }
 }
 

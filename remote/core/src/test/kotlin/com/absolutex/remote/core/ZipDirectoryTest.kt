@@ -136,6 +136,100 @@ class ZipDirectoryTest {
         }
     }
 
+    @Test fun `open costs tail plus directory, never a read per entry`() {
+        // Twenty entries: a per-entry local-header walk would cost twenty round trips.
+        val pages = (1..20).map { "page%02d.jpg".format(it) to ZipBytes.pageBytes(it) }
+        val archive = ZipBytes.cbz(*pages.toTypedArray())
+        val transport = FakeRangeTransport(archive)
+        ZipDirectory.open(transport::readAt, archive.size.toLong())
+        assertTrue("open took ${transport.ranges.size} round trips", transport.ranges.size <= 3)
+        // Local headers are 30 bytes; indexing must never fetch one per entry.
+        assertTrue("open must not touch local headers", transport.ranges.none { it.length == 30 })
+    }
+
+    @Test fun `stored and deflated methods survive the index`() {
+        val deflated = ZipBytes.cbz("page01.jpg" to ZipBytes.pageBytes(1))
+        val stored = ZipBytes.cbz("page01.png" to ZipBytes.pageBytes(1), stored = true)
+        val deflatedEntries = ZipDirectory.open(FakeRangeTransport(deflated)::readAt, deflated.size.toLong())
+        val storedEntries = ZipDirectory.open(FakeRangeTransport(stored)::readAt, stored.size.toLong())
+        assertTrue(deflatedEntries.all { it.method == ZipDirectory.METHOD_DEFLATED })
+        assertEquals(ZipDirectory.METHOD_STORED, storedEntries.single().method)
+        assertTrue(storedEntries.single().localHeaderOffset >= 0)
+    }
+
+    @Test fun `directory just over the cap is rejected before transfer`() {
+        val archive = ZipBytes.cbz("page01.jpg" to ZipBytes.pageBytes(1))
+        val patched = archive.copyOf()
+        ZipBytes.le32(patched, ZipBytes.eocdStart(patched) + 12, ZipDirectory.CD_MAX_BYTES + 1)
+        ZipBytes.le32(patched, ZipBytes.eocdStart(patched) + 16, 0L)
+        val transport = FakeRangeTransport(patched)
+        try {
+            ZipDirectory.open(transport::readAt, patched.size.toLong())
+            fail("expected IOException")
+        } catch (expected: IOException) {
+            assertTrue(expected.message?.contains("too large") == true)
+        }
+        assertTrue("must not transfer the directory", transport.bytesServed < 256 * 1024)
+    }
+
+    @Test fun `directory at the cap passes the cap check`() {
+        // Exactly CD_MAX_BYTES is servable: the failure below comes from the bounds check
+        // (offset past end), proving the cap itself let it through.
+        val archive = ZipBytes.cbz("page01.jpg" to ZipBytes.pageBytes(1))
+        val patched = archive.copyOf()
+        ZipBytes.le32(patched, ZipBytes.eocdStart(patched) + 12, ZipDirectory.CD_MAX_BYTES)
+        val transport = FakeRangeTransport(patched)
+        try {
+            ZipDirectory.open(transport::readAt, patched.size.toLong())
+            fail("expected IOException")
+        } catch (expected: IOException) {
+            assertTrue(expected.message?.contains("outside file") == true)
+        }
+    }
+
+    @Test fun `multi-disk end record is rejected`() {
+        val archive = ZipBytes.cbz("page01.jpg" to ZipBytes.pageBytes(1))
+        val patched = archive.copyOf()
+        ZipBytes.le16(patched, ZipBytes.eocdStart(patched) + 4, 1)
+        try {
+            ZipDirectory.open(FakeRangeTransport(patched)::readAt, patched.size.toLong())
+            fail("expected IOException")
+        } catch (expected: IOException) {
+            assertTrue(expected.message?.contains("end-of-central-directory") == true)
+        }
+    }
+
+    @Test fun `directory past end under the cap is rejected`() {
+        val archive = ZipBytes.cbz("page01.jpg" to ZipBytes.pageBytes(1))
+        val patched = archive.copyOf()
+        ZipBytes.le32(patched, ZipBytes.eocdStart(patched) + 12, 1024L)
+        ZipBytes.le32(patched, ZipBytes.eocdStart(patched) + 16, patched.size.toLong())
+        try {
+            ZipDirectory.open(FakeRangeTransport(patched)::readAt, patched.size.toLong())
+            fail("expected IOException")
+        } catch (expected: IOException) {
+            assertTrue(expected.message?.contains("outside file") == true)
+        }
+    }
+
+    @Test fun `hostile local header degrades to IOException on read`() {
+        val archive = ZipBytes.cbz("page01.jpg" to ZipBytes.pageBytes(1, 2048))
+        // Lie in the local header itself: a 16 KiB name in a 2 KiB file.
+        val patched = archive.copyOf()
+        ZipBytes.le16(patched, 26, 0x4000)
+        val transport = FakeRangeTransport(patched)
+        val entries = ZipDirectory.open(transport::readAt, patched.size.toLong())
+        // Resolving the absurd offset must not crash; reading there fails past end.
+        val offset = ZipDirectory.localDataOffsetOf(transport::readAt, entries[0])
+        assertTrue(offset > patched.size)
+        try {
+            transport.readAt(offset, 1)
+            fail("expected IOException")
+        } catch (expected: IOException) {
+            assertTrue(expected.message?.contains("past end") == true)
+        }
+    }
+
     @Test fun `local data offsets resolve past the headers`() {
         val archive = ZipBytes.cbz("page01.jpg" to ZipBytes.pageBytes(1, 2048), stored = true)
         val transport = FakeRangeTransport(archive)

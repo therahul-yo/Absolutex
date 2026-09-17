@@ -96,4 +96,34 @@ class SeekableReaderTest {
         assertEquals(0, reader.readAt(10, 0).size)
         assertEquals(0, transport.ranges.size)
     }
+
+    @Test fun `read exactly at cache capacity takes the cached path`() {
+        // Span blocks times block size equals, not exceeds, the cap: no bypass, and the
+        // missing blocks coalesce into one round trip.
+        val bytes = ByteArray(64) { it.toByte() }
+        val transport = FakeRangeTransport(bytes)
+        val reader = SeekableReader(transport, bytes.size.toLong(), BlockCache(16, 64))
+        assertTrue(reader.readAt(0, 64).contentEquals(bytes))
+        assertEquals(1, transport.ranges.size)
+        assertTrue(reader.readAt(0, 64).contentEquals(bytes))
+        assertEquals(1, transport.ranges.size)
+    }
+
+    @Test fun `concurrent readers share one consistent view`() {
+        val bytes = ByteArray(256) { it.toByte() }
+        val transport = FakeRangeTransport(bytes)
+        val reader = SeekableReader(transport, bytes.size.toLong(), BlockCache(16, 256))
+        val outcomes = arrayOfNulls<ByteArray>(8)
+        val workers = (0..7).map { index ->
+            kotlin.concurrent.thread {
+                outcomes[index] = reader.readAt((index * 13).toLong(), 32)
+            }
+        }
+        workers.forEach { it.join(10_000) }
+        assertTrue(workers.none { it.isAlive })
+        outcomes.forEachIndexed { index, chunk ->
+            val offset = index * 13
+            assertTrue(chunk != null && chunk.contentEquals(bytes.copyOfRange(offset, offset + 32)))
+        }
+    }
 }

@@ -67,12 +67,24 @@ class FtpZipSource private constructor(
                 if (count == EMPTY_INFLATE) break
                 done += count
             }
-            if (done != out.size) throw IOException("deflate size mismatch: ${entry.name}")
+            checkInflated(entry, done, out, inflater)
             return ByteArrayInputStream(out)
         } catch (expected: DataFormatException) {
             throw IOException("deflate error: ${entry.name}", expected)
         } finally {
             inflater.end()
+        }
+    }
+
+    /**
+     * A short stream and a long stream fail differently: too few bytes is a mismatch,
+     * while a full buffer with the inflater unfinished is a truncation that would
+     * otherwise serve a prefix silently.
+     */
+    private fun checkInflated(entry: ZipDirectory.Entry, done: Int, out: ByteArray, inflater: Inflater) {
+        if (done != out.size) throw IOException("deflate size mismatch: ${entry.name}")
+        if (out.isNotEmpty() && !inflater.finished()) {
+            throw IOException("deflate stream longer than declared: ${entry.name}")
         }
     }
 
