@@ -45,10 +45,13 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:ui"))
     implementation(project(":core:data"))
+    implementation(project(":core:scan"))
     implementation(project(":core:decode"))
     implementation(project(":source:api"))
     implementation(project(":source:libarchive"))
     implementation(project(":feature:reader"))
+    implementation(project(":feature:library"))
+    implementation(project(":feature:settings"))
 
     implementation(platform(libs.compose.bom))
     implementation(libs.androidx.core.ktx)
@@ -58,6 +61,7 @@ dependencies {
     // Phase 4: navigation-compose removed — no NavHost/NavController import anywhere in
     // app/src (verified by grep); hilt-navigation-compose is KEPT, it provides hiltViewModel.
     implementation(libs.androidx.hilt.navigation.compose)
+    implementation(libs.androidx.navigation.compose)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.androidx.profileinstaller)   // §3: baseline profiles are mandatory

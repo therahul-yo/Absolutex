@@ -30,6 +30,18 @@ interface AppPrefsSource {
 interface SettingsWriter {
     suspend fun updateApp(transform: (AppPrefs) -> AppPrefs)
     suspend fun updateReader(transform: (ReaderPrefs) -> ReaderPrefs)
+    suspend fun updateRendering(transform: (RenderingPrefs) -> RenderingPrefs)
+}
+
+/**
+ * How the reader and the colour chrome read rendering behaviour (§5.4, Rendering group).
+ * Read-only like the others: the page renders according to these, it does not own them.
+ */
+interface RenderingPrefsSource {
+    val renderingPrefs: Flow<RenderingPrefs>
+
+    /** Current value without collecting, for a first frame that must not wait on a flow. */
+    suspend fun currentRenderingPrefs(): RenderingPrefs
 }
 
 /**
@@ -45,17 +57,21 @@ interface SettingsWriter {
  */
 class InMemorySettings(
     private val bag: MutablePrefBag = MapPrefBag(),
-) : ReaderPrefsSource, AppPrefsSource, SettingsWriter {
+) : ReaderPrefsSource, AppPrefsSource, RenderingPrefsSource, SettingsWriter {
 
     private val appState = MutableStateFlow(PrefCodec.decodeApp(bag))
     private val readerState = MutableStateFlow(PrefCodec.decodeReader(bag))
+    private val renderingState = MutableStateFlow(PrefCodec.decodeRendering(bag))
 
     override val appPrefs: StateFlow<AppPrefs> = appState.asStateFlow()
     override val readerPrefs: StateFlow<ReaderPrefs> = readerState.asStateFlow()
+    override val renderingPrefs: StateFlow<RenderingPrefs> = renderingState.asStateFlow()
 
     override suspend fun currentAppPrefs(): AppPrefs = appState.value
 
     override suspend fun currentReaderPrefs(): ReaderPrefs = readerState.value
+
+    override suspend fun currentRenderingPrefs(): RenderingPrefs = renderingState.value
 
     override suspend fun updateApp(transform: (AppPrefs) -> AppPrefs) {
         val updated = transform(appState.value)
@@ -69,5 +85,12 @@ class InMemorySettings(
         val updated = transform(readerState.value)
         PrefCodec.encodeReader(updated, bag)
         readerState.value = PrefCodec.decodeReader(bag)
+    }
+
+    override suspend fun updateRendering(transform: (RenderingPrefs) -> RenderingPrefs) {
+        val updated = transform(renderingState.value)
+        PrefCodec.encodeRendering(updated, bag)
+        // Re-decode like the others, so a value the codec clamps is reported back as stored.
+        renderingState.value = PrefCodec.decodeRendering(bag)
     }
 }

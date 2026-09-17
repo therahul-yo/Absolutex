@@ -64,6 +64,13 @@ data class FitModeMemory(private val chosen: Map<FitContext, FitMode> = emptyMap
             else -> FitMode.FIT_SCREEN
         }
 
+        /** One mode for every context: what "use this fit from now on" means in settings. */
+        fun everywhere(mode: FitMode): FitModeMemory = FitModeMemory(
+            ScreenOrientation.entries
+                .flatMap { screen -> PageOrientation.entries.map { page -> FitContext(screen, page) } }
+                .associateWith { mode },
+        )
+
         fun fromPairs(pairs: Map<String, String>): FitModeMemory = FitModeMemory(
             pairs.mapNotNull { (key, value) ->
                 val (screen, page) = key.split(':').takeIf { it.size == 2 } ?: return@mapNotNull null

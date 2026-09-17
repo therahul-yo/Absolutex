@@ -17,8 +17,12 @@ import com.absolutex.core.data.settings.ReaderPrefsSource
 import com.absolutex.core.decode.DecodeDispatchers
 import com.absolutex.core.decode.MemoryBudget
 import com.absolutex.core.decode.PageImage
+import com.absolutex.core.thumbnails.ThumbRequest
+import com.absolutex.core.thumbnails.ThumbnailPipeline
 import com.absolutex.core.decode.TileCache
 import com.absolutex.model.BookIdentity
+import com.absolutex.model.Toc
+import com.absolutex.model.TocEntry
 import com.absolutex.source.ComicSource
 import com.absolutex.source.pdf.PdfDocument
 import java.io.Closeable
@@ -46,6 +50,9 @@ import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 
 private const val TAG = "Reader"
+
+/** A page is never four times taller than it is wide; the thumbnail fits inside that box. */
+private const val THUMB_HEIGHT_LIMIT = 4
 
 data class ReaderUiState(
     val loading: Boolean = false,
@@ -77,6 +84,10 @@ class ReaderViewModel @Inject constructor(
 
     // Pages whose bytes failed to decode. The UI shows a generic string for these —
     // never the raw entry name — while detail goes to logcat.
+    /** The open book's contents, empty when it has none (§5.2). */
+    private val _toc = MutableStateFlow<List<TocEntry>>(emptyList())
+    val toc: StateFlow<List<TocEntry>> = _toc.asStateFlow()
+
     private val _failedPages = MutableStateFlow<Set<Int>>(emptySet())
     val failedPages: StateFlow<Set<Int>> = _failedPages.asStateFlow()
 
@@ -84,6 +95,12 @@ class ReaderViewModel @Inject constructor(
 
     /** The open book: a [ComicSource] whose pages are encoded images, or a [PdfDocument]. */
     private var source: Closeable? = null
+
+    /**
+     * Page thumbnails for the chrome's strip, on their own caches and dispatcher so a strip scroll
+     * can never starve the page being read. One per book: its disk entries are keyed by book.
+     */
+    private var thumbs: ThumbnailPipeline? = null
     private var bookId: String = ""
     /** The Uri currently open, for the same-book check. Distinct from [bookId], the book's identity. */
     private var openedUri: String = ""
@@ -155,7 +172,7 @@ class ReaderViewModel @Inject constructor(
         openJob = viewModelScope.launch {
             val opened = try {
                 withContext(DecodeDispatchers.extract) {
-                    context.openBook(uri) to identityOf(uri)
+                    context.openBook(uri) to context.identityOf(uri)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -181,6 +198,8 @@ class ReaderViewModel @Inject constructor(
             // page decodes against it fail cleanly instead of racing a premature close.
             val old = source
             source = source0
+            thumbs?.close()
+            thumbs = ThumbnailPipeline(java.io.File(context.cacheDir, "thumbs"))
             openedUri = uri.toString()
             bookId = identity
             runCatching { old?.close() }
@@ -194,27 +213,10 @@ class ReaderViewModel @Inject constructor(
                 bookId = bookId,
                 currentPage = settledPage,
             )
+            // After the state that gates the first page: contents are chrome, and a PDF outline is
+            // a JNI call whose cost must not land in the tap-to-first-page budget.
+            _toc.value = withContext(DecodeDispatchers.extract) { contentsOf(source0) }
         }
-    }
-
-    /**
-     * The book's identity, however it was reached — see BookIdentity. Keying progress by the Uri
-     * string gave one comic a different identity per route, so the library could never match a
-     * shelf entry to its reading position.
-     */
-    private fun identityOf(uri: Uri): String = when (uri.scheme) {
-        "file", null -> uri.path?.let { java.io.File(it) }
-            ?.let { BookIdentity.ofOrFallback(it.name, it.length(), uri.toString()) }
-            ?: uri.toString()
-        else -> context.contentResolver.query(
-            uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null,
-        )?.use { c ->
-            if (!c.moveToFirst()) return@use null
-            val name = c.getColumnIndex(OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let(c::getString)
-            val size = c.getColumnIndex(OpenableColumns.SIZE)
-                .takeIf { it >= 0 && !c.isNull(it) }?.let(c::getLong)
-            BookIdentity.ofOrFallback(name, size, uri.toString())
-        } ?: uri.toString()
     }
 
     /**
@@ -348,13 +350,58 @@ class ReaderViewModel @Inject constructor(
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { progressDao.upsert(progress) }
         }
         openJob?.cancel()
+        _toc.value = emptyList()
         pageImages.values.forEach { runCatching { it.close() } }
         pageImages.clear()
         bases.clear()
         tileCache.clear()
+        thumbs?.close()
+        thumbs = null
         runCatching { source?.close() }
         source = null
         super.onCleared()
+    }
+
+    /**
+     * One page thumbnail, for the chrome's strip (§5.2).
+     *
+     * An archive goes through [ThumbnailPipeline], which caches to disk, so reopening a book does
+     * not re-extract 45 pages. A PDF has no encoded bytes to cache, so PDFium renders the page
+     * small, which is already cheap.
+     */
+    suspend fun thumbnail(index: Int, width: Int): Bitmap? {
+        val src = source ?: return null
+        return runCatching {
+            if (src is PdfDocument) {
+                withContext(DecodeDispatchers.decode) {
+                    PdfPageImage.open(src, index).decodeBase(width, width * THUMB_HEIGHT_LIMIT)
+                }
+            } else {
+                thumbs?.load(src as ComicSource, ThumbRequest(bookId, index, ThumbRequest.snapWidth(width)))
+            }
+        }.getOrNull()
+    }
+
+    /**
+     * Writes the page to Pictures/Absolutex (§5.2) and returns its Uri, or null if it could not be
+     * written. An archive page is exported byte for byte: re-encoding a scan to export it would
+     * lose quality for nothing. A PDF page has no bytes of its own, so it is rendered and encoded.
+     */
+    suspend fun exportPage(index: Int): Uri? {
+        val src = source ?: return null
+        val title = _ui.value.title
+        return withContext(DecodeDispatchers.extract) {
+            runCatching {
+                if (src is PdfDocument) {
+                    val page = PdfPageImage.open(src, index)
+                    context.exportPageBitmap(title, index, page.decodeBase(EXPORT_MAX_EDGE, EXPORT_MAX_EDGE))
+                } else {
+                    val source1 = src as ComicSource
+                    val bytes = source1.openPage(index).use { it.readBytes() }
+                    context.exportPageBytes(title, index, source1.pages[index].entryName, bytes)
+                }
+            }.onFailure { Log.e(TAG, "export failed", it) }.getOrNull()
+        }
     }
 
     /** Halves the tile budget on memory pressure; called from MainActivity's callbacks. */
@@ -365,3 +412,15 @@ class ReaderViewModel @Inject constructor(
         }
     }
 }
+
+/**
+ * The open book's contents: a PDF's own outline, or the folders an archive's pages sit in. A
+ * book with neither returns nothing, and the reader shows no contents button.
+ */
+private fun contentsOf(source: Closeable): List<TocEntry> = runCatching {
+    if (source is PdfDocument) {
+        source.outline().map { TocEntry(it.title, it.pageIndex, it.depth) }
+    } else {
+        Toc.fromEntryNames((source as ComicSource).pages.map { it.entryName })
+    }
+}.getOrDefault(emptyList())

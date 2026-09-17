@@ -37,10 +37,15 @@
     <string name="settings_layout_double">Double</string>
     <string name="settings_layout_cover">Cover, then double</string>
     <string name="settings_layout_continuous">Continuous vertical</string>
+    <string name="settings_transition_slide">Slide</string>
+    <string name="settings_transition_page_over">Page over</string>
+    <string name="settings_transition_reveal">Reveal in place</string>
     <string name="settings_rotation_desc">Rotation while reading</string>
     <string name="settings_rotation_system">System</string>
     <string name="settings_rotation_portrait">Portrait</string>
     <string name="settings_rotation_landscape">Landscape</string>
+    <string name="settings_thumbnail_strip">Thumbnail strip</string>
+    <string name="settings_thumbnail_strip_desc">Thumbnail strip. Show page thumbnails in the reader chrome.</string>
     <string name="settings_keep_screen_on">Keep screen on</string>
     <string name="settings_keep_screen_on_desc">Keep screen on. The screen stays awake while a page is open.</string>
     <string name="settings_use_cutout">Use the cutout area</string>

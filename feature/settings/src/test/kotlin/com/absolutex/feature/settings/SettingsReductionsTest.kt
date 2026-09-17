@@ -3,7 +3,14 @@ package com.absolutex.feature.settings
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.data.settings.ReaderPrefs
+import com.absolutex.core.data.settings.RenderingPrefs
+import com.absolutex.core.data.settings.fitFor
+import com.absolutex.core.gpu.ColourParams
+import com.absolutex.model.FitContext
 import com.absolutex.model.FitMode
+import com.absolutex.model.FitModeMemory
+import com.absolutex.model.PageOrientation
+import com.absolutex.model.ScreenOrientation
 import com.absolutex.model.ReadingFlow
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -101,9 +108,28 @@ class SettingsReductionsTest {
     }
 
     @Test
-    fun `withFitMode covers every enum entry`() {
+    fun `withFitMode covers every enum entry, and applies it to every shape`() {
         FitMode.entries.forEach { mode ->
-            assertEquals(ReaderPrefs().copy(fitMode = mode), ReaderPrefs().withFitMode(mode))
+            val updated = ReaderPrefs().withFitMode(mode)
+            assertEquals(ReaderPrefs().copy(fitMode = mode, fitMemory = FitModeMemory.everywhere(mode)), updated)
+            // Settings means "from now on", so even the shape with its own default follows it.
+            assertEquals(
+                mode,
+                updated.fitFor(FitContext(ScreenOrientation.PORTRAIT, PageOrientation.LANDSCAPE)),
+            )
         }
+    }
+
+    @Test
+    fun `withColour sets the grade and preserves the record`() {
+        val grade = ColourParams(temperature = 0.4f, vibrance = 0.6f)
+        assertEquals(RenderingPrefs(grade), RenderingPrefs().withColour(grade))
+    }
+
+    @Test
+    fun `withColour clamps out-of-range edits into the slider ranges`() {
+        val clamped = RenderingPrefs().withColour(ColourParams(brightness = 5f, gamma = 9f)).colour
+        assertEquals(ColourParams.BRIGHTNESS_RANGE.endInclusive, clamped.brightness)
+        assertEquals(ColourParams.GAMMA_RANGE.endInclusive, clamped.gamma)
     }
 }

@@ -23,8 +23,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.data.settings.ReaderPrefs
+import com.absolutex.core.data.settings.RenderingPrefs
 import com.absolutex.core.data.settings.RotationLock
+import com.absolutex.core.gpu.ColourPanel
 import com.absolutex.model.PageLayout
+import com.absolutex.model.PageTransition
 import com.absolutex.core.ui.AbsolutexTheme
 import com.absolutex.model.FitMode
 import com.absolutex.model.ReadingFlow
@@ -36,6 +39,7 @@ fun SettingsScreen(
 ) {
     val app by vm.appPrefs.collectAsStateWithLifecycle()
     val reader by vm.readerPrefs.collectAsStateWithLifecycle()
+    val rendering by vm.renderingPrefs.collectAsStateWithLifecycle()
     // The screen previews the theme it configures: what you toggle is what you get.
     val dark = when (app.nightMode) {
         NightMode.ON -> true
@@ -46,6 +50,7 @@ fun SettingsScreen(
         SettingsContent(
             app = app,
             reader = reader,
+            rendering = rendering,
             actions = SettingsActions(
                 onNightMode = vm::setNightMode,
                 onDynamicColour = vm::setDynamicColour,
@@ -57,6 +62,7 @@ fun SettingsScreen(
                 onFitMode = vm::setFitMode,
                 onReader = vm::updateReader,
                 onCacheSize = vm::setCacheSize,
+                onRendering = vm::updateRendering,
             ),
             modifier = modifier,
         )
@@ -68,6 +74,7 @@ fun SettingsScreen(
 fun SettingsContent(
     app: AppPrefs,
     reader: ReaderPrefs,
+    rendering: RenderingPrefs,
     actions: SettingsActions,
     modifier: Modifier = Modifier,
 ) {
@@ -96,6 +103,11 @@ fun SettingsContent(
 
             GroupHeader(R.string.settings_group_rendering)
             CacheSizeRow(valueMiB = app.cacheSizeMiB, onChange = actions.onCacheSize)
+            // The same panel the reader chrome hosts: one composable, one state, no copies.
+            ColourPanel(
+                state = rendering.colour,
+                onChange = { actions.onRendering { current -> current.withColour(it) } },
+            )
             Spacer(Modifier.height(8.dp))
 
             GroupHeader(R.string.settings_group_about)
@@ -172,20 +184,19 @@ private fun ReaderGroup(reader: ReaderPrefs, actions: SettingsActions) {
                 onClick = { actions.onFitMode(mode) },
             )
         }
-        // Four layouts, like the four fit modes, need radio rows on a narrow phone.
-        PageLayout.entries.forEach { layout ->
-            RadioSettingRow(
-                titleRes = pageLayoutLabelRes(layout),
-                selected = reader.pageLayout == layout,
-                onClick = { actions.onReader { it.copy(pageLayout = layout) } },
-            )
-        }
+        LayoutRows(reader, actions)
         SegmentedSettingRow(
             options = RotationLock.entries,
             selected = reader.rotationLock,
             onSelect = { lock -> actions.onReader { it.copy(rotationLock = lock) } },
             labelRes = ::rotationLockLabelRes,
             descriptionRes = R.string.settings_rotation_desc,
+        )
+        SwitchSettingRow(
+            titleRes = R.string.settings_thumbnail_strip,
+            checked = reader.thumbnailStrip,
+            onChange = { on -> actions.onReader { it.copy(thumbnailStrip = on) } },
+            descriptionRes = R.string.settings_thumbnail_strip_desc,
         )
         SwitchSettingRow(
             titleRes = R.string.settings_keep_screen_on,
@@ -204,6 +215,28 @@ private fun ReaderGroup(reader: ReaderPrefs, actions: SettingsActions) {
             checked = reader.volumeKeysTurnPages,
             onChange = { on -> actions.onReader { it.copy(volumeKeysTurnPages = on) } },
             descriptionRes = R.string.settings_volume_keys_desc,
+        )
+    }
+}
+
+/**
+ * Page layout and transition. Radio rows, like the fit modes: four of each will not fit a
+ * segmented row on a narrow phone.
+ */
+@Composable
+private fun LayoutRows(reader: ReaderPrefs, actions: SettingsActions) {
+    PageLayout.entries.forEach { layout ->
+        RadioSettingRow(
+            titleRes = pageLayoutLabelRes(layout),
+            selected = reader.pageLayout == layout,
+            onClick = { actions.onReader { it.copy(pageLayout = layout) } },
+        )
+    }
+    PageTransition.entries.forEach { transition ->
+        RadioSettingRow(
+            titleRes = transitionLabelRes(transition),
+            selected = reader.transition == transition,
+            onClick = { actions.onReader { it.copy(transition = transition) } },
         )
     }
 }
