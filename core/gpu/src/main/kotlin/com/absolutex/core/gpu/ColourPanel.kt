@@ -170,7 +170,14 @@ internal fun coalesceSlider(events: List<SliderEvent>): List<Float> {
     var pending = Float.NaN
     for (e in events) when (e) {
         is SliderEvent.Change -> pending = e.value
-        is SliderEvent.Finish -> if (!pending.isNaN()) commits.add(pending)
+        is SliderEvent.Finish -> {
+            // Commit the latest dragged value, then clear it so a later bare Finish (no
+            // intervening Change) does not re-commit the same value. One write per gesture.
+            if (!pending.isNaN()) {
+                commits.add(pending)
+                pending = Float.NaN
+            }
+        }
     }
     return commits
 }

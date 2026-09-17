@@ -407,20 +407,19 @@ class PrefCodecTest {
     fun `a wrongly typed rendering value falls back to its default`() {
         // What a store written by an older build looks like: right keys, wrong types. DataStore
         // would throw ClassCastException on each of these. Every ColourParams field is covered.
-        val bag = MapPrefBag(
-            mapOf(
-                PrefCodec.KEY_COLOUR_BRIGHTNESS to "bright",
-                PrefCodec.KEY_COLOUR_CONTRAST to true,
-                PrefCodec.KEY_COLOUR_SATURATION to listOf(1f),
-                PrefCodec.KEY_COLOUR_TEMPERATURE to 1,
-                PrefCodec.KEY_COLOUR_WB_AGGRESSION to "strong",
-                PrefCodec.KEY_COLOUR_VIBRANCE to "some",
-                PrefCodec.KEY_COLOUR_GAMMA to listOf("1.0"),
-                PrefCodec.KEY_COLOUR_GAMMA_R to false,
-                PrefCodec.KEY_COLOUR_GAMMA_G to "high",
-                PrefCodec.KEY_COLOUR_GAMMA_B to listOf(2f),
-            ),
+        val corrupt: Map<String, Any> = mapOf(
+            PrefCodec.KEY_COLOUR_BRIGHTNESS to "bright",
+            PrefCodec.KEY_COLOUR_CONTRAST to true,
+            PrefCodec.KEY_COLOUR_SATURATION to listOf(1f),
+            PrefCodec.KEY_COLOUR_TEMPERATURE to 1,
+            PrefCodec.KEY_COLOUR_AGGRESSION to "strong",
+            PrefCodec.KEY_COLOUR_VIBRANCE to "some",
+            PrefCodec.KEY_COLOUR_GAMMA to listOf("1.0"),
+            PrefCodec.KEY_COLOUR_GAMMA_R to false,
+            PrefCodec.KEY_COLOUR_GAMMA_G to "high",
+            PrefCodec.KEY_COLOUR_GAMMA_B to listOf(2f),
         )
+        val bag = MapPrefBag(corrupt)
         assertEquals(RenderingPrefs(), PrefCodec.decodeRendering(bag))
     }
 
