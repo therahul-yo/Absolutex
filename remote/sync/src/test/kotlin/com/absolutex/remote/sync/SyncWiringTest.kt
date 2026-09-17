@@ -341,10 +341,31 @@ class SyncWiringTest {
         var expireSeriesOnce = false
         private var seriesCalls = 0
         val saves = mutableListOf<JSONObject>()
+        var lastBearer: String? = null
 
+        private fun progressResponse(): MockResponse {
+            if (progressGone) {
+                return respond(404)
+            }
+            if (remoteStamp == null) {
+                // The server's real absent shape: 200 with pageNum 0 and no stamp —
+                // adopting that would rewind, so it reads as missing.
+                return respond(
+                    200,
+                    "{\"volumeId\":1,\"chapterId\":10,\"pageNum\":0," +
+                        "\"seriesId\":7,\"libraryId\":1}",
+                )
+            }
+            return respond(
+                200,
+                "{\"volumeId\":1,\"chapterId\":10,\"pageNum\":" + remotePageNum + "," +
+                    "\"seriesId\":7,\"libraryId\":1,\"lastModifiedUtc\":\"" + remoteStamp + "\"}",
+            )
+        }
+
+        // PageNumber comes in the query: page 0 lists, later pages end the walk. Keyed
+        // on the request (not a call counter) so repeated sync triggers re-list cleanly.
         private fun seriesPage(path: String): MockResponse {
-            // PageNumber comes in the query: page 0 lists, later pages end the walk. Keyed
-            // on the request (not a call counter) so repeated sync triggers re-list cleanly.
             val first = "PageNumber=0" in path
             if (expireSeriesOnce && seriesCalls++ == 0) {
                 return respond(401)
@@ -358,6 +379,7 @@ class SyncWiringTest {
 
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val path = request.target.orEmpty()
+                request.headers["Authorization"]?.let { lastBearer = it }
                 return when {
                     path == "/api/Account/login" ->
                         respond(200, "{\"token\":\"t\",\"refreshToken\":\"r\"}")
@@ -382,22 +404,7 @@ class SyncWiringTest {
                                 "\"pages\":$remotePages,\"bytes\":2000}" +
                                 "]}]}",
                         )
-                    path.startsWith("/api/Reader/get-progress") ->
-                        if (progressGone) {
-                            respond(404)
-                        } else if (remoteStamp == null) {
-                            // The server's real absent shape: 200 with pageNum 0 and no
-                            // stamp — adopting that would rewind, so it reads as missing.
-                            respond(200,
-                                "{\"volumeId\":1,\"chapterId\":10,\"pageNum\":0," +
-                                    "\"seriesId\":7,\"libraryId\":1}",
-                            )
-                        } else {
-                            respond(200,
-                                "{\"volumeId\":1,\"chapterId\":10,\"pageNum\":$remotePageNum," +
-                                    "\"seriesId\":7,\"libraryId\":1,\"lastModifiedUtc\":\"$remoteStamp\"}",
-                            )
-                        }
+                    path.startsWith("/api/Reader/get-progress") -> progressResponse()
                 path == "/api/Reader/progress" -> {
                     saves += JSONObject(request.body?.utf8().orEmpty())
                     respond(saveCode)
@@ -484,5 +491,13 @@ class SyncWiringTest {
         assertEquals(1, fake.exchanges)
         assertEquals(1, fake.refreshCalls)
         assertEquals(2, fake.saves.size)
+        // A third run still sends the refreshed token itself — not the stale exchanged one.
+        // Without the write-back this is "Bearer jwt-k" (and a fourth run would refresh
+        // again); with it, exactly one refresh ever happens.
+        controller.onBookClosed("Batman 001.cbz:2000")
+        assertEquals(1, fake.exchanges)
+        assertEquals(1, fake.refreshCalls)
+        assertEquals(3, fake.saves.size)
+        assertEquals("Bearer jwt-2", fake.lastBearer)
     }
 }
