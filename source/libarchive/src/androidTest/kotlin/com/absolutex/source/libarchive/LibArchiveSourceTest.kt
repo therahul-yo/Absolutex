@@ -90,6 +90,17 @@ class LibArchiveSourceTest {
         }
     }
 
+    @Test fun comicinfo_behind_junk_is_found_at_its_raw_ordinal() {
+        // Corpus 18: sidecar nested at scan/sub/COMICINFO.XML, raw ordinal 8, behind two junk
+        // entries the page filter drops. The locator must extract by RAW ordinal (8), not by
+        // filtered page index (0), and must match the basename case-insensitively.
+        open("18_comicinfo_behind_junk.cbz").use { src ->
+            assertEquals(6, src.pages.size)
+            assertEquals("Absolutex Corpus", src.comicInfo?.series)
+            assertEquals(6, src.comicInfo?.pageCount)
+        }
+    }
+
     @Test fun concurrent_reads_return_identical_bytes_to_serial_reads() {
         open("absolute-batman-001.cbr").use { src ->
             val serial = (0 until 6).map { src.openPage(it).readBytes().size }

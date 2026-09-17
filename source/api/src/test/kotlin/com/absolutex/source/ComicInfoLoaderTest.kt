@@ -66,8 +66,25 @@ class ComicInfoLoaderTest {
         assertNull(info)
     }
 
-    @Test fun `wrongly typed image indices and absurd sizes stay safe`() {
-        val hostile = """
+    @Test fun `corpus case 18 - sidecar behind junk is found at its raw ordinal`() {
+        // tools/make-corpus.py case 18: six pages, two junk entries, then a nested mixed-case
+        // sidecar at raw ordinal 8. Mirrors the real archive order exactly.
+        val rawNames = listOf(
+            "page001.png", "page002.png", "page003.png", "page004.png", "page005.png", "page006.png",
+            "__MACOSX/._page001.png", "Thumbs.db", "scan/sub/COMICINFO.XML",
+        )
+        val seen = ArrayList<Int>()
+        val info = ComicInfoLoader.from(rawNames) { ordinal ->
+            seen += ordinal
+            ordinal to comicInfoXml.toByteArray()
+        }
+        // The sidecar is the ninth regular entry: the locator must ask for raw ordinal 8. Asking
+        // for the first filtered index (0) would read page001.png's bytes as metadata.
+        assertEquals(listOf(8), seen)
+        assertEquals("Absolute Batman", info?.series)
+    }
+
+    @Test fun `wrongly typed image indices and absurd sizes stay safe`() {        val hostile = """
             <?xml version="1.0"?>
             <ComicInfo><Pages>
                 <Page Image="-3" Type="Story" />

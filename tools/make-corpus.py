@@ -478,6 +478,28 @@ def case_avif(out: Path) -> None:
     build_cbz(out / "16_avif.cbz", entries, comic_info=None)
 
 
+def case_comicinfo_deep(out: Path) -> None:
+    """ComicInfo.xml at a NON-ZERO raw ordinal, behind junk and with a nested casing variant.
+
+    The locator walks the RAW entry list and must extract by archive ordinal, not by filtered
+    page index: junk entries occupy ordinal slots the page filter drops. build_cbz always
+    writes the sidecar first (ordinal 0), so this case writes its own zip with the sidecar
+    LAST: pages, then junk, then a nested mixed-case ComicInfo.xml, so its raw ordinal sits
+    behind everything the filter rejects.
+    """
+    entries = pages(6)
+    entries += [("__MACOSX/._page001.png", b"\x00\x05\x16\x07" + b"\x00" * 40),
+                ("Thumbs.db", b"\xd0\xcf\x11\xe0" + b"\x00" * 80),
+                # Nested and mixed-case: real re-zippers emit this; ComicRack's root-only
+                # assumption would miss it.
+                ("scan/sub/COMICINFO.XML", COMIC_INFO.format(count=6, manga="No").encode("utf-8"))]
+    path = out / "18_comicinfo_behind_junk.cbz"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", allowZip64=True) as zf:
+        for name, blob in entries:
+            zf.writestr(zinfo(name), blob)
+
+
 def case_huge(out: Path) -> None:
     """~2.1 GiB CBZ with real pages on both sides of the 2^31 byte offset.
 
@@ -531,8 +553,9 @@ CASES: list[tuple[str, Callable[[Path], None], bool]] = [
     ("two_pages",     case_two_pages,      True),
     ("junk_entries",  case_junk_entries,   True),
     ("truncated",     case_truncated,      True),
-    ("giant_page",    case_giant_page,     True),
-    ("pdf_outline",   case_pdf_outline,    True),
+    ("giant_page",     case_giant_page,     True),
+    ("comicinfo_deep", case_comicinfo_deep, True),
+    ("pdf_outline",    case_pdf_outline,    True),
     ("solid_7z",      case_solid_7z,       False),
     ("rar5",          case_rar5,           False),
     ("avif",          case_avif,           False),
@@ -545,7 +568,7 @@ REPRODUCIBLE_FILES = [
     "01_basic_ltr.cbz", "02_no_comicinfo.cbz", "03_upper.CBZ", "04_mixed.CbZ",
     "05_upper.CB7", "06_zip_named_cbr.cbr", "07_deep_nesting.cbz", "08_nonascii_rtl.cbz",
     "09_two_pages.cbz", "10_junk_entries.cbz", "11_truncated.cbz", "12_giant_page.cbz",
-    "13_outline.pdf",
+    "18_comicinfo_behind_junk.cbz", "13_outline.pdf",
 ]
 
 
