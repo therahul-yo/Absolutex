@@ -1,8 +1,17 @@
 package com.absolutex.core.scan
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.atomic.AtomicInteger
 
 class SafScannerTest {
 
@@ -15,8 +24,10 @@ class SafScannerTest {
         return DocumentTree { parent -> map[parent].orEmpty() }
     }
 
+    private fun scanAll(root: TreeEntry, tree: DocumentTree) = runBlocking { SafScanner.scan(root, tree).toList() }
+
     @Test fun `containers anywhere in the tree are books`() {
-        val books = SafScanner.scan(
+        val books = scanAll(
             dir("root"),
             tree(
                 "root" to listOf(file("u1", "Batman 001.cbz", 100), dir("sub", "Series")),
@@ -55,7 +66,7 @@ class SafScannerTest {
     }
 
     @Test fun `junk and hidden entries are skipped, exactly as a filesystem scan skips them`() {
-        val books = SafScanner.scan(
+        val books = scanAll(
             dir("root"),
             tree(
                 "root" to listOf(dir("mac", "__MACOSX"), dir("hidden", ".trash"), file("u1", "Thumbs.db")),
@@ -67,7 +78,7 @@ class SafScannerTest {
     }
 
     @Test fun `a folder of loose images is one book, not a folder to descend into`() {
-        val books = SafScanner.scan(
+        val books = scanAll(
             dir("root"),
             tree(
                 "root" to listOf(dir("pages", "Chapter 1")),
@@ -82,7 +93,7 @@ class SafScannerTest {
     }
 
     @Test fun `one image is not a book`() {
-        val books = SafScanner.scan(
+        val books = scanAll(
             dir("root"),
             tree("root" to listOf(dir("pages")), "pages" to listOf(file("p1", "001.jpg"))),
         )
@@ -90,10 +101,49 @@ class SafScannerTest {
     }
 
     @Test fun `a tree that contains itself ends instead of recursing forever`() {
-        val books = SafScanner.scan(
+        val books = scanAll(
             dir("root"),
             tree("root" to listOf(dir("root"), file("u1", "Batman.cbz"))),
         )
         assertEquals(listOf("u1"), books.map { it.path })
+    }
+
+    @Test fun `books are emitted as they are found, not after the whole tree is walked`() = runBlocking {
+        // Five sibling directories, each with its own book; a collector that stops after the
+        // first emission proves the walk did not have to visit every sibling first.
+        val visited = AtomicInteger()
+        val entries = (0 until 5).map { i -> dir("sub$i") }
+        val childrenOf = mutableMapOf("root" to entries)
+        entries.forEachIndexed { i, d -> childrenOf[d.uri] = listOf(file("book$i", "Batman $i.cbz")) }
+        val countingTree = DocumentTree { parent ->
+            visited.incrementAndGet()
+            childrenOf[parent].orEmpty()
+        }
+
+        val first = SafScanner.scan(dir("root"), countingTree).first()
+
+        assertEquals("book0", first.path)
+        // root + the one subdirectory the first book came from: the other four were never queried.
+        assertTrue("expected an early stop, but visited $visited directories", visited.get() < entries.size)
+    }
+
+    @Test fun `a cancelled scan stops promptly instead of finishing the whole tree`() = runBlocking {
+        val total = 3_000
+        val childrenOf = mutableMapOf("root" to (0 until total).map { i -> dir("sub$i") })
+        (0 until total).forEach { i -> childrenOf["sub$i"] = listOf(file("book$i", "Batman $i.cbz")) }
+        val slowTree = DocumentTree { parent -> childrenOf[parent].orEmpty() }
+
+        val seen = AtomicInteger()
+        val scope = CoroutineScope(Dispatchers.Default)
+        val job = scope.launch {
+            SafScanner.scan(dir("root"), slowTree).collect {
+                seen.incrementAndGet()
+                delay(1) // a slow consumer, so cancellation reliably lands mid-walk
+            }
+        }
+        while (seen.get() < 5) delay(5)
+        job.cancel()
+        withTimeout(5_000) { job.join() }
+        assertTrue("cancelled scan kept going: ${seen.get()}", seen.get() < total)
     }
 }
