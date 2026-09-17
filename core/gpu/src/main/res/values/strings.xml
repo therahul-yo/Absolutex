@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="gpu_colour_title">Colour correction</string>
+    <string name="gpu_brightness">Brightness</string>
+    <string name="gpu_contrast">Contrast</string>
+    <string name="gpu_saturation">Saturation</string>
+    <string name="gpu_temperature">White balance</string>
+    <string name="gpu_aggression">White-balance strength</string>
+    <string name="gpu_vibrance">Vibrance</string>
+    <string name="gpu_gamma">Gamma</string>
+    <string name="gpu_gamma_r">Red gamma</string>
+    <string name="gpu_gamma_g">Green gamma</string>
+    <string name="gpu_gamma_b">Blue gamma</string>
+    <string name="gpu_reset">Reset</string>
+</resources>

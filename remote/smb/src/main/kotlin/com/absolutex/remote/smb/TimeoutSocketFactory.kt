@@ -1,5 +1,6 @@
 package com.absolutex.remote.smb
 
+import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -20,23 +21,16 @@ class TimeoutSocketFactory(
 
     override fun createSocket(): Socket = sockets()
 
-    override fun createSocket(host: String, port: Int): Socket {
-        val socket = sockets()
-        socket.connect(InetSocketAddress(host, port), connectTimeoutMs)
-        return socket
-    }
+    override fun createSocket(host: String, port: Int): Socket =
+        connect(sockets(), InetSocketAddress(host, port))
 
-    override fun createSocket(address: InetAddress, port: Int): Socket {
-        val socket = sockets()
-        socket.connect(InetSocketAddress(address, port), connectTimeoutMs)
-        return socket
-    }
+    override fun createSocket(address: InetAddress, port: Int): Socket =
+        connect(sockets(), InetSocketAddress(address, port))
 
     override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket {
         val socket = sockets()
         socket.bind(InetSocketAddress(localHost, localPort))
-        socket.connect(InetSocketAddress(host, port), connectTimeoutMs)
-        return socket
+        return connect(socket, InetSocketAddress(host, port))
     }
 
     override fun createSocket(
@@ -47,7 +41,21 @@ class TimeoutSocketFactory(
     ): Socket {
         val socket = sockets()
         socket.bind(InetSocketAddress(localAddress, localPort))
-        socket.connect(InetSocketAddress(address, port), connectTimeoutMs)
-        return socket
+        return connect(socket, InetSocketAddress(address, port))
+    }
+
+    /**
+     * A failed connect leaves the socket open — java.net.Socket does not close itself on
+     * SocketTimeoutException — so an unreachable NAS would leak one fd per retry without
+     * the close below.
+     */
+    private fun connect(socket: Socket, endpoint: InetSocketAddress): Socket {
+        try {
+            socket.connect(endpoint, connectTimeoutMs)
+            return socket
+        } catch (e: IOException) {
+            runCatching { socket.close() }
+            throw e
+        }
     }
 }

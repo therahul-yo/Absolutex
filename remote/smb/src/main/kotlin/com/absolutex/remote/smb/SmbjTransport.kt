@@ -102,25 +102,35 @@ class SmbjTransport(
      * Publishes a fresh connection under guard. A concurrent establish may have won first,
      * or close() / a latch may have landed mid-logon: in every losing case the spare is
      * closed and the winner (or the failure) stands, so no path swaps a healthy connection
-     * out from under its readers.
+     * out from under its readers. The decision runs under the lock; the loser's close runs
+     * outside it — close() is a network round trip (same rule as dropForReconnect/close()).
      */
     private fun installEstablished(established: SmbConnection): SmbConnection {
+        var spare: SmbConnection? = null
+        var failure: IOException? = null
+        var winner: SmbConnection? = null
         synchronized(guard) {
-            if (closed) {
-                runCatching { established.close() }
-                throw IOException("transport closed")
+            val latched = authFailure
+            val current = connection
+            when {
+                closed -> {
+                    spare = established
+                    failure = IOException("transport closed")
+                }
+                latched != null -> {
+                    spare = established
+                    failure = IOException(AUTH_LATCH_MESSAGE, latched)
+                }
+                current != null -> {
+                    spare = established
+                    winner = current
+                }
+                else -> connection = established
             }
-            authFailure?.let {
-                runCatching { established.close() }
-                throw IOException(AUTH_LATCH_MESSAGE, it)
-            }
-            connection?.let {
-                runCatching { established.close() }
-                return it
-            }
-            connection = established
-            return established
         }
+        spare?.let { runCatching { it.close() } }
+        failure?.let { throw it }
+        return winner ?: established
     }
 
     private fun storedPassword(): CharArray {

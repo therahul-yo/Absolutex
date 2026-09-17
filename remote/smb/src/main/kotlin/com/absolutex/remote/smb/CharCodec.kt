@@ -25,14 +25,18 @@ internal object CharCodec {
             .onMalformedInput(CodingErrorAction.REPLACE)
             .onUnmappableCharacter(CodingErrorAction.REPLACE)
         val scratch = ByteBuffer.allocate((size * encoder.maxBytesPerChar()).toInt())
-        val result = encoder.encode(CharBuffer.wrap(this), scratch, true)
-        if (!result.isUnderflow) throw IOException("password encoding failed: $result")
-        encoder.flush(scratch)
-        scratch.flip()
-        val bytes = ByteArray(scratch.remaining())
-        scratch.get(bytes)
-        scratch.array().fill(0)
-        return bytes
+        try {
+            val encoded = encoder.encode(CharBuffer.wrap(this), scratch, true)
+            if (!encoded.isUnderflow) throw IOException("password encoding failed: $encoded")
+            val flushed = encoder.flush(scratch)
+            if (!flushed.isUnderflow) throw IOException("password encoding failed: $flushed")
+            scratch.flip()
+            val bytes = ByteArray(scratch.remaining())
+            scratch.get(bytes)
+            return bytes
+        } finally {
+            scratch.array().fill(0)
+        }
     }
 
     /** Decodes UTF-8 [bytes]; the decoder's scratch buffer is zeroed. */
@@ -41,13 +45,17 @@ internal object CharCodec {
             .onMalformedInput(CodingErrorAction.REPLACE)
             .onUnmappableCharacter(CodingErrorAction.REPLACE)
         val scratch = CharBuffer.allocate((size * decoder.maxCharsPerByte()).toInt())
-        val result = decoder.decode(ByteBuffer.wrap(this), scratch, true)
-        if (!result.isUnderflow) throw IOException("password decoding failed: $result")
-        decoder.flush(scratch)
-        scratch.flip()
-        val chars = CharArray(scratch.remaining())
-        scratch.get(chars)
-        scratch.array().fill(Char.MIN_VALUE)
-        return chars
+        try {
+            val decoded = decoder.decode(ByteBuffer.wrap(this), scratch, true)
+            if (!decoded.isUnderflow) throw IOException("password decoding failed: $decoded")
+            val flushed = decoder.flush(scratch)
+            if (!flushed.isUnderflow) throw IOException("password decoding failed: $flushed")
+            scratch.flip()
+            val chars = CharArray(scratch.remaining())
+            scratch.get(chars)
+            return chars
+        } finally {
+            scratch.array().fill(Char.MIN_VALUE)
+        }
     }
 }
