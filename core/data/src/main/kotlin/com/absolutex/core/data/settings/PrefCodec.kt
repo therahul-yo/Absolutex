@@ -72,8 +72,11 @@ object PrefCodec {
         bag.putBoolean(KEY_SHOW_HIDDEN, prefs.showHiddenFolders)
         bag.putBoolean(KEY_GENERIC_ARCHIVES, prefs.openGenericArchives)
         bag.putBoolean(KEY_IMAGE_FOLDERS, prefs.openImageFolders)
-        // Only when there are any: an empty set would write a key that says nothing.
-        if (prefs.locations.isNotEmpty()) bag.putStringSet(KEY_LOCATIONS, prefs.locations)
+        // Only when there are any: an empty set would write a key that says nothing. Removing the
+        // key rather than skipping the write is what makes the empty case actually persist —
+        // skipping it left whatever was already stored (from before the last location was
+        // dropped) untouched, so the store could never again agree that there were none.
+        if (prefs.locations.isEmpty()) bag.remove(KEY_LOCATIONS) else bag.putStringSet(KEY_LOCATIONS, prefs.locations)
         LibraryPrefCodec.encodeApp(prefs, bag)
     }
 

@@ -105,6 +105,20 @@ class PrefCodecTest {
     }
 
     @Test
+    fun `removing the last location clears the stored key, not just the decoded value`() {
+        // The bug this guards: encodeApp used to skip the write for an empty set rather than
+        // clearing it, so a bag that already held a location from an earlier encode kept it
+        // forever — every later "remove the last one" silently did nothing.
+        val bag = MapPrefBag()
+        PrefCodec.encodeApp(AppPrefs(locations = setOf("content://tree/a")), bag)
+        assertEquals(setOf("content://tree/a"), bag.snapshot()[PrefCodec.KEY_LOCATIONS])
+
+        PrefCodec.encodeApp(AppPrefs(locations = emptySet()), bag)
+        assertTrue("the key must be gone, not merely empty", PrefCodec.KEY_LOCATIONS !in bag.snapshot().keys)
+        assertEquals(emptySet<String>(), PrefCodec.decodeApp(bag).locations)
+    }
+
+    @Test
     fun `every page layout survives a round-trip`() {
         for (layout in PageLayout.entries) {
             val original = ReaderPrefs(pageLayout = layout)
