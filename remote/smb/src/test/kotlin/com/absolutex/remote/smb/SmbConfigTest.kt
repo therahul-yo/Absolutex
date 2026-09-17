@@ -4,6 +4,7 @@ import com.hierynomus.mssmb2.SMB2Dialect
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import java.io.IOException
 import java.net.InetAddress
@@ -11,6 +12,7 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketAddress
+import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -87,6 +89,22 @@ class SmbConfigTest {
         assertEquals(1_234, recording.connectTimeoutMs)
     }
 
+    @Test fun `failed connect closes the socket`() {
+        // java.net.Socket does not close itself on SocketTimeoutException: without the
+        // factory's close, an unreachable NAS leaks one fd per retry.
+        val socket = object : Socket() {
+            override fun connect(endpoint: SocketAddress?, timeout: Int) {
+                throw SocketTimeoutException("timed out")
+            }
+        }
+        try {
+            TimeoutSocketFactory(1_234) { socket }.createSocket("nas", 445)
+            fail("expected SocketTimeoutException")
+        } catch (expected: SocketTimeoutException) {
+            assertTrue(socket.isClosed)
+        }
+    }
+
     @Test fun `stalled handshake returns within the timeout`() {
         // Backlog of one, filled and never accepted: the second handshake stalls (or, on
         // loopback stacks that accept anyway, succeeds fast). Either way it must not hang.
@@ -98,8 +116,11 @@ class SmbConfigTest {
                 val start = System.nanoTime()
                 try {
                     TimeoutSocketFactory(1_000).createSocket("127.0.0.1", server.localPort).close()
+                    // Loopback stacks may accept despite the backlog: still bounded, still fast.
                 } catch (expected: IOException) {
-                    // A true stall surfaces here as SocketTimeoutException, quickly.
+                    // A true stall surfaces as SocketTimeoutException; a fast refusal
+                    // (connection reset on some stacks) is equally bounded. Either way the
+                    // elapsed bound below is the assertion — no hang.
                 }
                 val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)
                 assertTrue("handshake took ${elapsedMs}ms", elapsedMs < 5_000)
