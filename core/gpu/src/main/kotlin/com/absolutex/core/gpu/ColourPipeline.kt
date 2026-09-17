@@ -118,6 +118,12 @@ class ColourPipeline {
             srcLeft, srcTop, srcRight, srcBottom,
             dstLeft, dstTop, dstRight, dstBottom,
         )
+        // Crop rect in bitmap pixels — kernel taps clamp to this so Mitchell/Lanczos can't
+        // read beyond the crop.
+        rt.setFloatUniform(
+            ColourShader.UNIFORM_CROP_RECT,
+            srcLeft.toFloat(), srcTop.toFloat(), srcRight.toFloat(), srcBottom.toFloat(),
+        )
         val m = matrix ?: Matrix().also { matrix = it }
         // The local matrix maps the source rect → canvas: scale by dst/src, then translate by the
         // source-origin-adjusted destination origin. postTranslate applies the shift AFTER the
