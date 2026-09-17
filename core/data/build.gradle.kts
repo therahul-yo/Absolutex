@@ -18,6 +18,7 @@ android {
 }
 dependencies {
     implementation(project(":core:model"))
+    implementation(project(":core:gpu"))
     implementation(project(":core:scan"))
     // NaturalOrder, for the auto-advance lookup's filename ordering (§5.2).
     implementation(project(":source:api"))

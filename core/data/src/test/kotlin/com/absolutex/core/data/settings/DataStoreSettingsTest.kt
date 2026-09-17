@@ -6,8 +6,11 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import com.absolutex.core.gpu.ColourParams
+import com.absolutex.core.gpu.Upscaler
 import com.absolutex.model.FitMode
 import com.absolutex.model.ReadingFlow
 import kotlinx.coroutines.CoroutineScope
@@ -215,6 +218,23 @@ class DataStoreSettingsTest {
         job.cancelAndJoin()
     }
 
+    @Test fun `removing the last library location persists, including across reopening`() = runBlocking {
+        val f = file()
+        val (settings, job) = open(f)
+        settings.updateApp { it.copy(locations = setOf("content://tree/a")) }
+        assertEquals(setOf("content://tree/a"), settings.currentAppPrefs().locations)
+
+        settings.updateApp { it.copy(locations = emptySet()) }
+        assertEquals(emptySet<String>(), settings.currentAppPrefs().locations)
+        job.cancelAndJoin()
+
+        // Reopening reads straight off disk: proves the key was actually removed by the empty-set
+        // write, not just masked in memory until the next decode of the same live store.
+        val (reopened, reopenedJob) = open(f)
+        assertEquals(emptySet<String>(), reopened.currentAppPrefs().locations)
+        reopenedJob.cancelAndJoin()
+    }
+
     @Test fun `a wrongly typed app entry falls back for that field only, and a write repairs it`() = runBlocking {
         val f = file()
         seed(f) {
@@ -226,6 +246,47 @@ class DataStoreSettingsTest {
         assertEquals(AppPrefs(nightMode = NightMode.ON), settings.currentAppPrefs())
         settings.updateApp { it.copy(cacheSizeMiB = 256) }
         assertEquals(AppPrefs(nightMode = NightMode.ON, cacheSizeMiB = 256), settings.currentAppPrefs())
+        settingsJob.cancelAndJoin()
+    }
+
+    @Test fun `rendering colour round-trips and survives reopen`() = runBlocking {
+        val f = file()
+        val expected = RenderingPrefs(
+            upscaler = Upscaler.LANCZOS,
+            colour = ColourParams(
+                brightness = 0.15f,
+                contrast = 1.1f,
+                saturation = 1.25f,
+                temperature = -0.4f,
+                wbAggression = 0.8f,
+                vibrance = 0.6f,
+                gamma = 1.1f,
+                gammaR = 0.9f,
+                gammaG = 1f,
+                gammaB = 1.2f,
+            ),
+        )
+        val (first, firstJob) = open(f)
+        first.updateRendering { expected }
+        assertEquals(expected, first.currentRenderingPrefs())
+        firstJob.cancelAndJoin()
+
+        val (reopened, job) = open(f)
+        assertEquals(expected, reopened.currentRenderingPrefs())
+        job.cancelAndJoin()
+    }
+
+    @Test fun `a wrongly typed colour entry falls back and a raw out-of-range one clamps`() = runBlocking {
+        val f = file()
+        seed(f) {
+            it[stringPreferencesKey(PrefCodec.KEY_COLOUR_BRIGHTNESS)] = "bright"
+            it[floatPreferencesKey(PrefCodec.KEY_COLOUR_CONTRAST)] = 9f
+        }
+
+        val (settings, settingsJob) = open(f)
+        val colour = settings.currentRenderingPrefs().colour
+        assertEquals(0f, colour.brightness)
+        assertEquals(ColourParams.CONTRAST_RANGE.endInclusive, colour.contrast)
         settingsJob.cancelAndJoin()
     }
 }

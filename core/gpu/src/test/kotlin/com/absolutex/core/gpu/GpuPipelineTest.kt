@@ -14,6 +14,10 @@ class ColourShaderTest {
         assertTrue(src.contains("uniform float ${ColourShader.UNIFORM_BRIGHTNESS}"))
         assertTrue(src.contains("uniform float ${ColourShader.UNIFORM_CONTRAST}"))
         assertTrue(src.contains("uniform float ${ColourShader.UNIFORM_SATURATION}"))
+        assertTrue(src.contains("uniform float ${ColourShader.UNIFORM_TEMPERATURE}"))
+        assertTrue(src.contains("uniform float ${ColourShader.UNIFORM_AGGRESSION}"))
+        assertTrue(src.contains("uniform float ${ColourShader.UNIFORM_VIBRANCE}"))
+        assertTrue(src.contains("uniform vec3 ${ColourShader.UNIFORM_GAMMA_EXP}"))
     }
 
     @Test
@@ -25,11 +29,16 @@ class ColourShaderTest {
 
     @Test
     fun `shader transcribes the reference op order`() {
-        // Contrast about mid-grey, additive brightness, luma blend, explicit clamp — the same
-        // sentence as ColourMath.adjust. A reorder on either side breaks the transcription.
+        // White balance, contrast about mid-grey with additive brightness, gamma on floored
+        // values, luma-blend saturation with vibrance, explicit clamp — the same sentence as
+        // ColourMath.adjust. A reorder on either side breaks the transcription.
         val src = ColourShader.SOURCE.replace(" ", "").replace("\n", "")
-        assertTrue(src.contains("(src.rgb-0.5)*contrast+0.5+brightness"))
-        assertTrue(src.contains("mix(vec3(luma),c,saturation)"))
+        assertTrue(src.contains("temperature*aggression*WB_STRENGTH"))
+        assertTrue(src.contains("c=c*vec3(1.0+shift,1.0,1.0-shift)"))
+        assertTrue(src.contains("(c-0.5)*contrast+0.5+brightness"))
+        assertTrue(src.contains("pow(max(c,vec3(0.0)),gammaExp)"))
+        assertTrue(src.contains("clamp((1.0+c.r-c.b)/2.0,0.0,1.0)"))
+        assertTrue(src.contains("mix(vec3(luma),c,saturation+vibrance*selectivity)"))
         assertTrue(src.contains("clamp(c,0.0,1.0)"))
     }
 
@@ -40,6 +49,40 @@ class ColourShaderTest {
         assertEquals(0.2126f, ColourMath.LUMA_R, 0f)
         assertEquals(0.7152f, ColourMath.LUMA_G, 0f)
         assertEquals(0.0722f, ColourMath.LUMA_B, 0f)
+    }
+
+    @Test
+    fun `white-balance strength matches the JVM reference`() {
+        assertTrue(ColourShader.SOURCE.contains("const float WB_STRENGTH = 0.25;"))
+        assertEquals(0.25f, ColourMath.WB_STRENGTH, 0f)
+        assertEquals(ColourMath.WARMTH_KEEP, 0.35f, 0f)
+        assertTrue(ColourShader.SOURCE.replace(" ", "").contains("mix(1.0,0.35,warmth)"))
+    }
+
+    @Test
+    fun `shader declares the sampling uniforms and both kernels`() {
+        val src = ColourShader.SOURCE
+        assertTrue(src.contains("uniform int ${ColourShader.UNIFORM_UPSCALER}"))
+        assertTrue(src.contains("uniform vec2 ${ColourShader.UNIFORM_MAP_SCALE}"))
+        assertTrue(src.contains("uniform vec2 ${ColourShader.UNIFORM_MAP_TRANS}"))
+        assertTrue(src.contains("float mitchell(float x)"))
+        assertTrue(src.contains("float lanczos(float x)"))
+        assertTrue(src.contains("sampleMitchell(p)"))
+        assertTrue(src.contains("sampleLanczos(p)"))
+    }
+
+    @Test
+    fun `upscaler codes match the enum`() {
+        assertEquals(Upscaler.PLATFORM.code, ColourShader.UPSCALER_PLATFORM)
+        assertEquals(Upscaler.MITCHELL.code, ColourShader.UPSCALER_MITCHELL)
+        assertEquals(Upscaler.LANCZOS.code, ColourShader.UPSCALER_LANCZOS)
+    }
+
+    @Test
+    fun `kernel taps forward-map through the placement and renormalise`() {
+        val src = ColourShader.SOURCE.replace(" ", "").replace("\n", "")
+        assertTrue(src.contains("content.eval(tap*mapScale+mapTrans).rgb"))
+        assertTrue(src.contains("returnacc/wsum;"))
     }
 }
 
@@ -58,12 +101,39 @@ class ColourPipelineGateTest {
         assertTrue(pipeline.shouldApply(ColourParams(brightness = 0.15f)))
         assertTrue(pipeline.shouldApply(ColourParams(contrast = 1.1f)))
         assertTrue(pipeline.shouldApply(ColourParams(saturation = 1.25f)))
+        assertTrue(pipeline.shouldApply(ColourParams(temperature = 0.5f)))
+        assertTrue(pipeline.shouldApply(ColourParams(vibrance = 0.5f)))
+        assertTrue(pipeline.shouldApply(ColourParams(gamma = 1.1f)))
+        assertTrue(pipeline.shouldApply(ColourParams(gammaB = 0.9f)))
     }
 
-    @Test(expected = IllegalArgumentException::class)
-    fun `neutral is rejected at the paint seam, not drawn through an identity shader`() {
-        // The guard paintFor enforces, reached here without a Bitmap (unconstructable on the JVM).
-        pipeline.checkApplicable(ColourParams.NEUTRAL)
+    @Test
+    fun `neutral plus platform never enters the shader path`() {
+        assertFalse(pipeline.shouldShade(ColourParams.NEUTRAL, Upscaler.PLATFORM, true))
+        assertFalse(pipeline.shouldShade(ColourParams.NEUTRAL, Upscaler.PLATFORM, false))
+    }
+
+    @Test
+    fun `a selected kernel enters the shader path only at rest`() {
+        assertTrue(pipeline.shouldShade(ColourParams.NEUTRAL, Upscaler.LANCZOS, true))
+        assertFalse(pipeline.shouldShade(ColourParams.NEUTRAL, Upscaler.LANCZOS, false))
+        assertTrue(pipeline.shouldShade(ColourParams.NEUTRAL, Upscaler.MITCHELL, true))
+    }
+
+    @Test
+    fun `live colour enters whatever the sampler is doing`() {
+        assertTrue(pipeline.shouldShade(ColourParams(brightness = 0.1f), Upscaler.PLATFORM, true))
+        assertTrue(pipeline.shouldShade(ColourParams(brightness = 0.1f), Upscaler.LANCZOS, false))
+    }
+
+    @Test
+    fun `shade mode is the kernel only when magnifying at rest`() {
+        assertEquals(Upscaler.PLATFORM, pipeline.shadeMode(Upscaler.PLATFORM, true, true))
+        assertEquals(Upscaler.LANCZOS, pipeline.shadeMode(Upscaler.LANCZOS, true, true))
+        // Gesture frames and 1:1 draws keep the hardware tap.
+        assertEquals(Upscaler.PLATFORM, pipeline.shadeMode(Upscaler.LANCZOS, false, true))
+        assertEquals(Upscaler.PLATFORM, pipeline.shadeMode(Upscaler.LANCZOS, true, false))
+        assertEquals(Upscaler.MITCHELL, pipeline.shadeMode(Upscaler.MITCHELL, true, true))
     }
 }
 

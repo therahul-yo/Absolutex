@@ -37,7 +37,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.draw.clipToBounds
 import com.absolutex.model.PageLayout
-import androidx.compose.runtime.key
 import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.PagerScope
@@ -63,6 +62,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -113,6 +114,12 @@ fun ReaderScreen(
     val options: ReaderOptionsViewModel = hiltViewModel()
     val book by remember(ui.bookId) { options.bookPrefs(ui.bookId) }.collectAsStateWithLifecycle(null)
     val prefs = global.overriddenBy(book)
+    // Hoisted above the Pages/Strip split so choosing the continuous-vertical layout from the
+    // open chrome does not close it: Pages and Strip are different call sites, and a `remember`
+    // owned by either one is torn down the moment the `when` below takes the other branch.
+    // rememberSaveable also survives a config change this activity does not declare (font scale,
+    // locale, keyboard) — MainActivity would otherwise have to declare every such change instead.
+    val chromeState = rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(uri) { vm.open(uri) }
 
@@ -140,8 +147,9 @@ fun ReaderScreen(
                 color = Color.White,
             )
             prefs.pageLayout == PageLayout.CONTINUOUS_VERTICAL ->
-                Strip(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, onFinished)
-            else -> Pages(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, onFinished)
+                Strip(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, onFinished, chromeState)
+            else ->
+                Pages(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, onFinished, chromeState)
         }
     }
 }
@@ -170,6 +178,7 @@ private fun Pages(
     vm: ReaderViewModel,
     onSettings: (() -> Unit)?,
     onFinished: (() -> Unit)?,
+    chromeState: MutableState<Boolean>,
 ) {
     val flow = prefs.readingFlow
     // The pager counts screens; everything else (progress, seeking, keys) speaks book pages.
@@ -186,7 +195,7 @@ private fun Pages(
     // page. See pagerStep (ReaderAdvance.kt) for the last-screen / onFinished behaviour.
     val goTo: (Int) -> Unit = pagerStep(pagerState, spreads.lastIndex, prefs, scope, onFinished)
     val turn: (Boolean) -> Unit = { forward -> goTo(if (forward != (flow == ReadingFlow.RTL)) 1 else -1) }
-    var chrome by remember { mutableStateOf(false) }
+    var chrome by chromeState
     val tap: (TapZone) -> Unit = { zone -> onTapZone(zone, goTo) { chrome = !chrome } }
     ReaderWindow(prefs, immersive = !chrome)
 
@@ -200,8 +209,15 @@ private fun Pages(
     ) { chrome = !chrome }
 
     // Persist progress as the reader moves. snapshotFlow keeps this off the composition path.
+    // Keyed on pagerState, not spreads: it must keep running, unbroken, across a page-layout
+    // change (spreads is recreated, but the pager itself is not). rememberUpdatedState is what
+    // makes that safe — without it this coroutine would go on closing over the FIRST spreads it
+    // ever saw, indexing settledPage into an array sized for a different layout: out of bounds
+    // (a crash) if the new grouping is finer, or a wrong page silently written to progress if
+    // it is coarser.
+    val currentSpreads by rememberUpdatedState(spreads)
     LaunchedEffect(pagerState) {
-        snapshotFlow { pagerState.settledPage }.collect { vm.onPageChanged(spreads[it].first) }
+        snapshotFlow { pagerState.settledPage }.collect { vm.onPageChanged(currentSpreads[it].first) }
     }
 
     // §3's "tap book -> first page rendered" ends here, not at the first frame: the window is up
@@ -262,10 +278,11 @@ private fun Strip(
     vm: ReaderViewModel,
     onSettings: (() -> Unit)?,
     onFinished: (() -> Unit)?,
+    chromeState: MutableState<Boolean>,
 ) {
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = startPage)
     val scope = rememberCoroutineScope()
-    var chrome by remember { mutableStateOf(false) }
+    var chrome by chromeState
     ReaderWindow(prefs, immersive = !chrome)
     // See stripStep (ReaderAdvance.kt) for the can't-scroll-further / onFinished behaviour.
     val step: (Int) -> Unit = stripStep(listState, prefs, scope, onFinished)
@@ -409,10 +426,12 @@ private fun ReaderChrome(
     // release. Seeking through the pager on every drag tick launched an animated scroll per tick,
     // each cancelling the last, and the page stuttered behind the thumb.
     var dragging by remember { mutableStateOf<Float?>(null) }
-    var contents by remember { mutableStateOf(false) }
+    // Saveable, like chromeState above: a config change this activity does not declare (font
+    // scale, locale, keyboard) must not close a TOC or options panel the reader has open.
+    var contents by rememberSaveable { mutableStateOf(false) }
     // Landscape has ~1200 px of height and the chrome had grown past it, so the options moved
     // behind a toggle: what is always shown is what a reader looks at every page.
-    var options by remember { mutableStateOf(false) }
+    var options by rememberSaveable { mutableStateOf(false) }
     val shown = (dragging?.roundToInt() ?: page) + 1
     val indicator = stringResource(R.string.reader_page_indicator_desc, shown, pageCount)
     val seekLabel = stringResource(R.string.reader_seek_desc)
