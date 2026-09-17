@@ -14,7 +14,7 @@ import java.io.IOException
  */
 class SyncRunner(
     private val progressDao: ProgressDao,
-    private val servers: SyncServers,
+    private val servers: RemoteServers,
     private val queue: SyncQueue,
     private val komga: ServerSync,
     private val kavita: ServerSync,
@@ -22,7 +22,7 @@ class SyncRunner(
     suspend fun pushBook(bookId: String) {
         val local = progressDao.get(bookId)?.toSync() ?: return
         var queued = false
-        for (server in servers.current()) {
+        for (server in servers.current().mapNotNull { it.toSyncServer() }) {
             try {
                 runnerFor(server).sync(server, local)
             } catch (e: IOException) {
@@ -46,7 +46,7 @@ class SyncRunner(
         onOffer: (RemoteProgressOffer) -> Unit,
     ): SyncProgress? {
         val local = progressDao.get(bookId)?.toSync() ?: return null
-        for (server in servers.current()) {
+        for (server in servers.current().mapNotNull { it.toSyncServer() }) {
             val pulled = runnerFor(server).pull(server, local) ?: continue
             val offered = openBookId == bookId && offerWhenOpen
             if (offered) {
@@ -61,14 +61,14 @@ class SyncRunner(
 
     suspend fun pullKnownBooks(openBookId: String?, onOffer: (RemoteProgressOffer) -> Unit) {
         val locals = progressDao.observeAll().first()
-        for (server in servers.current()) {
+        for (server in servers.current().mapNotNull { it.toSyncServer() }) {
             pullFromServer(server, locals, openBookId, onOffer)
         }
     }
 
     /** Folder browse / refresh for one server: its outbox, then a pull through it. */
     suspend fun syncServer(serverId: String, openBookId: String?, onOffer: (RemoteProgressOffer) -> Unit) {
-        val server = servers.current().firstOrNull { it.id == serverId } ?: return
+        val server = servers.current().firstOrNull { it.id == serverId }?.toSyncServer() ?: return
         drainQueueFor(server)
         pullFromServer(server, progressDao.observeAll().first(), openBookId, onOffer)
     }
@@ -102,7 +102,7 @@ class SyncRunner(
         val now = System.currentTimeMillis()
         val byServer = queue.due(now).groupBy { it.serverId }
         for ((serverId, entries) in byServer) {
-            val server = servers.current().firstOrNull { it.id == serverId } ?: continue
+            val server = servers.current().firstOrNull { it.id == serverId }?.toSyncServer() ?: continue
             drainEntries(server, entries, now)
         }
     }
@@ -131,6 +131,16 @@ class SyncRunner(
 
     private fun runnerFor(server: SyncServer): ServerSync =
         if (server.kind == ServerKind.KOMGA) komga else kavita
+
+    /**
+     * Sync covers Komga/Kavita records only; file servers (SMB/FTP) never map and are
+     * skipped by every pass below, never guessed.
+     */
+    private fun RemoteServer.toSyncServer(): SyncServer? = when (this) {
+        is KomgaServer -> SyncServer(id, ServerKind.KOMGA, baseUrl, allowCleartext, username, usesApiKey)
+        is KavitaServer -> SyncServer(id, ServerKind.KAVITA, baseUrl, allowCleartext, username, usesApiKey)
+        else -> null
+    }
 }
 
 private fun ReadingProgress.toSync(): SyncProgress =

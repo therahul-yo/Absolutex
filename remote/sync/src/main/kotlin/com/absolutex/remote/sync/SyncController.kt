@@ -61,7 +61,7 @@ interface ServerSync {
 @Singleton
 class SyncController @Inject constructor(
     progressDao: ProgressDao,
-    servers: SyncServers,
+    servers: RemoteServers,
     secrets: SyncSecrets,
     queue: SyncQueue,
     http: HttpCall,

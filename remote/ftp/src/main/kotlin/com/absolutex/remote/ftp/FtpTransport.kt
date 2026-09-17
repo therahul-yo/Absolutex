@@ -17,4 +17,15 @@ interface FtpTransport {
     /** Exactly [length] bytes from [offset], or throws [IOException] on a short read. */
     @Throws(IOException::class)
     fun readAt(path: String, offset: Long, length: Int): ByteArray
+
+    /**
+     * Entries of the directory at [path]: subfolders plus files. Names are base names for
+     * display and matching; the folder browser filters them against
+     * `LibraryScanner.CONTAINER_EXTENSIONS`. A missing path throws [IOException].
+     */
+    @Throws(IOException::class)
+    fun listDir(path: String): List<FtpEntry>
 }
+
+/** One remote directory entry: a subfolder, or a file with its size in bytes. */
+data class FtpEntry(val name: String, val isDirectory: Boolean, val sizeBytes: Long)

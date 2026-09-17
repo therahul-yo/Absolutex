@@ -10,7 +10,6 @@ import dagger.hilt.components.SingletonComponent
 import java.io.File
 import javax.inject.Singleton
 
-private val Context.syncServersFile by preferencesDataStore(name = "sync_servers")
 private val Context.syncQueueFile by preferencesDataStore(name = "sync_queue")
 
 /**
@@ -24,8 +23,13 @@ object SyncModule {
 
     @Provides
     @Singleton
-    fun syncServers(@ApplicationContext context: Context): SyncServers =
-        SyncServers(context.syncServersFile)
+    fun remoteServers(@ApplicationContext context: Context): RemoteServers =
+        RemoteServers(context)
+
+    @Provides
+    @Singleton
+    fun serverAdmin(servers: RemoteServers, secrets: SyncSecrets): ServerAdmin =
+        ServerAdmin(servers, secrets)
 
     @Provides
     @Singleton
@@ -44,4 +48,12 @@ object SyncModule {
     @Provides
     @Singleton
     fun serverClock(): ServerClock = ServerClock()
+
+    @Provides
+    @Singleton
+    fun komgaProbe(http: HttpCall): KomgaConnectionProbe = KomgaConnectionProbe(http)
+
+    @Provides
+    @Singleton
+    fun kavitaProbe(http: HttpCall): KavitaConnectionProbe = KavitaConnectionProbe(http)
 }

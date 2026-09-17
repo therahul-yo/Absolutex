@@ -18,6 +18,29 @@ private const val MIN_PORT = 1
 private const val MAX_PORT = 65535
 
 /**
+ * Validates a base URL for storage. Null means valid. HTTPS is required unless the user
+ * explicitly allowed cleartext for that host — and the flag travels with the record so a
+ * backup restore cannot silently widen it. (The manifest already carries INTERNET for sync;
+ * per-host cleartext beyond the platform default fails closed at connect time.)
+ */
+fun validateServerUrl(baseUrl: String, allowCleartext: Boolean): String? {
+    if (baseUrl.isBlank()) return "URL is blank"
+    val uri = try {
+        java.net.URI(baseUrl.trim())
+    } catch (e: IllegalArgumentException) {
+        return "URL does not parse (${e.message})"
+    } catch (e: java.net.URISyntaxException) {
+        return "URL does not parse (${e.message})"
+    }
+    if (uri.host.isNullOrBlank()) return "URL has no host"
+    return when (uri.scheme?.lowercase()) {
+        "https" -> null
+        "http" -> if (allowCleartext) null else "plain HTTP needs the per-host cleartext opt-in"
+        else -> "URL must be http(s)"
+    }
+}
+
+/**
  * Which remote backend a persisted server record talks to: an SMB share, an FTP/FTPS drop,
  * or a Komga/Kavita instance for read-progress sync.
  */
@@ -232,6 +255,29 @@ class RemoteServers(private val store: DataStore<Preferences>) {
         }
     }
 
+    /**
+     * One-time import from the pre-unification sync-servers document (the M5 store that held
+     * Komga/Kavita records before this list covered all four kinds). Records keep their ids,
+     * so Keystore secrets (keyed by server id) carry over untouched — no server and no
+     * secret is lost. Idempotent: ids already here are skipped, so a re-run after a crash
+     * resumes instead of duplicating.
+     *
+     * The legacy document clears only on full success. A record that fails today's
+     * validation aborts the import with the legacy intact (nothing is dropped, the re-run
+     * retries it) — loud failure beats silent loss for a user's server list.
+     */
+    suspend fun importLegacySyncServers(legacy: DataStore<Preferences>) {
+        val raw = legacy.data.first()[LEGACY_SERVERS_KEY] ?: return
+        val incoming = parseLegacyServers(raw)
+        val present = current().map { it.id }.toSet()
+        for (server in incoming) {
+            if (server.id !in present) {
+                save(server)
+            }
+        }
+        legacy.edit { prefs -> prefs.remove(LEGACY_SERVERS_KEY) }
+    }
+
     private fun validateOf(server: RemoteServer): String? = when (server) {
         is SmbServer -> validateSmb(server)
         is FtpServer -> validateFtp(server)
@@ -311,7 +357,31 @@ class RemoteServers(private val store: DataStore<Preferences>) {
         }
     }
 
+    /**
+     * Legacy M5 shape: `{id, kind: KOMGA|KAVITA, baseUrl, allowCleartext, username,
+     * usesApiKey}`. Anything else (unknown kinds, torn records) is skipped like any other
+     * corrupt record — and the import aborts nothing over it.
+     */
+    private fun parseLegacyServers(raw: String): List<RemoteServer> {
+        val array = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
+        return List(array.length(), array::getJSONObject).mapNotNull { obj ->
+            val id = optString(obj, "id") ?: return@mapNotNull null
+            val baseUrl = optString(obj, "baseUrl") ?: return@mapNotNull null
+            val allowCleartext = obj.optBoolean("allowCleartext")
+            val username = optString(obj, "username")
+            val usesApiKey = obj.optBoolean("usesApiKey")
+            when (optString(obj, "kind")) {
+                ServerKind.KOMGA.name -> KomgaServer(id, baseUrl, allowCleartext, username, usesApiKey)
+                ServerKind.KAVITA.name -> KavitaServer(id, baseUrl, allowCleartext, username, usesApiKey)
+                else -> null
+            }
+        }
+    }
+
     companion object {
         private val SERVERS_KEY = stringPreferencesKey("servers")
+
+        /** Key inside the legacy `sync_servers` document; frozen since M5, never renamed. */
+        private val LEGACY_SERVERS_KEY = stringPreferencesKey("servers")
     }
 }
