@@ -7,6 +7,8 @@ import com.absolutex.core.data.settings.ReaderPrefs
 import com.absolutex.core.data.settings.RenderingPrefs
 import com.absolutex.core.data.settings.SettingsWriter
 import com.absolutex.core.gpu.ColourParams
+import com.absolutex.core.gpu.SliderEvent
+import com.absolutex.core.gpu.coalesceSlider
 import com.absolutex.model.FitMode
 import com.absolutex.model.FitModeMemory
 import com.absolutex.model.PageLayout
@@ -210,5 +212,36 @@ class SettingsViewModelTest {
         advanceUntilIdle()
         assertEquals(0.4f, fake.rendering.colour.temperature)
         assertEquals(1, fake.renderingWrites.size)
+    }
+
+    // ---------------------------------------------------------------- slider coalescing (§4 live preview)
+
+    @Test
+    fun `a drag commits once at the end, not once per frame`() {
+        // 40 Change events at ~120 fps during a drag, then exactly one Finish on release — the
+        // stream ColourPanel feeds to its store. Coalescing must collapse this to a single
+        // commit carrying the last dragged value.
+        val events = List(40) { SliderEvent.Change(it / 40f) } + SliderEvent.Finish
+        val commits = coalesceSlider(events)
+        assertEquals(1, commits.size)
+        assertEquals(39 / 40f, commits.single(), 1e-6f)
+    }
+
+    @Test
+    fun `a drag that begins and never moves still commits its starting value`() {
+        // No Change before Finish — nothing was pending, so nothing commits. The thumb only
+        // reports an actual change to the store.
+        assertEquals(emptyList<Float>(), coalesceSlider(listOf(SliderEvent.Finish)))
+    }
+
+    @Test
+    fun `a finish commits whatever the last change was, not the first`() {
+        val events = listOf(
+            SliderEvent.Change(0.1f),
+            SliderEvent.Change(0.2f),
+            SliderEvent.Change(0.9f),
+            SliderEvent.Finish,
+        )
+        assertEquals(listOf(0.9f), coalesceSlider(events))
     }
 }

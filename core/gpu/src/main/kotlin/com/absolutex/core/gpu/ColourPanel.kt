@@ -12,6 +12,10 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -27,6 +31,11 @@ import androidx.compose.ui.unit.dp
  * the params in snapshot state, passes that state to the page (see PageCanvas's `colour`), and
  * the page reads it in its draw scope — a drag repaints, nothing recomposes. This panel itself
  * is ordinary chrome and recomposes freely; keep it out of the page subtree.
+ *
+ * Each slider keeps its dragged value in local state so the store sees one write per gesture,
+ * not one per frame — the dragged value drives the live preview; [onChange] commits it on
+ * release, following the [CacheSizeRow] precedent in the settings surface. The coalescing
+ * logic is shared with its test via [coalesceSlider].
  *
  * TODO(lead): host this in the reader chrome (§5.2 tap-center sheet) fed by RenderingPrefs, next
  * to the settings Rendering group which already hosts it. One host, one state object, no copies.
@@ -148,7 +157,43 @@ private fun GammaControls(
     }
 }
 
-/** One labelled slider. Stateless and controlled: every tick calls [onChange] for live preview. */
+/**
+ * Commit-on-finish coalescing, shared by [GradeRow] and its test.
+ *
+ * A drag emits many [Change] events (one per pointer sample) and exactly one [Finish] at the
+ * end. This collapses that stream to the committed value — one write per gesture, not one per
+ * frame — so the DataStore never sees a backlog of identical writes and the thumb never lags
+ * the pointer. See §4 (live preview at 120 fps while dragging) and the #23 review, item 1.
+ */
+internal fun coalesceSlider(events: List<SliderEvent>): List<Float> {
+    val commits = mutableListOf<Float>()
+    var pending = Float.NaN
+    for (e in events) when (e) {
+        is SliderEvent.Change -> pending = e.value
+        is SliderEvent.Finish -> {
+            // Commit the latest dragged value, then clear it so a later bare Finish (no
+            // intervening Change) does not re-commit the same value. One write per gesture.
+            if (!pending.isNaN()) {
+                commits.add(pending)
+                pending = Float.NaN
+            }
+        }
+    }
+    return commits
+}
+
+internal sealed interface SliderEvent {
+    data class Change(val value: Float) : SliderEvent
+    data object Finish : SliderEvent
+}
+
+/**
+ * One labelled slider. Keeps the dragged value in local state for live preview and commits it to
+ * the store only on release — one write per gesture, not one per frame.
+ *
+ * Keyed on [value] so an external change (e.g. restoring a saved value) still overrides an
+ * unmoved thumb.
+ */
 @Composable
 private fun GradeRow(
     @StringRes label: Int,
@@ -157,8 +202,9 @@ private fun GradeRow(
     onChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var pending by remember(value) { mutableFloatStateOf(value) }
     val name = stringResource(label)
-    val valueText = "%.2f".format(value)
+    val valueText = "%.2f".format(pending)
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -173,8 +219,9 @@ private fun GradeRow(
             modifier = Modifier.width(136.dp),
         )
         Slider(
-            value = value,
-            onValueChange = onChange,
+            value = pending,
+            onValueChange = { pending = it },
+            onValueChangeFinished = { onChange(pending) },
             valueRange = range,
             modifier = Modifier.weight(1f),
         )
