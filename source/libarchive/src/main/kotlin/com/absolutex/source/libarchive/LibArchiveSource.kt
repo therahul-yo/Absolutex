@@ -7,6 +7,7 @@ import com.absolutex.source.ComicInfoLoader
 import com.absolutex.source.ComicSource
 import com.absolutex.source.EntryFilter
 import com.absolutex.source.NaturalOrder
+import com.absolutex.source.PageReadability
 import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.io.InputStream
@@ -33,6 +34,7 @@ class LibArchiveSource private constructor(
     /** Archive ordinal of each page, parallel to [pages]. Sorting reorders pages, not ordinals. */
     private val ordinals: IntArray,
     override val comicInfo: ComicInfo?,
+    override val pageReadability: PageReadability?,
 ) : ComicSource {
 
     override fun openPage(index: Int): InputStream {
@@ -52,10 +54,11 @@ class LibArchiveSource private constructor(
         /**
          * @param openFd must return a NEW, independent descriptor on every call.
          * @throws IOException if the container cannot be read at all. A container that reads
-         * partially yields the pages that are readable — §2 requires degrading, never crashing.
+         * partially retains discovered slots and reports readable payloads separately.
          */
         fun open(openFd: () -> ParcelFileDescriptor): LibArchiveSource {
-            val raw = openFd().use { LibArchive.nativeList(it.fd) }
+            val complete = BooleanArray(1)
+            val raw = openFd().use { LibArchive.nativeList(it.fd, complete) }
                 ?: throw IOException("not a readable archive")
             // String(bytes, UTF_8) substitutes U+FFFD for malformed input instead of throwing, so
             // a Shift-JIS name from an old Japanese scan degrades to mojibake, not to a crash.
@@ -72,7 +75,17 @@ class LibArchiveSource private constructor(
             val info = ComicInfoLoader.from(raw.map { String(it, Charsets.UTF_8) }) { ordinal ->
                 openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinal) }?.let { ordinal to it }
             }
-            return LibArchiveSource(openFd, pages, ordinals, info)
+            // Only recovery pays for payload validation. Header discovery alone overcounts the
+            // final cut-off entry; metadata can also reveal a cut exactly between entries.
+            val recovery = !complete[0] || (info?.pageCount ?: 0) > pages.size
+            val readability = if (recovery) {
+                PageReadability.inspect(ordinals.toList(), info?.pageCount) { ordinal ->
+                    openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinal) }?.isNotEmpty() == true
+                }
+            } else {
+                null
+            }
+            return LibArchiveSource(openFd, pages, ordinals, info, readability)
         }
     }
 }

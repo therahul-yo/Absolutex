@@ -107,6 +107,36 @@ class ReaderViewModelTest {
         assertTrue("the superseded book's handle must be closed, not leaked", openedA.closed)
     }
 
+    @Test fun `recovery notice does not change pagination and clears on the next book`() = test {
+        val damaged = object : ComicSource {
+            override val pages = List(14) { Page(it, "page$it.png") }
+            override val pageReadability = com.absolutex.source.PageReadability(13, 20)
+            override fun openPage(index: Int): InputStream = ByteArrayInputStream(ByteArray(0))
+            override fun close() = Unit
+        }
+        val vm = vm(object : BookOpener {
+            override suspend fun open(uri: Uri): Pair<Closeable, String> =
+                (if (uri.lastPathSegment == "damaged") damaged else FakeComicSource("normal")) to uri.toString()
+        })
+        vm.open(uri("damaged"))
+        advanceUntilIdle()
+        assertEquals(14, vm.ui.value.pageCount)
+        assertEquals("13 of 20 pages readable", vm.ui.value.recoveryNotice)
+        vm.open(uri("normal"))
+        assertEquals(null, vm.ui.value.recoveryNotice)
+        advanceUntilIdle()
+        assertEquals(1, vm.ui.value.pageCount)
+        assertEquals(null, vm.ui.value.recoveryNotice)
+    }
+
+    @Test fun `recovery notice never invents a missing total`() = test {
+        val context: android.content.Context = ApplicationProvider.getApplicationContext()
+        assertEquals(
+            "13 pages readable (total unknown)",
+            context.recoveryNotice(com.absolutex.source.PageReadability(13, null)),
+        )
+    }
+
     private companion object {
         const val TOTAL_RAM_BYTES = 4L * 1024 * 1024 * 1024
     }
