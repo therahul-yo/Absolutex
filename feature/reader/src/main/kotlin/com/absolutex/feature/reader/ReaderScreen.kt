@@ -601,10 +601,10 @@ private fun PageSlot(
     } ?: prefs.fitMode
     PageSlotContent(
         img = img, loading = loading, fit = fit, bookId = bookId, index = index,
-        vm = vm, prefs = prefs, rightToLeft = rightToLeft, pagerVertical = pagerVertical,
+        vm = vm, rightToLeft = rightToLeft, pagerVertical = pagerVertical,
         onPagerLockChanged = onPagerLockChanged, onEdgeSwipe = onEdgeSwipe, onTapZone = onTapZone,
         spreadSide = spreadSide, onBaseReady = onBaseReady, zoomSteps = zoomSteps,
-        onCropDecided = onCropDecided, attempts = attempts,
+        onCropDecided = onCropDecided,
         onInvalidate = { vm.invalidatePage(index); attempts++ },
     )
 }
@@ -623,7 +623,6 @@ private fun PageSlotContent(
     bookId: String,
     index: Int,
     vm: ReaderViewModel,
-    prefs: ReaderPrefs,
     rightToLeft: Boolean,
     pagerVertical: Boolean,
     onPagerLockChanged: (Boolean) -> Unit,
@@ -633,7 +632,6 @@ private fun PageSlotContent(
     onBaseReady: () -> Unit,
     zoomSteps: Flow<Float>?,
     onCropDecided: ((CropRect?) -> Unit)?,
-    attempts: Int,
     onInvalidate: () -> Unit,
 ) {
     when {
