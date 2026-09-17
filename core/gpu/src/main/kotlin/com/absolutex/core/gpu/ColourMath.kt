@@ -104,16 +104,21 @@ object ColourMath {
      * already guarantee non-empty rects, and a zero divisor here would NaN the whole page.
      */
     fun contentMatrix(
-        bitmapW: Int,
-        bitmapH: Int,
-        left: Int,
-        top: Int,
-        right: Int,
-        bottom: Int,
+        srcLeft: Int,
+        srcTop: Int,
+        srcRight: Int,
+        srcBottom: Int,
+        dstLeft: Int,
+        dstTop: Int,
+        dstRight: Int,
+        dstBottom: Int,
     ): ContentMatrix {
-        val w = maxOf(1, right - left).toFloat()
-        val h = maxOf(1, bottom - top).toFloat()
-        val sx = w / bitmapW
-        val sy = h / bitmapH
-        return ContentMatrix(sx, sy, left.toFloat(), top.toFloat())
+        val dw = maxOf(1, dstRight - dstLeft).toFloat()
+        val dh = maxOf(1, dstBottom - dstTop).toFloat()
+        val sw = maxOf(1, srcRight - srcLeft).toFloat()
+        val sh = maxOf(1, srcBottom - srcTop).toFloat()
+        // dst = src * scale + translate → scale = dst/src, translate = dst.origin − src.origin * scale
+        val sx = dw / sw
+        val sy = dh / sh
+        return ContentMatrix(sx, sy, dstLeft.toFloat() - srcLeft * sx, dstTop.toFloat() - srcTop * sy)
     }

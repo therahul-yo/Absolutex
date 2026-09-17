@@ -86,14 +86,20 @@ class ColourPipeline {
     fun paintFor(
         params: ColourParams,
         bitmap: Bitmap,
-        left: Int,
-        top: Int,
-        right: Int,
-        bottom: Int,
+        srcLeft: Int,
+        srcTop: Int,
+        srcRight: Int,
+        srcBottom: Int,
+        dstLeft: Int,
+        dstTop: Int,
+        dstRight: Int,
+        dstBottom: Int,
         upscaler: Upscaler,
         atRest: Boolean,
     ): Paint? {
-        val magnifying = isMagnifying(bitmap.width, bitmap.height, left, top, right, bottom)
+        val srcW = srcRight - srcLeft
+        val srcH = srcBottom - srcTop
+        val magnifying = isMagnifying(srcW, srcH, dstLeft, dstTop, dstRight, dstBottom)
         val mode = shadeMode(upscaler, atRest, magnifying)
         if (params.isNeutral && mode == Upscaler.PLATFORM) return null
         val rt = runtime ?: RuntimeShader(ColourShader.SOURCE).also {
@@ -108,18 +114,23 @@ class ColourPipeline {
             lastParams = params
         }
         val content = contentFor(bitmap)
-        val placement = contentMatrix(bitmap.width, bitmap.height, left, top, right, bottom)
+        val placement = contentMatrix(
+            srcLeft, srcTop, srcRight, srcBottom,
+            dstLeft, dstTop, dstRight, dstBottom,
+        )
         val m = matrix ?: Matrix().also { matrix = it }
-        // The local matrix maps bitmap → canvas: scale by dst/bitmap, then translate by the
-        // destination origin. postTranslate applies the shift AFTER the scale, so the origin
-        // lands at (left, top) unscaled.
+        // The local matrix maps the source rect → canvas: scale by dst/src, then translate by the
+        // source-origin-adjusted destination origin. postTranslate applies the shift AFTER the
+        // scale, so the origin lands at (dstLeft - srcLeft * scale, dstTop - srcTop * scale)
+        // unscaled.
         m.setScale(placement.scaleX, placement.scaleY)
         m.postTranslate(placement.transX, placement.transY)
         content.setLocalMatrix(m)
         rt.setInputShader(ColourShader.UNIFORM_CONTENT, content)
         // Upscaler uniform only on mode change (entering/leaving the kernel path), so a static
         // magnified page with a kernel selected doesn't re-upload every draw. The placement
-        // uniforms (scale/trans) ride every draw because the dst-to-bitmap map differs per tile.
+        // uniforms (scale/trans) still ride every draw because the dst-to-bitmap map differs per
+        // tile.
         if (mode != lastMode) {
             rt.setIntUniform(ColourShader.UNIFORM_UPSCALER, mode.code)
             lastMode = mode

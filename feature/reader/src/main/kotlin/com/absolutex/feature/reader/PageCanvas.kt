@@ -713,7 +713,14 @@ private fun drawShaded(
     upscaler: Upscaler,
     atRest: Boolean,
 ) {
-    val paint = pipeline.paintFor(params, bitmap, dst.left, dst.top, dst.right, dst.bottom, upscaler, atRest)
+    // src is the crop region in bitmap pixels; passing it through is what makes the shader
+    // path crop correctly (the plain path below uses it directly).
+    val paint = pipeline.paintFor(
+        params, bitmap,
+        src.left, src.top, src.right, src.bottom,
+        dst.left, dst.top, dst.right, dst.bottom,
+        upscaler, atRest,
+    )
     if (paint != null) {
         native.drawRect(dst.left.toFloat(), dst.top.toFloat(), dst.right.toFloat(), dst.bottom.toFloat(), paint)
     } else {
