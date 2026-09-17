@@ -26,6 +26,7 @@ class KavitaSync(
     /** Full compare-then-push; throws on transport failure (the caller queues). */
     override suspend fun sync(server: SyncServer, local: SyncProgress) {
         val (client, secret, library) = connected(server)
+        var authFailed = false
         try {
             val target = matchKavitaFile(local.bookId, library.allChapterFiles()) ?: return
             val remote = client.getProgress(target.first.chapterId)
@@ -57,9 +58,15 @@ class KavitaSync(
         } catch (e: HttpStatusException) {
             // A dead cached token must not poison the next run: evict it so the next call
             // re-exchanges, then let the runner stop the server like any other auth failure.
-            if (isAuthFailure(e)) apiKeySessions.remove(server.id)
+            if (isAuthFailure(e)) {
+                apiKeySessions.remove(server.id)
+                authFailed = true
+            }
             throw e
         } finally {
+            // Refreshed-in-call sessions write back on every clean exit (all returns above
+            // pass through here), but never over an auth failure that just evicted.
+            if (!authFailed) writeBackApiSession(server, client)
             secret?.fill(Char.MIN_VALUE)
         }
     }
@@ -67,6 +74,7 @@ class KavitaSync(
     /** Adoptable remote position, or null when nothing newer exists. Never throws for that. */
     override suspend fun pull(server: SyncServer, local: SyncProgress): SyncProgress? {
         val (client, secret, library) = connected(server)
+        var authFailed = false
         try {
             val target = matchKavitaFile(local.bookId, library.allChapterFiles())
             val remote = target?.let { client.getProgress(it.first.chapterId)?.atClientTime(server) }
@@ -77,9 +85,13 @@ class KavitaSync(
                 null
             }
         } catch (e: HttpStatusException) {
-            if (isAuthFailure(e)) apiKeySessions.remove(server.id)
+            if (isAuthFailure(e)) {
+                apiKeySessions.remove(server.id)
+                authFailed = true
+            }
             throw e
         } finally {
+            if (!authFailed) writeBackApiSession(server, client)
             secret?.fill(Char.MIN_VALUE)
         }
     }
@@ -145,6 +157,15 @@ class KavitaSync(
         val password = secrets.loadPassword(server.id) ?: throw IOException("no password for ${server.id}")
         client.login(username, password)
         return Connected(client, password, KavitaLibrary(client))
+    }
+
+    private fun writeBackApiSession(server: SyncServer, client: KavitaClient) {
+        if (!server.usesApiKey) return
+        val token = client.token
+        val refreshToken = client.refreshToken
+        if (token != null && refreshToken != null) {
+            apiKeySessions[server.id] = ApiSession(token, refreshToken)
+        }
     }
 
     private suspend fun libraryIdFor(library: KavitaLibrary, seriesId: Int): Int {

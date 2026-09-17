@@ -473,4 +473,16 @@ class SyncWiringTest {
         assertEquals(1, fake.refreshCalls)
         assertEquals(1, fake.saves.size)
     }
+
+    @Test fun `kavita refreshed session is reused without refreshing again`() = runTest {
+        val (controller, fake, _) = kavitaController(apiKey = true) { expireSeriesOnce = true }
+        dao.upsert(local(updatedAt = 1_800_000_000_000L))
+        controller.onBookClosed("Batman 001.cbz:2000")
+        fake.expireSeriesOnce = false
+        controller.onBookClosed("Batman 001.cbz:2000")
+        // One exchange ever, one refresh ever: the written-back session serves the next run.
+        assertEquals(1, fake.exchanges)
+        assertEquals(1, fake.refreshCalls)
+        assertEquals(2, fake.saves.size)
+    }
 }
