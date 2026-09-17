@@ -20,6 +20,4 @@ data class RenderingPrefs(
      * choices refine the page at rest only, never mid-gesture.
      */
     val upscaler: Upscaler = Upscaler.PLATFORM,
-    /** Smart border crop (milestone 4): trims uniform page margins before drawing. Global default on. */
-    val cropEnabled: Boolean = true,
 )

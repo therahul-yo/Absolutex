@@ -133,5 +133,5 @@ private const val HALF_TEXEL = 0.5f
  * kernel upscaler has work the platform sampler would blur. Strictly above base resolution —
  * a 1:1 draw stays on the hardware path whatever is selected.
  */
-fun isMagnifying(srcW: Int, srcH: Int, dstLeft: Int, dstTop: Int, dstRight: Int, dstBottom: Int): Boolean =
-    dstRight - dstLeft > srcW || dstBottom - dstTop > srcH
+fun isMagnifying(bitmapW: Int, bitmapH: Int, left: Int, top: Int, right: Int, bottom: Int): Boolean =
+    right - left > bitmapW || bottom - top > bitmapH

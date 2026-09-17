@@ -65,6 +65,4 @@
     <string name="settings_upscaler_platform">Platform</string>
     <string name="settings_upscaler_mitchell">Mitchell</string>
     <string name="settings_upscaler_lanczos">Lanczos</string>
-    <string name="settings_crop_borders">Crop borders</string>
-    <string name="settings_crop_borders_desc">Crop borders. Trim uniform page margins before drawing.</string>
 </resources>

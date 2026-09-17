@@ -133,19 +133,4 @@ class InMemorySettingsTest {
         assertEquals(Upscaler.LANCZOS, reopened.renderingPrefs.first().upscaler)
         assertEquals(RenderingPrefs().colour, reopened.renderingPrefs.first().colour)
     }
-
-    @Test
-    fun `a crop toggle persists and leaves colour and upscaler alone`() = runTest {
-        val bag = MapPrefBag()
-        val settings = InMemorySettings(bag)
-        settings.updateRendering { it.copy(cropEnabled = false) }
-        assertEquals(false, settings.renderingPrefs.first().cropEnabled)
-        assertEquals(RenderingPrefs().colour, settings.renderingPrefs.first().colour)
-        assertEquals(RenderingPrefs().upscaler, settings.renderingPrefs.first().upscaler)
-        // A fresh instance over the same bag is what a process restart looks like.
-        val reopened = InMemorySettings(bag)
-        assertEquals(false, reopened.renderingPrefs.first().cropEnabled)
-        assertEquals(RenderingPrefs().colour, reopened.renderingPrefs.first().colour)
-        assertEquals(RenderingPrefs().upscaler, reopened.renderingPrefs.first().upscaler)
-    }
 }
