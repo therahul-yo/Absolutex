@@ -6,6 +6,7 @@ import com.absolutex.core.scan.DocumentTree
 import com.absolutex.core.scan.LibraryScanner
 import com.absolutex.core.scan.TreeEntry
 import com.absolutex.model.BookIdentity
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -24,6 +26,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Scanner and database together: what the library screens will actually sit on. */
 @RunWith(RobolectricTestRunner::class)
@@ -191,16 +194,21 @@ class LibraryRepositoryTest {
     /** One book per directory under root, each `children()` call paced by [delayMs] real millis:
      * slow enough that a real cancellation lands mid-walk, the same way `LibraryScannerTest`
      * paces its own cancellation test. */
-    private fun slowSafTree(total: Int, delayMs: Long = 1): DocumentTree = DocumentTree { parent ->
-        when {
-            parent == "content://root" ->
-                (0 until total).map { i -> TreeEntry("content://root/dir$i", "Dir $i", isDirectory = true) }
-            parent.startsWith("content://root/dir") -> {
-                Thread.sleep(delayMs)
-                val i = parent.removePrefix("content://root/dir")
-                listOf(TreeEntry("content://root/dir$i/book.cbz", "Batman $i.cbz", isDirectory = false, sizeBytes = 10))
+    private fun slowSafTree(total: Int, delayMs: Long = 1, onListed: (Int) -> Unit = {}): DocumentTree {
+        val listed = AtomicInteger()
+        return DocumentTree { parent ->
+            when {
+                parent == "content://root" ->
+                    (0 until total).map { i -> TreeEntry("content://root/dir$i", "Dir $i", isDirectory = true) }
+                parent.startsWith("content://root/dir") -> {
+                    Thread.sleep(delayMs)
+                    onListed(listed.incrementAndGet())
+                    val i = parent.removePrefix("content://root/dir")
+                    val uri = "content://root/dir$i/book.cbz"
+                    listOf(TreeEntry(uri, "Batman $i.cbz", isDirectory = false, sizeBytes = 10))
+                }
+                else -> emptyList()
             }
-            else -> emptyList()
         }
     }
 
@@ -219,8 +227,13 @@ class LibraryRepositoryTest {
     @Test fun `a cancelled scanTree keeps whatever it already wrote`() = runBlocking {
         val root = TreeEntry(uri = "content://root", name = "root", isDirectory = true)
         val total = 3_000
-        val job = launch(Dispatchers.IO) { repo().scanTree(root, slowSafTree(total)) }
-        delay(300) // real time: enough for several 100-book batches at ~1 ms per directory
+        // Cancel once the walk is provably past the first write, not after a fixed wall-clock
+        // delay a slow CI runner may not reach. SafScanner.scan is an unbuffered flow collected in
+        // scanTree's own coroutine, so listing directory 150 means the 100-book batch was written.
+        val pastFirstBatch = CompletableDeferred<Unit>()
+        val tree = slowSafTree(total) { listed -> if (listed >= 150) pastFirstBatch.complete(Unit) }
+        val job = launch(Dispatchers.IO) { repo().scanTree(root, tree) }
+        withTimeout(30_000) { pastFirstBatch.await() }
         job.cancelAndJoin()
 
         val stored = db.libraryDao().observeAll().first()
