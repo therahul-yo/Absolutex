@@ -44,7 +44,7 @@ class SafScannerTest {
         // nothing that matches the name the reader computes from OpenableColumns.DISPLAY_NAME.
         val uri = "content://com.android.externalstorage.documents/tree/primary%3AComics/document/" +
             "primary%3AComics%2FBatman%20001.cbz"
-        val books = SafScanner.scan(dir("root"), tree("root" to listOf(file(uri, "Batman 001.cbz", 100))))
+        val books = scanAll(dir("root"), tree("root" to listOf(file(uri, "Batman 001.cbz", 100))))
         val book = books.single()
         assertEquals(uri, book.path)
         assertEquals("Batman 001.cbz", book.displayName)
@@ -53,7 +53,7 @@ class SafScannerTest {
     @Test fun `an image-folder book's displayName is the folder's name, not its Uri`() {
         val uri = "content://com.android.externalstorage.documents/tree/primary%3AComics/document/" +
             "primary%3AComics%2FChapter%201"
-        val books = SafScanner.scan(
+        val books = scanAll(
             dir("root"),
             tree(
                 "root" to listOf(dir(uri, "Chapter 1")),
