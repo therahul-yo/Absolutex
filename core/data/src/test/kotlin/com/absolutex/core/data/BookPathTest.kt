@@ -5,9 +5,11 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 /**
- * PR #30 finding 1: a SAF document Uri's id is percent-encoded as one path segment, so
- * `File(uri).parent` collapses every document under a tree to the same "folder". [BookPath] must
- * decode the id and split IT, not the raw Uri, to recover the real parent and name.
+ * The one decoder for a book's [LibraryBook.path]: a plain filesystem path via [java.io.File], or
+ * a SAF document Uri whose document id is decoded and split by hand. [BookPath] must decode the
+ * id and split IT, not the raw Uri, to recover the real parent and name (finding 1 that shipped
+ * with §5.2's auto-advance) — and must also drop the id's own `<root>:` prefix, or a document at
+ * a tree's root comes back named "primary:Batman 001.cbz" instead of "Batman 001.cbz".
  */
 class BookPathTest {
 
@@ -61,5 +63,21 @@ class BookPathTest {
     @Test fun `a malformed content uri falls back instead of throwing`() {
         val malformed = "content://authority/tree/x/document/bad%"
         assertEquals("bad%", BookPath.nameOf(malformed))
+    }
+
+    // Moved from SAFFilenameDecoderTest (#33 review): a document id with no "/" at all still
+    // carries its `<root>:` prefix, which must not leak into the name.
+
+    @Test fun `a document id with no slash still drops its root prefix`() {
+        val encoded = "content://downloads/document/primary%3ABatman%20001.cbz"
+        assertEquals("Batman 001.cbz", BookPath.nameOf(encoded))
+    }
+
+    @Test fun `an already-decoded document id still drops its root prefix`() {
+        assertEquals("001.cbz", BookPath.nameOf("content://downloads/document/primary:001.cbz"))
+    }
+
+    @Test fun `a non-content path with no document segment falls back to the file name`() {
+        assertEquals("unknown", BookPath.nameOf("unknown"))
     }
 }

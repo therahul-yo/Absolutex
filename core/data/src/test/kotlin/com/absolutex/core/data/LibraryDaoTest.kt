@@ -88,10 +88,20 @@ class LibraryDaoTest {
 
     @Test fun `search matches series, title and path`() = runTest {
         dao.upsertAll(listOf(book("/a/Batman 001.cbz"), book("/a/Superman 001.cbz", series = "Superman")))
-        assertEquals(1, dao.search("Batman").size)
-        assertEquals(1, dao.search("Superman").size)
-        assertEquals(2, dao.search("001").size)
-        assertEquals(0, dao.search("Wonder").size)
+        assertEquals(1, dao.search("Batman", "Batman").size)
+        assertEquals(1, dao.search("Superman", "Superman").size)
+        assertEquals(2, dao.search("001", "001").size)
+        assertEquals(0, dao.search("Wonder", "Wonder").size)
+    }
+
+    @Test fun `search also matches the encoded form against path, for a SAF document Uri`() = runTest {
+        // A SAF book's path is a percent-encoded document Uri; the raw, unencoded query never
+        // appears in it literally, only the encoded form does.
+        val safPath = "content://com.android.externalstorage.documents/tree/primary%3AComics/" +
+            "document/primary%3AComics%2FAbsolute%20Batman%20001%20(2024).cbr"
+        dao.upsertAll(listOf(book(safPath, series = null)))
+        assertEquals(0, dao.search("Absolute Batman 001", "Absolute Batman 001").size)
+        assertEquals(1, dao.search("Absolute Batman 001", "Absolute%20Batman%20001").size)
     }
 
     @Test fun `a stale scan deletes only books under the scanned location`() = runTest {
