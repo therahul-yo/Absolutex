@@ -84,6 +84,16 @@ class ColourShaderTest {
         assertTrue(src.contains("content.eval(tap*mapScale+mapTrans).rgb"))
         assertTrue(src.contains("returnacc/wsum;"))
     }
+
+    @Test
+    fun `Lanczos taps are clamped to the crop rect`() {
+        // Both kernels must clamp taps to the crop rect — without this, edge taps
+        // read pixels beyond the crop. The bug was Mitchell fixed, Lanczos not.
+        val src = ColourShader.SOURCE.replace(" ", "").replace("\n", "")
+        val clampExpr = "clamp(base+vec2(float(i),float(j))+0.5,cropRect.xy,cropRect.zw)"
+        assertTrue("Mitchell taps must clamp to cropRect", src.contains(clampExpr))
+        assertTrue("Lanczos taps must clamp to cropRect", src.contains(clampExpr))
+    }
 }
 
 class ColourPipelineGateTest {
@@ -143,7 +153,7 @@ class ContentMatrixTest {
     fun `identity placement is the identity matrix`() {
         assertEquals(
             ContentMatrix(1f, 1f, 0f, 0f),
-            contentMatrix(100, 200, 0, 0, 100, 200),
+            contentMatrix(0, 0, 100, 200, 0, 0, 100, 200),
         )
     }
 
@@ -152,7 +162,7 @@ class ContentMatrixTest {
         // Bitmap (0,0) maps to canvas (10,20): the translation is the destination origin.
         assertEquals(
             ContentMatrix(1f, 1f, 10f, 20f),
-            contentMatrix(100, 200, 10, 20, 110, 220),
+            contentMatrix(0, 0, 100, 200, 10, 20, 110, 220),
         )
     }
 
@@ -162,7 +172,7 @@ class ContentMatrixTest {
         // so the local matrix scales by 2 (canvas = 2 * bitmap).
         assertEquals(
             ContentMatrix(2f, 2f, 0f, 0f),
-            contentMatrix(100, 100, 0, 0, 200, 200),
+            contentMatrix(0, 0, 100, 100, 0, 0, 200, 200),
         )
     }
 
@@ -174,14 +184,48 @@ class ContentMatrixTest {
         // Bitmap 0 → canvas 10, bitmap 100 → canvas 60. Correct.
         assertEquals(
             ContentMatrix(0.5f, 0.5f, 10f, 0f),
-            contentMatrix(100, 100, 10, 0, 60, 50),
+            contentMatrix(0, 0, 100, 100, 10, 0, 60, 50),
         )
     }
 
     @Test
     fun `degenerate rects coerce instead of dividing by zero`() {
-        val m = contentMatrix(100, 100, 5, 5, 5, 5)
+        val m = contentMatrix(0, 0, 100, 100, 5, 5, 5, 5)
         assertTrue(m.scaleX.isFinite() && m.scaleY.isFinite())
         assertTrue(m.transX.isFinite() && m.transY.isFinite())
+    }
+
+    @Test
+    fun `a cropped src rect maps to the dst rect with adjusted translate`() {
+        // A 100×200 bitmap cropped to its right half (src rect 50,0-100,200) drawn
+        // into a 100×200 canvas rect: scale = dstW/srcW = 100/50 = 2.0. The translate
+        // must account for the src origin (50,0): dstLeft(0) - srcLeft(50) * 2 = -100.
+        val m = contentMatrix(50, 0, 100, 200, 0, 0, 100, 200)
+        assertEquals(2f, m.scaleX, 1e-5f)
+        assertEquals(1f, m.scaleY, 1e-5f)
+        assertEquals(-100f, m.transX, 1e-5f)
+        assertEquals(0f, m.transY, 1e-5f)
+    }
+}
+
+class IsMagnifyingTest {
+
+    @Test
+    fun `a cropped page that fills the viewport is magnifying at base resolution`() {
+        // A 100×200 bitmap cropped to 50×200, drawn into a 50×200 rect: dst == src,
+        // so not magnifying (srcW/dstW == 1.0). The full bitmap would have said
+        // magnifying=true at the same dst — this is why the crop must be part of the test.
+        assertFalse(isMagnifying(50, 200, 0, 0, 50, 200))
+    }
+
+    @Test
+    fun `dst larger than cropped src is magnifying`() {
+        assertFalse(isMagnifying(50, 200, 0, 0, 50, 200)) // base
+        assertTrue(isMagnifying(50, 200, 0, 0, 100, 200)) // 2x magnify on the crop
+    }
+
+    @Test
+    fun `a one-to-one draw of the full bitmap is not magnifying`() {
+        assertFalse(isMagnifying(100, 200, 0, 0, 100, 200))
     }
 }
