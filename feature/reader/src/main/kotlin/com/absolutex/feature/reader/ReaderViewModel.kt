@@ -14,6 +14,8 @@ import com.absolutex.core.data.ReadingProgress
 import com.absolutex.core.data.TotalRamBytes
 import com.absolutex.core.data.settings.ReaderPrefs
 import com.absolutex.core.data.settings.ReaderPrefsSource
+import com.absolutex.core.data.settings.AppPrefs
+import com.absolutex.core.data.settings.AppPrefsSource
 import com.absolutex.core.data.settings.RenderingPrefs
 import com.absolutex.core.data.settings.RenderingPrefsSource
 import com.absolutex.core.decode.DecodeDispatchers
@@ -74,11 +76,14 @@ class ReaderViewModel internal constructor(
     @TotalRamBytes private val totalRamBytes: Long,
     prefs: ReaderPrefsSource,
     rendering: RenderingPrefsSource,
+    appPrefs: AppPrefsSource,
     private val bookOpener: BookOpener,
 ) : ViewModel() {
 
+    private val appPrefsSource = appPrefs
+
     /**
-     * The constructor Hilt uses; only the five Hilt-known params above are real dependencies.
+     * The constructor Hilt uses; only the six Hilt-known params above are real dependencies.
      * Needs its own internal constructor rather than a Kotlin default argument for [bookOpener]
      * because Dagger cannot see Kotlin defaults on an `@Inject` constructor (see
      * LibraryRepository for the same pattern and the same reason). Tests use the internal
@@ -90,7 +95,8 @@ class ReaderViewModel internal constructor(
         @TotalRamBytes totalRamBytes: Long,
         prefs: ReaderPrefsSource,
         rendering: RenderingPrefsSource,
-    ) : this(context, progressDao, totalRamBytes, prefs, rendering, ContextBookOpener(context))
+        appPrefs: AppPrefsSource,
+    ) : this(context, progressDao, totalRamBytes, prefs, rendering, appPrefs, ContextBookOpener(context))
 
     /**
      * Reading flow and fit mode, live. Eager so the value is usually in hand before the first page:
@@ -201,6 +207,13 @@ class ReaderViewModel internal constructor(
         bases.clear()
         _ui.value = ReaderUiState(loading = true)
         openJob = viewModelScope.launch {
+            // Apply the user's cache-size setting before the book opens. currentAppPrefs() is a
+            // suspend DataStore read on the IO dispatcher — never the main thread, never a frame
+            // budget line. Clamped to LruCache's Int range by tileCache.resize().
+            val cacheBytes = appPrefsSource.currentAppPrefs().cacheSizeMiB.toLong() * 1024 * 1024
+            val clamped = cacheBytes.coerceIn(MemoryBudget.FLOOR_BYTES, MemoryBudget.CEILING_BYTES)
+            tileCache.resize(clamped)
+
             val opened = try {
                 // NonCancellable: bookOpener.open() (openBook()/identityOf() in production — see
                 // ContextBookOpener) is a blocking call with no suspension point of its own, so

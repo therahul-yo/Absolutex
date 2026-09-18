@@ -679,6 +679,13 @@ private fun PageSlotContent(
     onBackgroundColour: (Color) -> Unit,
     onInvalidate: () -> Unit,
 ) {
+    // Draw-observed colour state for §4. Hoisted so the draw lambda reads `.value` each frame
+    // and a slider drag repaints at 120 Hz without recomposing PageCanvas.
+    val renderingPrefs by vm.renderingPrefs.collectAsStateWithLifecycle()
+    val colourState = remember { mutableStateOf(renderingPrefs.colour) }
+    LaunchedEffect(Unit) {
+        vm.renderingPrefs.collect { colourState.value = it.colour }
+    }
     when {
         img != null -> PageCanvas(
             page = img,
@@ -697,6 +704,8 @@ private fun PageSlotContent(
             zoomSteps = zoomSteps,
             onCropDecided = onCropDecided,
             onBackgroundColour = onBackgroundColour,
+            colour = colourState,
+            upscaler = renderingPrefs.upscaler,
         )
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()

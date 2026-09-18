@@ -54,6 +54,7 @@ class ReaderViewModelTest {
             totalRamBytes = TOTAL_RAM_BYTES,
             prefs = settings,
             rendering = settings,
+            appPrefs = settings,
             bookOpener = opener,
         )
     }
