@@ -7,6 +7,7 @@ import android.content.pm.ActivityInfo
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.Flow
 import com.absolutex.core.data.settings.ReaderPrefs
+import com.absolutex.core.gpu.CropRect
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.isShiftPressed
@@ -312,6 +313,10 @@ private fun Strip(
                         spreadSide = SpreadSide.NONE, onBaseReady = { if (index == startPage) firstPageDrawn = true },
                         decodeNow = true, zoomSteps = null,
                         onLoaded = { aspects[index] = it.width.toFloat() / it.height },
+                        onCropDecided = { crop ->
+                            val a = crop?.let { it.width.toFloat() / it.height }
+                            if (a != null) aspects[index] = a
+                        },
                     )
                 }
             }
@@ -575,6 +580,8 @@ private fun PageSlot(
     zoomSteps: Flow<Float>?,
     /** The page's header is read: its dimensions are known. Only valid (non-empty) pages. */
     onLoaded: (PageImage) -> Unit = {},
+    /** Fires once when the page's border crop is decided (or null if uncropped / crop disabled). */
+    onCropDecided: ((CropRect?) -> Unit)? = null,
 ) {
     var image by remember(index) { mutableStateOf<PageImage?>(null) }
     var attempts by remember(index) { mutableIntStateOf(0) }
@@ -588,15 +595,46 @@ private fun PageSlot(
         Trace.endAsyncSection("absx.pageImage p=$index", index)
         loading = false
     }
-
-    // A decode with no dimensions is unreadable, never rendered.
     val img = image?.takeIf { it.width > 0 && it.height > 0 }
-    // The fit follows the shape of what is actually on screen, which is only known once the page's
-    // header is read: a spread and a single page are different situations with different answers.
     val screen = LocalConfiguration.current
     val fit = fitMode ?: img?.let {
         prefs.fitFor(FitContext.of(screen.screenWidthDp, screen.screenHeightDp, it.width, it.height))
     } ?: prefs.fitMode
+    PageSlotContent(
+        img = img, loading = loading, fit = fit, bookId = bookId, index = index,
+        vm = vm, rightToLeft = rightToLeft, pagerVertical = pagerVertical,
+        onPagerLockChanged = onPagerLockChanged, onEdgeSwipe = onEdgeSwipe, onTapZone = onTapZone,
+        spreadSide = spreadSide, onBaseReady = onBaseReady, zoomSteps = zoomSteps,
+        onCropDecided = onCropDecided,
+        onInvalidate = { vm.invalidatePage(index); attempts++ },
+    )
+}
+
+/**
+ * The three-way content switch for one reader page — decoded surface, loading spinner, or
+ * unreadable-page state with retry. Extracted from [PageSlot] so that function stays within
+ * detekt's 60-line LongMethod limit (the PageCanvas call alone was ~15 of those lines). No
+ * behavioural change.
+ */
+@Composable
+private fun PageSlotContent(
+    img: PageImage?,
+    loading: Boolean,
+    fit: FitMode,
+    bookId: String,
+    index: Int,
+    vm: ReaderViewModel,
+    rightToLeft: Boolean,
+    pagerVertical: Boolean,
+    onPagerLockChanged: (Boolean) -> Unit,
+    onEdgeSwipe: (Boolean) -> Unit,
+    onTapZone: (TapZone) -> Unit,
+    spreadSide: SpreadSide,
+    onBaseReady: () -> Unit,
+    zoomSteps: Flow<Float>?,
+    onCropDecided: ((CropRect?) -> Unit)?,
+    onInvalidate: () -> Unit,
+) {
     when {
         img != null -> PageCanvas(
             page = img,
@@ -613,6 +651,7 @@ private fun PageSlot(
             onBaseReady = onBaseReady,
             baseLayer = { w, h -> vm.baseLayer(index, img, w, h) },
             zoomSteps = zoomSteps,
+            onCropDecided = onCropDecided,
         )
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
@@ -633,10 +672,7 @@ private fun PageSlot(
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(stringResource(R.string.reader_page_unreadable), color = Color.White)
-                Button(onClick = {
-                    vm.invalidatePage(index)
-                    attempts++
-                }) {
+                Button(onClick = onInvalidate) {
                     Text(stringResource(R.string.reader_retry))
                 }
             }
