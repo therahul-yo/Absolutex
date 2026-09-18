@@ -50,7 +50,7 @@ internal class RoomLibraryFeed @Inject constructor(
             // row instead would be quadratic on a large library.
             val byIdentity = progress.associateBy { it.bookId }
             // Deduplicated before mapping, so the expensive part runs once per book that is shown.
-            books.deduplicatedByIdentity().map { it.toUi(byIdentity) }
+            books.deduplicatedByIdentity().map { it.toUi(byIdentity, prefs.useOriginalFilename) }
             // Mapping thousands of rows is real work and Room emits on its own executor; Default
             // keeps it off both the main thread and Room's.
         }.flowOn(Dispatchers.Default)
@@ -60,7 +60,7 @@ internal class RoomLibraryFeed @Inject constructor(
         val prefs = appPrefsSource.currentAppPrefs()
         return repository.search(query)
             .deduplicatedByIdentity()
-            .map { it.toUi(progress) }
+            .map { it.toUi(progress, prefs.useOriginalFilename) }
     }
 
     override suspend fun setFavorite(paths: Set<String>, favorite: Boolean): LibraryNotice =
@@ -105,11 +105,12 @@ internal class RoomLibraryFeed @Inject constructor(
 
     private fun LibraryBook.toUi(
         progress: Map<String, ReadingProgress>,
+        useOriginalFilename: Boolean,
     ): LibraryBookUi {
         val position = progress[contentKey]
         return LibraryBookUi(
             path = path,
-            displayName = displayNameOf(this),
+            displayName = displayNameOf(this, useOriginalFilename),
             // BookIdentity.nameOf, not File(path).name: path is a content:// Uri for a
             // SAF-scanned book, and its last segment is a percent-encoded document id.
             originalFilename = BookIdentity.nameOf(contentKey, sizeBytes),
@@ -135,7 +136,12 @@ internal class RoomLibraryFeed @Inject constructor(
          * §5.1's "use original filename" switch short-circuits the rebuild: the raw filename is
          * the label for both display and search, which is what the switch's "escape hatch" means.
          */
-        fun displayNameOf(book: LibraryBook): String = ParsedName(
+        fun displayNameOf(book: LibraryBook, useOriginalFilename: Boolean): String {
+            // The escape hatch: show the file's own name instead of the parsed label. Sourced
+            // from BookIdentity.nameOf for the same reason as below — a SAF book's path is a
+            // content:// Uri, so File(path).name would yield a document id, not a filename.
+            if (useOriginalFilename) return BookIdentity.nameOf(book.contentKey, book.sizeBytes)
+            return ParsedName(
             series = book.series,
             issue = book.issue?.let { value -> IssueNumber(value, book.issueRaw ?: value.toString()) },
             volume = book.volume,
@@ -146,6 +152,7 @@ internal class RoomLibraryFeed @Inject constructor(
             // this is the string ParsedName.displayName falls back to when nothing else parsed.
             originalFilename = BookIdentity.nameOf(book.contentKey, book.sizeBytes),
         ).displayName
+        }
     }
 }
 

@@ -80,7 +80,8 @@ class LibArchiveSource private constructor(
          * TODO(lead): catch ArchivePasswordException at the reader open boundary, prompt/retry
          * for required/rejected passwords, and show unsupported encryption without retrying.
          */
-        fun open(passphrase: CharArray?, openFd: () -> ParcelFileDescriptor): LibArchiveSource = traced("absx.archiveOpen") {
+        fun open(passphrase: CharArray?, openFd: () -> ParcelFileDescriptor): LibArchiveSource =
+            traced("absx.archiveOpen") {
             val owned = ArchivePassphrase(passphrase)
             var transferred = false
             return try {
@@ -115,7 +116,9 @@ class LibArchiveSource private constructor(
         ): LibArchiveSource {
             val complete = BooleanArray(1)
             val encrypted = BooleanArray(1)
-            val raw = traced("absx.entryList") { openFd().use { LibArchive.nativeList(it.fd, complete, encrypted, password) } }
+            val raw = traced("absx.entryList") {
+                openFd().use { LibArchive.nativeList(it.fd, complete, encrypted, password) }
+            }
                 ?: throw IOException("not a readable archive")
             // String(bytes, UTF_8) substitutes U+FFFD for malformed input instead of throwing, so
             // a Shift-JIS name from an old Japanese scan degrades to mojibake, not to a crash.
