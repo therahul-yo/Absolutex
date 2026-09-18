@@ -88,6 +88,23 @@ class RemoteBookOpenerTest {
         }
     }
 
+    @Test fun `encoder round-trips app-minted ids and rejects the rest up front`() {
+        // Production ids are UUIDs ([0-9a-f-]); anything outside the unreserved set must
+        // fail here, not build a Uri that parses wrong ("nas#1" would split authority
+        // from fragment and die later with a misleading error).
+        val uuid = java.util.UUID.randomUUID().toString()
+        val location = parseRemoteUri(encodeRemoteUri(uuid, "/comics/book.cbz"))
+        assertEquals(RemoteLocation(uuid, "/comics/book.cbz", "book.cbz"), location)
+        for (id in listOf("Home NAS", "nas#1", "a?b", "50%", "[v6]")) {
+            try {
+                encodeRemoteUri(id, "/b.cbz")
+                fail("expected IllegalArgumentException for $id")
+            } catch (expected: IllegalArgumentException) {
+                assertTrue(expected.message?.contains(id) == true)
+            }
+        }
+    }
+
     @Test fun `dispatcher hands the file to the backend transport`() = runTest {
         val bytes = ZipBytes.cbz("page01.jpg" to ZipBytes.pageBytes(1))
         var seenServer = ""

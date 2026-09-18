@@ -91,11 +91,13 @@ fun parseRemoteUri(uri: String): RemoteLocation {
  * literal `+` becomes `%2B`, `%` becomes `%25`, non-ASCII becomes UTF-8 escapes.
  * A file genuinely named `Batman + Robin.cbz` must arrive encoded — a raw `+`
  * decodes to a space by form rules, which is right for the parser and wrong for
- * a filename. Encode-decode round-trips exactly; see the encoder tests.
+ * a filename. Encode-decode round-trips exactly; see the encoder tests. Server ids
+ * are app-minted UUIDs: anything outside the RFC 3986 unreserved set is rejected,
+ * never encoded — "Home NAS" must fail here, not build a Uri the parser rejects.
  */
 fun encodeRemoteUri(serverId: String, path: String): String {
-    require(serverId.isNotBlank() && '/' !in serverId) {
-        "remote uri needs a plain server id"
+    require(serverId.matches(Regex("[A-Za-z0-9._~-]+"))) {
+        "remote uri needs a plain server id: $serverId"
     }
     require(path.startsWith("/")) { "remote path must be absolute: $path" }
     val encoded = path.split('/').joinToString("/") { encodeSegment(it) }
