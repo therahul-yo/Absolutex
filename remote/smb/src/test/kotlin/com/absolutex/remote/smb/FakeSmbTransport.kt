@@ -13,6 +13,9 @@ class FakeSmbTransport(private val files: Map<String, ByteArray>) : SmbTransport
 
     val bytesServed: Long get() = ranges.sumOf { it.length.toLong() }
 
+    var closes = 0
+        private set
+
     override fun sizeBytes(remotePath: String): Long =
         files[remotePath]?.size?.toLong() ?: throw IOException("no such file: $remotePath")
 
@@ -24,6 +27,6 @@ class FakeSmbTransport(private val files: Map<String, ByteArray>) : SmbTransport
     }
 
     override fun close() {
-        // Nothing held: in-memory fixture.
+        closes++
     }
 }

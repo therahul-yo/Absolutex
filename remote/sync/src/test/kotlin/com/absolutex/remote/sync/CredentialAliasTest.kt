@@ -41,7 +41,7 @@ class CredentialAliasTest {
         assertEquals("pass-one", secrets.loadPassword("s1")?.concatToString())
         assertEquals("key-two", secrets.loadApiKey("s2")?.concatToString())
         assertEquals(null, secrets.loadPassword("s2"))
-        secrets.clear("s1")
+        secrets.clearServer("s1")
         assertEquals(null, secrets.loadApiKey("s1"))
         assertEquals("key-two", secrets.loadApiKey("s2")?.concatToString())
     }

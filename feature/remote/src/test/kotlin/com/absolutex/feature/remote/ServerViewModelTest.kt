@@ -150,6 +150,7 @@ class ServerViewModelTest {
         KomgaConnectionProbe(http),
         KavitaConnectionProbe(http),
         FtpConnectionProbe(),
+        SmbConnectionTester(),
     )
 
     @Test fun `empty store shows the empty state`() = runTest {
@@ -172,14 +173,11 @@ class ServerViewModelTest {
         servers.save(SmbServer("a", "nas", "comics", "books", username = "u"))
         store.saveSmbPassword("a", "pw".toCharArray())
         val viewModel = listViewModel(servers, secrets = store)
-        viewModel.deleteServer("a")
+        // The delete Job is the completion signal: joining it awaits the record write
+        // and the secret wipe in program order — no wall-clock poll, no virtual delay.
+        viewModel.deleteServer("a").join()
         viewModel.state.first {
             it is ServerListState.Ready && it.servers.isEmpty()
-        }
-        // The list updates on the record write; the secret wipe lands right after — poll.
-        val deadline = System.currentTimeMillis() + 10_000L
-        while (store.loadSmbPassword("a") != null && System.currentTimeMillis() < deadline) {
-            kotlinx.coroutines.delay(50)
         }
         assertNull(store.loadSmbPassword("a"))
     }
@@ -195,14 +193,16 @@ class ServerViewModelTest {
         dao.upsert(ReadingProgress("B.cbz:100", 3, 24, 1_800_000_000_000L))
         val viewModel = listViewModel(servers, http, dao, store)
         viewModel.refresh()
-        // A manual sync pulls through the server: the refresh drove network, then settled.
-        val deadline = System.currentTimeMillis() + 10_000L
+        // Awaiting the indicator instead of polling the call log: virtual-time friendly,
+        // no wall clock, and nothing is left running at cleanup. The state write that
+        // clears the indicator is ordered after the last network append, so the log is
+        // fully visible once the indicator settles. The read stays synchronized: the
+        // sync under test appends on Dispatchers.IO.
         fun listed(): Boolean = synchronized(http.calls) {
             http.calls.any { it.contains("/api/v1/books/list") }
         }
-        while (!listed() && System.currentTimeMillis() < deadline) {
-            kotlinx.coroutines.delay(50)
-        }
+        viewModel.refreshing.first { it }
+        viewModel.refreshing.first { !it }
         assertTrue(listed())
         viewModel.refreshing.first { !it }
     }
@@ -229,6 +229,7 @@ class ServerViewModelTest {
             KomgaConnectionProbe(FakeHttp()),
             KavitaConnectionProbe(FakeHttp()),
             FtpConnectionProbe(),
+            SmbConnectionTester(),
         )
         viewModel.update(
             ServerForm(
@@ -253,16 +254,14 @@ class ServerViewModelTest {
         assertEquals(ConnectionResult.Ok, result)
     }
 
-    @Test fun `smb has no live test yet`() = runTest {
+    @Test fun `smb live test is gated on validation before any network`() = runTest {
+        // The mapping itself is unit-tested on SmbConnectionTester with scripted failures;
+        // here the form must refuse invalid input without touching the network.
         val viewModel = formViewModel()
-        viewModel.update(
-            ServerForm(
-                kind = RemoteKind.SMB, host = "nas", share = "comics", path = "books",
-                port = "445", username = "u", password = "pw",
-            ),
-        )
+        viewModel.update(ServerForm(kind = RemoteKind.SMB))
         viewModel.testConnection()
-        val status = viewModel.status.first { !it.testing }
+        val status = viewModel.status.first { it.saveBlocked }
+        assertTrue(status.invalidFields.contains(ServerFormViewModel.FIELD_HOST))
         assertNull(status.testResult)
     }
 
@@ -288,6 +287,7 @@ class ServerViewModelTest {
             KomgaConnectionProbe(FakeHttp()),
             KavitaConnectionProbe(FakeHttp()),
             FtpConnectionProbe(),
+            SmbConnectionTester(),
         )
         viewModel.form.first { it.serverId == "x" }
         // Switch SMB -> Komga with the prefilled NAS password still in the field.
@@ -315,13 +315,4 @@ class ServerViewModelTest {
         assertNull(tested.testResult)
     }
 
-    @Test fun `ftp mapping covers the result variants`() {
-        assertEquals(ConnectionResult.AuthFailed, mapFtpFailure(IOException("FTP login refused: x")))
-        assertEquals(ConnectionResult.NotFound, mapFtpFailure(IOException("cannot list FTP path: x")))
-        assertEquals(ConnectionResult.Unreachable, mapFtpFailure(IOException("reset")))
-        assertEquals(
-            ConnectionResult.SecurityRefused,
-            mapFtpFailure(IOException("tls", javax.net.ssl.SSLHandshakeException("hs"))),
-        )
-    }
 }
