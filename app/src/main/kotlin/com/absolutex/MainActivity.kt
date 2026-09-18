@@ -16,7 +16,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.setValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -25,8 +24,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.ui.AbsolutexTheme
 import com.absolutex.feature.library.LibraryRoute
-import com.absolutex.feature.reader.ReaderScreen
-import com.absolutex.feature.settings.SETTINGS_ROUTE
 import com.absolutex.feature.settings.settingsDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -113,7 +110,7 @@ private fun bookUri(path: String): Uri =
  * [inFlight] coalesces two rapid forward attempts on the last page into one lookup and one
  * navigate, rather than firing a second of each before the first has come back.
  */
-private fun advanceFromReader(
+internal fun advanceFromReader(
     scope: CoroutineScope,
     vm: ShellViewModel,
     nav: NavHostController,
@@ -205,21 +202,7 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
             // The activity's ReaderViewModel, not the destination's own: MainActivity.onCreate
             // starts opening a launch Uri before anything composes, and a per-destination
             // ViewModel would throw that head start away and open the book a second time.
-            if (uri != null) {
-                // Scoped to THIS destination, not Root's: a coroutine started here is cancelled the
-                // moment the reader is left, instead of resolving later and navigating a screen the
-                // user already backed out of.
-                val readerScope = rememberCoroutineScope()
-                val advanceInFlight = remember { AtomicBoolean(false) }
-                ReaderScreen(
-                    uri = uri,
-                    vm = readerVm,
-                    onSettings = { nav.navigate(SETTINGS_ROUTE) },
-                    onFinished = {
-                        advanceFromReader(readerScope, vm, nav, readerVm.ui.value.bookId, advanceInFlight)
-                    },
-                )
-            }
+            if (uri != null) ReaderDestination(uri, readerVm, vm, nav)
         }
         settingsDestination()
     }
