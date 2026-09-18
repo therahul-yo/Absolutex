@@ -120,10 +120,9 @@ class RemoteThumbnailPipelineTest {
     }
 
     @Test fun `empty remote archive fails the load like an empty local source`() = runTest {
-        // A valid ZIP whose only entry is junk: indexing succeeds with zero pages, so page 0
-        // does not exist. The pipeline asks for openPage, not openCover, so this degrades
-        // exactly like a local source with no such page — IndexOutOfBounds, never cached.
-        // (IOException-for-empty lives one layer down, in the cover-bytes helpers.)
+        // A valid ZIP whose only entry is junk: indexing succeeds with zero pages, so the
+        // pipeline's empty-book guard throws IOException — the same verdict an empty local
+        // source gets, and nothing is cached either way.
         val bytes = cbz("Thumbs.db" to ByteArray(8))
         val uri = encodeRemoteUri("nas", "/comics/empty.cbz")
         val request = ThumbRequest(uri, 0, ThumbRequest.BUCKET_SMALL)
@@ -131,7 +130,7 @@ class RemoteThumbnailPipelineTest {
         val source = remoteSource(bytes)
         repeat(2) {
             val failure = runCatching { thumbs.load(source, request) }.exceptionOrNull()
-            assertTrue("expected IndexOutOfBounds, got $failure", failure is IndexOutOfBoundsException)
+            assertTrue("expected IOException, got $failure", failure is IOException)
         }
         assertEquals(0, diskEntries())
     }
