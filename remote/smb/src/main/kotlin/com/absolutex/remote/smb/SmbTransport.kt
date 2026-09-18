@@ -43,3 +43,15 @@ interface RemoteFileHandle : AutoCloseable {
     @Throws(IOException::class)
     fun read(buffer: ByteArray, fileOffset: Long, bufferOffset: Int, length: Int): Int
 }
+
+/**
+ * Binds this path-based transport to one file for the shared streaming stack: the same
+ * [SeekableReader] serves SMB and FTP once each path has an adapter.
+ */
+fun SmbTransport.bind(remotePath: String): com.absolutex.remote.core.RangeTransport =
+    object : com.absolutex.remote.core.RangeTransport {
+        override fun sizeBytes(): Long = this@bind.sizeBytes(remotePath)
+
+        override fun readAt(offset: Long, length: Int): ByteArray =
+            this@bind.readAt(remotePath, offset, length)
+    }

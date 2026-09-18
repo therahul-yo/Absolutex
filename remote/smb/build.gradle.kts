@@ -15,6 +15,7 @@ android {
 dependencies {
     implementation(project(":core:model"))
     implementation(project(":source:api"))
+    implementation(project(":remote:core"))
     // SMB2/SMB3 client, Apache-2.0 (Central POM, 0.15.0). Transitives are permissive
     // (slf4j MIT, BouncyCastle, mbassador MIT, asn-one Apache-2.0) — no GPL/AGPL in the tree.
     implementation(libs.smbj)
