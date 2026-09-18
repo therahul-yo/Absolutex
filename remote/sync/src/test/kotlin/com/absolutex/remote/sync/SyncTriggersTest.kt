@@ -96,12 +96,11 @@ class SyncTriggersTest {
     ): Pair<SyncController, FakeProgressDao> {
         jobs = mutableListOf()
         val dao = FakeProgressDao()
-        val stores = SyncServers(dataStore("servers.preferences_pb"))
+        val stores = RemoteServers(dataStore("servers.preferences_pb"))
         for (id in serverIds) {
             stores.save(
-                SyncServer(
+                KomgaServer(
                     id = id,
-                    kind = ServerKind.KOMGA,
                     baseUrl = "http://$id:8080",
                     allowCleartext = true,
                     username = "u",

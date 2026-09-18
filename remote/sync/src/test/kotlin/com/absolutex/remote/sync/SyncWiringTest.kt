@@ -103,9 +103,9 @@ class SyncWiringTest {
         val fake = FakeKomga().apply(configure)
         server.dispatcher = fake
         val base = server.url("/").toString().trimEnd('/')
-        val stores = SyncServers(dataStore("servers.preferences_pb"))
+        val stores = RemoteServers(dataStore("servers.preferences_pb"))
         stores.save(
-            SyncServer(id = "srv", kind = ServerKind.KOMGA, baseUrl = base, allowCleartext = true, usesApiKey = true),
+            KomgaServer(id = "srv", baseUrl = base, allowCleartext = true, usesApiKey = true),
         )
         val secrets = SyncSecrets(InMemoryCredentialStore())
         secrets.saveApiKey("srv", "key".toCharArray())
@@ -308,11 +308,10 @@ class SyncWiringTest {
         val fake = FakeKavita().apply(configure)
         server.dispatcher = fake
         val base = server.url("/").toString().trimEnd('/')
-        val stores = SyncServers(dataStore("servers.preferences_pb"))
+        val stores = RemoteServers(dataStore("servers.preferences_pb"))
         stores.save(
-            SyncServer(
+            KavitaServer(
                 id = "srv",
-                kind = ServerKind.KAVITA,
                 baseUrl = base,
                 allowCleartext = true,
                 username = if (apiKey) null else "alice",
