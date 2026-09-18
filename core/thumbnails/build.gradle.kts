@@ -24,4 +24,8 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation(libs.kotlinx.coroutines.test)
+    // Remote-backed pipeline loads: CoreComicSource already IS a ComicSource, so the pipeline
+    // takes it with zero production changes — this edge exists so tests can prove it.
+    // Test-only, off the release classpath.
+    testImplementation(project(":remote:core"))
 }
