@@ -24,15 +24,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.ui.AbsolutexTheme
 import com.absolutex.feature.library.LibraryRoute
-import com.absolutex.feature.reader.ReaderScreen
-import com.absolutex.feature.settings.SETTINGS_ROUTE
 import com.absolutex.feature.settings.settingsDestination
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import java.io.File
 import com.absolutex.feature.reader.ReaderViewModel
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
+import java.util.concurrent.atomic.AtomicBoolean
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -62,7 +65,12 @@ class MainActivity : ComponentActivity() {
         // Start opening a launch Uri now rather than when the reader first composes. Composition
         // waits behind the splash (theme settings) and a first layout; on the reference phone that
         // was ~54 ms of the tap-to-first-page budget spent before the archive was even touched.
-        if (direct != null) readerViewModel.open(direct)
+        if (direct != null) {
+            readerViewModel.open(direct)
+            // Every route that opens a book remembers it for §5.2 resume, not only the
+            // single-document picker: a book opened by a file manager should resume too.
+            shell.rememberBook(direct.toString())
+        }
         setContent {
             val app = shell.appPrefs.collectAsStateWithLifecycle().value ?: return@setContent
             val dark = when (app.nightMode) {
@@ -93,6 +101,35 @@ private fun bookUri(path: String): Uri =
     if (path.startsWith("content://")) Uri.parse(path) else Uri.fromFile(File(path))
 
 /**
+ * §5.2 auto-advance: looks up the next book off the main thread and, if there is one, replaces
+ * this reader entry with it, so back from the next book returns to the library rather than to
+ * the one just finished. Does nothing when there is none — auto-advance off, or nothing next.
+ *
+ * [scope] must belong to the reader destination itself, not an app-wide scope: leaving the reader
+ * before the lookup resolves must cancel it, not navigate a screen the user already left behind.
+ * [inFlight] coalesces two rapid forward attempts on the last page into one lookup and one
+ * navigate, rather than firing a second of each before the first has come back.
+ */
+internal fun advanceFromReader(
+    scope: CoroutineScope,
+    vm: ShellViewModel,
+    nav: NavHostController,
+    bookId: String,
+    inFlight: AtomicBoolean,
+) {
+    if (!inFlight.compareAndSet(false, true)) return
+    scope.launch {
+        try {
+            vm.nextBook(bookId)?.let { next ->
+                nav.navigate(readerRoute(bookUri(next.path))) { popUpTo(READER_ROUTE) { inclusive = true } }
+            }
+        } finally {
+            inFlight.set(false)
+        }
+    }
+}
+
+/**
  * The app shell: the library is home, the reader and settings are destinations (§5.1, §5.4).
  *
  * A launch Uri makes the reader the start destination rather than a screen pushed on top of the
@@ -105,7 +142,6 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
     val nav = rememberNavController()
     val context = androidx.compose.ui.platform.LocalContext.current
     val readerVm: ReaderViewModel = hiltViewModel(context as ComponentActivity)
-    val readerError = readerVm.ui.collectAsStateWithLifecycle().value.error
     // The book to resume (§5.2), once the store has been read. Navigation happens in the effect
     // below, never here: a NavController cannot navigate until its graph is set, which is what
     // composing the NavHost does — resuming from this effect crashed on every launch with a saved
@@ -151,7 +187,13 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
             LibraryRoute(
                 // A library row holds whatever the scan found it by: a document Uri from a SAF
                 // location, or a device path from a filesystem one. The reader opens either.
-                onOpenBook = { path -> nav.navigate(readerRoute(bookUri(path))) },
+                onOpenBook = { path ->
+                    // Every route that opens a book remembers it for §5.2 resume (see also the
+                    // single-document picker below and the launch Uri in onCreate) — the library
+                    // is the app's main, everyday route and used to be the one route that didn't.
+                    vm.rememberBook(bookUri(path).toString())
+                    nav.navigate(readerRoute(bookUri(path)))
+                },
                 onAddLocation = { folderPicker.launch(null) },
             )
         }
@@ -160,25 +202,30 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
             // The activity's ReaderViewModel, not the destination's own: MainActivity.onCreate
             // starts opening a launch Uri before anything composes, and a per-destination
             // ViewModel would throw that head start away and open the book a second time.
-            if (uri != null) {
-                ReaderScreen(uri = uri, vm = readerVm, onSettings = { nav.navigate(SETTINGS_ROUTE) })
-            }
+            if (uri != null) ReaderDestination(uri, readerVm, vm, nav)
         }
         settingsDestination()
     }
     // After the NavHost: effects run in composition order, so the graph is set by the time this
     // one does. Resuming lands on top of the library, so back returns to it.
-    LaunchedEffect(resume) { resume?.let { nav.navigate(readerRoute(it)) } }
-
-    // A resumed book that will not open is not worth a screen: the reader's error belongs to a
-    // book the reader chose to open, not to one the app reopened by itself. Forget it and go home,
-    // so the next launch starts at the library instead of at the same dead end.
-    LaunchedEffect(readerError, resume) {
-        val resumed = resume ?: return@LaunchedEffect
-        if (readerError != null) {
-            vm.clearLastBook(resumed.toString())
-            resume = null
+    //
+    // The whole resume-and-watch sequence lives in this one coroutine, not split across effects
+    // keyed on the shared reader ui.error: that state reflects whichever book is open right now,
+    // and a second, unrelated book opened later (e.g. from the library) also flips error through
+    // null and back. A separate effect watching (readerError, resume) would fire for that later
+    // failure too, since resume was never cleared after ITS OWN book resumed successfully — and
+    // then blame the wrong book's grant and bookmark for a book that in fact opened fine. Waiting
+    // for this resume's own loading cycle to finish, right here, is what scopes the failure check
+    // to the book resume actually opened.
+    LaunchedEffect(resume) {
+        val target = resume ?: return@LaunchedEffect
+        nav.navigate(readerRoute(target))
+        readerVm.ui.first { it.loading }
+        val settled = readerVm.ui.first { !it.loading }
+        if (settled.error != null) {
+            vm.clearLastBook(target.toString())
             nav.popBackStack(LIBRARY_ROUTE, inclusive = false)
         }
+        resume = null
     }
 }

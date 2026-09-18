@@ -4,6 +4,7 @@ import com.absolutex.core.data.LibraryBook
 import com.absolutex.core.data.LibraryRepository
 import com.absolutex.core.data.ProgressDao
 import com.absolutex.core.data.ReadingProgress
+import com.absolutex.model.BookIdentity
 import com.absolutex.model.IssueNumber
 import com.absolutex.model.ParsedName
 import dagger.Binds
@@ -16,7 +17,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
-import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -102,7 +102,9 @@ internal class RoomLibraryFeed @Inject constructor(
         return LibraryBookUi(
             path = path,
             displayName = displayNameOf(this),
-            originalFilename = File(path).name,
+            // BookIdentity.nameOf, not File(path).name: path is a content:// Uri for a
+            // SAF-scanned book, and its last segment is a percent-encoded document id.
+            originalFilename = BookIdentity.nameOf(contentKey, sizeBytes),
             series = series,
             sizeBytes = sizeBytes,
             lastModified = lastModified,
@@ -131,7 +133,10 @@ internal class RoomLibraryFeed @Inject constructor(
             volume = book.volume,
             year = book.year,
             title = book.title,
-            originalFilename = File(book.path).name,
+            // BookIdentity.nameOf, not File(book.path).name: path is a content:// Uri for a
+            // SAF-scanned book, so its last path segment is a document id, not a filename — and
+            // this is the string ParsedName.displayName falls back to when nothing else parsed.
+            originalFilename = BookIdentity.nameOf(book.contentKey, book.sizeBytes),
         ).displayName
     }
 }

@@ -1,5 +1,6 @@
 package com.absolutex.core.data.settings
 
+import com.absolutex.core.gpu.Upscaler
 import com.absolutex.model.FitMode
 import com.absolutex.model.ReadingFlow
 import kotlinx.coroutines.flow.first
@@ -94,5 +95,42 @@ class InMemorySettingsTest {
         settings.updateApp { it.copy(trueBlack = true) }
         assertEquals("NightMode.SYSTEM", "SYSTEM", bag.snapshot()[PrefCodec.KEY_NIGHT_MODE])
         assertEquals(NightMode.SYSTEM, InMemorySettings(bag).appPrefs.first().nightMode)
+    }
+
+    @Test
+    fun `rendering starts neutral and an update is visible to collectors`() = runTest {
+        val settings = InMemorySettings()
+        assertEquals(RenderingPrefs(), settings.renderingPrefs.first())
+        settings.updateRendering { it.copy(colour = it.colour.copy(brightness = 0.2f)) }
+        assertEquals(0.2f, settings.renderingPrefs.first().colour.brightness)
+    }
+
+    @Test
+    fun `a rendering update is persisted to the backing store`() = runTest {
+        val bag = MapPrefBag()
+        InMemorySettings(bag).updateRendering { it.copy(colour = it.colour.copy(temperature = 0.4f)) }
+        // A fresh instance over the same bag is what a process restart looks like.
+        assertEquals(0.4f, InMemorySettings(bag).renderingPrefs.first().colour.temperature)
+    }
+
+    @Test
+    fun `updating rendering leaves app and reader prefs alone`() = runTest {
+        val settings = InMemorySettings()
+        settings.updateRendering { it.copy(colour = it.colour.copy(vibrance = 0.7f)) }
+        assertEquals(AppPrefs(), settings.appPrefs.first())
+        assertEquals(ReaderPrefs(), settings.readerPrefs.first())
+    }
+
+    @Test
+    fun `an upscaler update persists and leaves colour alone`() = runTest {
+        val bag = MapPrefBag()
+        val settings = InMemorySettings(bag)
+        settings.updateRendering { it.copy(upscaler = Upscaler.LANCZOS) }
+        assertEquals(Upscaler.LANCZOS, settings.renderingPrefs.first().upscaler)
+        assertEquals(RenderingPrefs().colour, settings.renderingPrefs.first().colour)
+        // A fresh instance over the same bag is what a process restart looks like.
+        val reopened = InMemorySettings(bag)
+        assertEquals(Upscaler.LANCZOS, reopened.renderingPrefs.first().upscaler)
+        assertEquals(RenderingPrefs().colour, reopened.renderingPrefs.first().colour)
     }
 }

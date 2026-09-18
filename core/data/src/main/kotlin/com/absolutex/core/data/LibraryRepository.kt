@@ -81,15 +81,35 @@ class LibraryRepository internal constructor(
      *
      * Rows carry the document Uri as their path, which is what the reader opens and what the
      * stale sweep scopes by: every document Uri under a tree starts with that tree's own Uri.
+     *
+     * Batched and cancellation-cooperative exactly like [scanLocation]: [SafScanner.scan] is a
+     * Flow now rather than a fully materialised list, so a book lands in the database as it is
+     * found, and a scan killed mid-walk (backgrounded and reclaimed, or the user leaving the
+     * screen) keeps whatever it already wrote instead of losing the walk to that point. Should
+     * collecting throw — cancellation included — the lines below never run, so a cancelled walk
+     * cannot delete books it simply never reached.
      */
     suspend fun scanTree(root: TreeEntry, tree: DocumentTree, includeHidden: Boolean = false): ScanResult {
         val scanId = now()
-        val books = withContext(Dispatchers.IO) { SafScanner.scan(root, tree, includeHidden) }
-        books.chunked(BATCH).forEach { chunk -> dao.upsertPreservingAddedAt(chunk.map { it.toEntity(scanId) }) }
+        var found = 0
+        val batch = ArrayList<LibraryBook>(BATCH)
+
+        withContext(Dispatchers.IO) {
+            SafScanner.scan(root, tree, includeHidden).collect { book ->
+                batch += book.toEntity(scanId)
+                found++
+                if (batch.size >= BATCH) {
+                    dao.upsertPreservingAddedAt(batch)
+                    batch.clear()
+                }
+            }
+        }
+        if (batch.isNotEmpty()) dao.upsertPreservingAddedAt(batch)
+
         // Only after the walk completes, as in scanLocation: a cancelled walk must not delete the
         // books it simply never reached.
         val removed = dao.deleteStaleIn(root.uri, scanId)
-        return ScanResult(found = books.size, removed = removed)
+        return ScanResult(found = found, removed = removed)
     }
 
     /**
@@ -136,9 +156,14 @@ class LibraryRepository internal constructor(
 
     private fun ScannedBook.toEntity(scanId: Long) = LibraryBook(
         path = path,
-        // Identity for cross-location deduplication (§5.1): the same file seen twice through
-        // two configured roots. Name and size, because hashing contents is unaffordable.
-        contentKey = BookIdentity.of(File(path).name, sizeBytes),
+        // Identity for cross-location deduplication (§5.1) and for joining reading progress,
+        // which the reader keys the same way (see Context.identityOf): name and size, because
+        // hashing contents is unaffordable. displayName, not File(path).name — path is a
+        // content:// document Uri for a SAF-scanned book, and its last segment is a
+        // percent-encoded document id, not the filename. No migration needed: contentKey already
+        // exists, and a location rescans whenever the library opens, so every row gets the
+        // corrected key on its next scan.
+        contentKey = BookIdentity.of(displayName, sizeBytes),
         series = parsed.series,
         title = parsed.title,
         issue = parsed.issue?.value,

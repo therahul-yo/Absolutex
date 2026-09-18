@@ -55,6 +55,7 @@ dependencies {
     // Sync wiring (milestone 5): installs SyncModule into the app graph. Inert until the
     // trigger call sites fire — no work starts from the dependency alone.
     implementation(project(":remote:sync"))
+    implementation(project(":feature:widget")) // manifest merge for the widget receiver
 
     implementation(platform(libs.compose.bom))
     implementation(libs.androidx.core.ktx)
