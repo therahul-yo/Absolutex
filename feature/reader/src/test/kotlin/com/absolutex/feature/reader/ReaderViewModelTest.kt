@@ -46,13 +46,17 @@ class ReaderViewModelTest {
 
     private fun test(body: suspend TestScope.() -> Unit) = runTest(main.dispatcher) { body() }
 
-    private fun vm(opener: BookOpener, progress: ProgressDao = FakeProgressDao()) = ReaderViewModel(
-        context = ApplicationProvider.getApplicationContext(),
-        progressDao = progress,
-        totalRamBytes = TOTAL_RAM_BYTES,
-        prefs = InMemorySettings(),
-        bookOpener = opener,
-    )
+    private fun vm(opener: BookOpener, progress: ProgressDao = FakeProgressDao()): ReaderViewModel {
+        val settings = InMemorySettings()
+        return ReaderViewModel(
+            context = ApplicationProvider.getApplicationContext(),
+            progressDao = progress,
+            totalRamBytes = TOTAL_RAM_BYTES,
+            prefs = settings,
+            rendering = settings,
+            bookOpener = opener,
+        )
+    }
 
     private fun uri(name: String): Uri = Uri.parse("content://books/$name")
 

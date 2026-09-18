@@ -20,4 +20,10 @@ data class RenderingPrefs(
      * choices refine the page at rest only, never mid-gesture.
      */
     val upscaler: Upscaler = Upscaler.PLATFORM,
+    /**
+     * Auto background colour (milestone 5): the letterbox tints to the page's own edge colour
+     * instead of staying flat black. Default on — PageCanvas always samples it at effectively no
+     * cost (it rides the M4 crop thumbnail), so off is the one settings edit, not the default.
+     */
+    val autoBackground: Boolean = true,
 )
