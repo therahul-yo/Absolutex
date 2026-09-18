@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -50,9 +51,7 @@ class ServerListViewModel @Inject constructor(
     /** Pull-to-refresh indicator; true only while a sync pass runs. */
     val refreshing: StateFlow<Boolean> = _refreshing
 
-    fun deleteServer(id: String) {
-        viewModelScope.launch { admin.removeServer(id) }
-    }
+    fun deleteServer(id: String): Job = viewModelScope.launch { admin.removeServer(id) }
 
     /** Re-reads the store after a load failure. */
     fun retry() {

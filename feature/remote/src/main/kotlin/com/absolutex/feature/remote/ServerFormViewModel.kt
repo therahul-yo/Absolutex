@@ -4,6 +4,8 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.absolutex.remote.ftp.FtpLocation
+import com.absolutex.remote.smb.SmbLocation
+import com.absolutex.remote.smb.SmbjConnector
 import com.absolutex.remote.sync.ConnectionResult
 import com.absolutex.remote.sync.FtpServer
 import com.absolutex.remote.sync.KavitaConnectionProbe
@@ -69,6 +71,7 @@ class ServerFormViewModel @Inject constructor(
     private val komgaProbe: KomgaConnectionProbe,
     private val kavitaProbe: KavitaConnectionProbe,
     private val ftpProbe: FtpConnectionProbe,
+    private val smbProbe: SmbConnectionTester,
 ) : ViewModel() {
 
     private val _form = MutableStateFlow(ServerForm())
@@ -218,11 +221,11 @@ class ServerFormViewModel @Inject constructor(
     private suspend fun probe(form: ServerForm, secret: CharArray): ConnectionResult? =
         withContext(Dispatchers.IO) {
             when (form.kind) {
-                RemoteKind.KOMGA -> {
+                RemoteKind.KOMGA -> withSecretCopy(secret) { copy ->
                     val auth = if (form.useApiKey) {
-                        KomgaAuth.ApiKey(secret.copyOf())
+                        KomgaAuth.ApiKey(copy)
                     } else {
-                        KomgaAuth.Basic(form.username, secret.copyOf())
+                        KomgaAuth.Basic(form.username, copy)
                     }
                     try {
                         komgaProbe.test(form.baseUrl, auth)
@@ -231,28 +234,39 @@ class ServerFormViewModel @Inject constructor(
                         (auth as? KomgaAuth.Basic)?.password?.fill(Char.MIN_VALUE)
                     }
                 }
-                RemoteKind.KAVITA -> {
+                RemoteKind.KAVITA -> withSecretCopy(secret) { copy ->
                     if (form.useApiKey) {
-                        kavitaProbe.test(form.baseUrl, KavitaConnectionProbe.Credentials.ApiKey(secret.copyOf()))
+                        kavitaProbe.test(form.baseUrl, KavitaConnectionProbe.Credentials.ApiKey(copy))
                     } else {
                         kavitaProbe.test(
                             form.baseUrl,
-                            KavitaConnectionProbe.Credentials.Login(form.username, secret.copyOf()),
+                            KavitaConnectionProbe.Credentials.Login(form.username, copy),
                         )
                     }
                 }
-                RemoteKind.FTP -> ftpProbe.test(
-                    FtpLocation(
+                RemoteKind.FTP -> withSecretCopy(secret) { copy ->
+                    ftpProbe.test(
+                        FtpLocation(
+                            host = form.host.trim(),
+                            port = form.port.toInt(),
+                            username = form.username.trim(),
+                            path = form.path.trim(),
+                            useTls = form.useTls,
+                        ),
+                        copy,
+                    )
+                }
+                RemoteKind.SMB -> withSecretCopy(secret) { copy ->
+                    val location = SmbLocation(
                         host = form.host.trim(),
+                        share = form.share.trim(),
+                        path = form.path.trim(),
                         port = form.port.toInt(),
                         username = form.username.trim(),
-                        path = form.path.trim(),
-                        useTls = form.useTls,
-                    ),
-                    secret.copyOf(),
-                )
-                // No :remote:smb on this stack yet (#9 unmerged): the screen says so explicitly.
-                RemoteKind.SMB -> null
+                        allowUnsigned = form.allowUnsigned,
+                    )
+                    smbProbe.test(copy) { SmbjConnector(location).connect(it) }
+                }
             }
         }
 
@@ -366,3 +380,20 @@ private fun hasParentEscape(path: String): Boolean =
 
 private const val MIN_PORT = 1
 private const val MAX_PORT = 65535
+
+/**
+ * Runs [block] with a copy of [secret] that is zeroed in a finally. Every probe branch
+ * funnels through here: the probes make (and clear) their own copies, but the copy handed
+ * to them is ours to bound — a live plaintext password with no bounded lifetime is exactly
+ * what a heap dump carries away. The next transport routes through this one place and
+ * cannot forget. File-private, outside the ViewModel, so it never counts toward the
+ * class's function budget.
+ */
+private inline fun <T> withSecretCopy(secret: CharArray, block: (CharArray) -> T): T {
+    val copy = secret.copyOf()
+    try {
+        return block(copy)
+    } finally {
+        copy.fill(Char.MIN_VALUE)
+    }
+}

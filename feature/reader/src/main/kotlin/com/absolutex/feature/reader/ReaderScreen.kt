@@ -21,6 +21,7 @@ import android.app.Activity
 import android.graphics.Bitmap
 import android.os.Trace
 import android.net.Uri
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
@@ -111,6 +112,7 @@ fun ReaderScreen(
 ) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val global by vm.readerPrefs.collectAsStateWithLifecycle()
+    val rendering by vm.renderingPrefs.collectAsStateWithLifecycle()
     // A book's own choices win over the global ones (§5.2), and only for this book.
     val options: ReaderOptionsViewModel = hiltViewModel()
     val book by remember(ui.bookId) { options.bookPrefs(ui.bookId) }.collectAsStateWithLifecycle(null)
@@ -121,14 +123,24 @@ fun ReaderScreen(
     // rememberSaveable also survives a config change this activity does not declare (font scale,
     // locale, keyboard) — MainActivity would otherwise have to declare every such change instead.
     val chromeState = rememberSaveable { mutableStateOf(false) }
+    // Auto background (§4, §5.2, milestone 5): hoisted like chromeState above — Pages and Strip
+    // are different call sites, and state owned by either one would be torn down the moment the
+    // other is composed instead. One colour per settled page (PageCanvas reports one per page it
+    // loads); backgroundPage names which of those is live right now. TODO(lead) from #26 done here.
+    val pageBackgrounds = remember { mutableStateMapOf<Int, Color>() }
+    val backgroundPage = remember { mutableStateOf(0) }
+    val targetBackground = readerBackgroundFor(rendering.autoBackground, pageBackgrounds, backgroundPage.value)
+    val animatedBackground by animateColorAsState(targetBackground, label = "readerBackground")
 
     LaunchedEffect(uri) { vm.open(uri) }
 
     Box(
         modifier
             .fillMaxSize()
-            // The reading surface is not a Material surface, it is the page (§7).
-            .background(Color.Black),
+            // The reading surface is not a Material surface, it is the page (§7). Auto background
+            // crossfades this to the settled page's own edge colour; off (or before a first
+            // report) it is exactly today's flat black.
+            .background(animatedBackground),
         contentAlignment = Alignment.Center,
     ) {
         when {
@@ -148,12 +160,31 @@ fun ReaderScreen(
                 color = Color.White,
             )
             prefs.pageLayout == PageLayout.CONTINUOUS_VERTICAL ->
-                Strip(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, onFinished, chromeState)
+                Strip(
+                    ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, onFinished,
+                    chromeState, pageBackgrounds, backgroundPage,
+                )
             else ->
-                Pages(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, onFinished, chromeState)
+                Pages(
+                    ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, onFinished,
+                    chromeState, pageBackgrounds, backgroundPage,
+                )
         }
     }
 }
+
+/**
+ * The letterbox's target colour right now (§4, §5.2, milestone 5): the settled page's own
+ * sampled colour when auto background is on and that page has reported one; opaque black
+ * otherwise — off, or before any page has settled — which is exactly today's flat background.
+ * Pure and total, so the one-colour-per-settled-page rule is unit-tested on the JVM, with no
+ * page geometry, animation or instrumentation harness involved.
+ */
+internal fun readerBackgroundFor(
+    autoBackground: Boolean,
+    pageBackgrounds: Map<Int, Color>,
+    settledPage: Int,
+): Color = if (autoBackground) pageBackgrounds[settledPage] ?: Color.Black else Color.Black
 
 internal const val CHROME_ALPHA = 0.9f
 
@@ -180,6 +211,10 @@ private fun Pages(
     onSettings: (() -> Unit)?,
     onFinished: (() -> Unit)?,
     chromeState: MutableState<Boolean>,
+    /** One sampled background colour per page loaded so far (§4, §5.2, milestone 5). */
+    pageBackgrounds: MutableMap<Int, Color>,
+    /** Which page's colour the letterbox is crossfading toward. */
+    backgroundPage: MutableState<Int>,
 ) {
     val flow = prefs.readingFlow
     // The pager counts screens; everything else (progress, seeking, keys) speaks book pages.
@@ -218,7 +253,7 @@ private fun Pages(
     // it is coarser.
     val currentSpreads by rememberUpdatedState(spreads)
     LaunchedEffect(pagerState) {
-        snapshotFlow { pagerState.settledPage }.collect { vm.onPageChanged(currentSpreads[it].first) }
+        snapshotFlow { pagerState.settledPage }.collect { vm.settlePage(currentSpreads[it].first, backgroundPage) }
     }
 
     // §3's "tap book -> first page rendered" ends here, not at the first frame: the window is up
@@ -244,6 +279,7 @@ private fun Pages(
                 onPagerLockChanged = { locks[index] = it },
                 onEdgeSwipe = turn, onTapZone = tap, spreadSide = side,
                 zoomSteps = if (current) zoomSteps else null,
+                onBackgroundColour = { pageBackgrounds[index] = it },
             )
         }
     }
@@ -280,6 +316,10 @@ private fun Strip(
     onSettings: (() -> Unit)?,
     onFinished: (() -> Unit)?,
     chromeState: MutableState<Boolean>,
+    /** One sampled background colour per page loaded so far (§4, §5.2, milestone 5). */
+    pageBackgrounds: MutableMap<Int, Color>,
+    /** Which page's colour the letterbox is crossfading toward. */
+    backgroundPage: MutableState<Int>,
 ) {
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = startPage)
     val scope = rememberCoroutineScope()
@@ -293,7 +333,7 @@ private fun Strip(
     // ponytail: no keyboard zoom in a strip; pinch zooms a page in place. Add when a strip has a focus page.
     val keys = readerKeys(rtl, prefs.volumeKeysTurnPages, step, jump, pageCount - 1, { false }) { chrome = !chrome }
     LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex }.collect { vm.onPageChanged(it) }
+        snapshotFlow { listState.firstVisibleItemIndex }.collect { vm.settlePage(it, backgroundPage) }
     }
     var firstPageDrawn by remember(bookId) { mutableStateOf(false) }
     ReportDrawnWhen { firstPageDrawn }
@@ -317,6 +357,7 @@ private fun Strip(
                             val a = crop?.let { it.width.toFloat() / it.height }
                             if (a != null) aspects[index] = a
                         },
+                        onBackgroundColour = { pageBackgrounds[index] = it },
                     )
                 }
             }
@@ -582,6 +623,8 @@ private fun PageSlot(
     onLoaded: (PageImage) -> Unit = {},
     /** Fires once when the page's border crop is decided (or null if uncropped / crop disabled). */
     onCropDecided: ((CropRect?) -> Unit)? = null,
+    /** Fires once per load with this page's sampled edge colour (§4, §5.2, milestone 5). */
+    onBackgroundColour: (Color) -> Unit = {},
 ) {
     var image by remember(index) { mutableStateOf<PageImage?>(null) }
     var attempts by remember(index) { mutableIntStateOf(0) }
@@ -605,7 +648,7 @@ private fun PageSlot(
         vm = vm, rightToLeft = rightToLeft, pagerVertical = pagerVertical,
         onPagerLockChanged = onPagerLockChanged, onEdgeSwipe = onEdgeSwipe, onTapZone = onTapZone,
         spreadSide = spreadSide, onBaseReady = onBaseReady, zoomSteps = zoomSteps,
-        onCropDecided = onCropDecided,
+        onCropDecided = onCropDecided, onBackgroundColour = onBackgroundColour,
         onInvalidate = { vm.invalidatePage(index); attempts++ },
     )
 }
@@ -633,6 +676,7 @@ private fun PageSlotContent(
     onBaseReady: () -> Unit,
     zoomSteps: Flow<Float>?,
     onCropDecided: ((CropRect?) -> Unit)?,
+    onBackgroundColour: (Color) -> Unit,
     onInvalidate: () -> Unit,
 ) {
     when {
@@ -652,6 +696,7 @@ private fun PageSlotContent(
             baseLayer = { w, h -> vm.baseLayer(index, img, w, h) },
             zoomSteps = zoomSteps,
             onCropDecided = onCropDecided,
+            onBackgroundColour = onBackgroundColour,
         )
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()

@@ -13,8 +13,14 @@ internal class FakeFtpTransport(
     var bytesServed = 0L
         private set
     val calls = mutableListOf<Pair<Long, Int>>()
+    var closes = 0
+        private set
 
     override fun sizeBytes(path: String): Long = bytes.size.toLong()
+
+    override fun close() {
+        closes++
+    }
 
     override fun listDir(path: String): List<FtpEntry> = entries
 

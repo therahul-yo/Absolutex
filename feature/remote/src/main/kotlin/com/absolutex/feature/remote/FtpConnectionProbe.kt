@@ -5,6 +5,7 @@ import com.absolutex.remote.ftp.FtpLocation
 import com.absolutex.remote.sync.ConnectionResult
 import com.absolutex.remote.sync.mapProbeFailure
 import java.io.IOException
+import javax.inject.Inject
 
 /**
  * Live connection test for an FTP/FTPS record, for the servers form's test-then-save.
@@ -16,7 +17,7 @@ import java.io.IOException
  * one call, with an empty folder correctly reading as Ok — and maps with the shared
  * [mapProbeFailure] rules.
  */
-class FtpConnectionProbe {
+class FtpConnectionProbe @Inject constructor() {
 
     fun test(location: FtpLocation, password: CharArray): ConnectionResult {
         val secret = password.copyOf()

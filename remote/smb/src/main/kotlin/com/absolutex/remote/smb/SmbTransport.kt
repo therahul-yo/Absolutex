@@ -54,4 +54,7 @@ fun SmbTransport.bind(remotePath: String): com.absolutex.remote.core.RangeTransp
 
         override fun readAt(offset: Long, length: Int): ByteArray =
             this@bind.readAt(remotePath, offset, length)
+
+        // Forwarded: the opener closes the bound file, and the session must die with it.
+        override fun close() = this@bind.close()
     }

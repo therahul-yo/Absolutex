@@ -234,6 +234,7 @@ class PrefCodecTest {
                 PrefCodec.KEY_COLOUR_GAMMA_G,
                 PrefCodec.KEY_COLOUR_GAMMA_B,
                 PrefCodec.KEY_UPSCALER,
+                PrefCodec.KEY_AUTO_BACKGROUND,
             ),
             bag.snapshot().keys,
         )
@@ -546,6 +547,7 @@ class PrefCodecTest {
         assertEquals("colour_gamma_g", PrefCodec.KEY_COLOUR_GAMMA_G)
         assertEquals("colour_gamma_b", PrefCodec.KEY_COLOUR_GAMMA_B)
         assertEquals("upscaler", PrefCodec.KEY_UPSCALER)
+        assertEquals("auto_background", PrefCodec.KEY_AUTO_BACKGROUND)
     }
 
     @Test
@@ -567,5 +569,24 @@ class PrefCodecTest {
 
         val unknown = MapPrefBag(mapOf(PrefCodec.KEY_UPSCALER to "BILINEAR"))
         assertEquals(Upscaler.PLATFORM, PrefCodec.decodeRendering(unknown).upscaler)
+    }
+
+    @Test
+    fun `auto background defaults on and round-trips both ways`() {
+        assertTrue(PrefCodec.decodeRendering(MapPrefBag()).autoBackground)
+
+        val on = MapPrefBag()
+        PrefCodec.encodeRendering(RenderingPrefs(autoBackground = true), on)
+        assertTrue(PrefCodec.decodeRendering(on).autoBackground)
+
+        val off = MapPrefBag()
+        PrefCodec.encodeRendering(RenderingPrefs(autoBackground = false), off)
+        assertFalse(PrefCodec.decodeRendering(off).autoBackground)
+    }
+
+    @Test
+    fun `a wrongly typed auto background value falls back to its default`() {
+        val bag = MapPrefBag(mapOf(PrefCodec.KEY_AUTO_BACKGROUND to "yes"))
+        assertTrue(PrefCodec.decodeRendering(bag).autoBackground)
     }
 }

@@ -41,5 +41,4 @@
     <string name="remote_result_unreachable">The server could not be reached.</string>
     <string name="remote_result_security_refused">The secure connection was refused.</string>
     <string name="remote_result_not_found">Connected, but nothing expected answers there.</string>
-    <string name="remote_test_pending_smb">Live test for SMB arrives with the SMB transport.</string>
 </resources>
