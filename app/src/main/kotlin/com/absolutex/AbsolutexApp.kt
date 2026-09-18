@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.Application
 import android.os.Bundle
 import com.absolutex.remote.sync.SyncController
+import com.absolutex.remote.sync.migrateLegacySyncServers
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -18,10 +19,12 @@ import kotlinx.coroutines.launch
  * Background detection is a manual visible-activity count, not lifecycle-process: that
  * artifact is deliberately not a dependency. The count reaches zero only when no activity
  * is visible — navigating library to reader stops one activity but starts another, so a
- * plain onActivityStopped would push on every navigation.
+ * plain onActivityStopped would push on every navigation. Rotation is not a background
+ * transition either: the stopping instance reports isChangingConfigurations, so its stop
+ * is skipped and the count never dips (the recreating instance's start rebalances it).
  *
- * NOTE: the legacy sync-server migration (SyncServerMigration, TODO(agent3)) is NOT
- * called here yet — the one-liner needs Agent03's clearance first. Flagged to the lead.
+ * Legacy sync-server migration runs here too (one-shot, idempotent): old sync records
+ * become unified servers on first launch after update.
  */
 @HiltAndroidApp
 class AbsolutexApp : Application() {
@@ -33,13 +36,19 @@ class AbsolutexApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        scope.launch { sync.onAppStart() }
+        scope.launch {
+            migrateLegacySyncServers(this@AbsolutexApp)
+            sync.onAppStart()
+        }
         registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityStarted(activity: Activity) {
                 visibleActivities++
             }
 
             override fun onActivityStopped(activity: Activity) {
+                // Rotation (or any config change): the old instance stops while its
+                // replacement starts — not a background transition, so don't count it.
+                if (activity.isChangingConfigurations) return
                 if (--visibleActivities == 0) {
                     scope.launch { sync.onAppBackgrounded() }
                 }
