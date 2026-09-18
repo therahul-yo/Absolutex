@@ -73,7 +73,7 @@ class ContentMatrixTest {
     fun `identity placement is the identity matrix`() {
         assertEquals(
             ContentMatrix(1f, 1f, 0f, 0f),
-            contentMatrix(100, 200, 0, 0, 100, 200),
+            contentMatrix(0, 0, 100, 200, 0, 0, 100, 200),
         )
     }
 
@@ -82,7 +82,7 @@ class ContentMatrixTest {
         // Bitmap (0,0) maps to canvas (10,20): the translation is the destination origin.
         assertEquals(
             ContentMatrix(1f, 1f, 10f, 20f),
-            contentMatrix(100, 200, 10, 20, 110, 220),
+            contentMatrix(0, 0, 100, 200, 10, 20, 110, 220),
         )
     }
 
@@ -92,7 +92,7 @@ class ContentMatrixTest {
         // so the local matrix scales by 2 (canvas = 2 * bitmap).
         assertEquals(
             ContentMatrix(2f, 2f, 0f, 0f),
-            contentMatrix(100, 100, 0, 0, 200, 200),
+            contentMatrix(0, 0, 100, 100, 0, 0, 200, 200),
         )
     }
 
@@ -104,13 +104,13 @@ class ContentMatrixTest {
         // Bitmap 0 → canvas 10, bitmap 100 → canvas 60. Correct.
         assertEquals(
             ContentMatrix(0.5f, 0.5f, 10f, 0f),
-            contentMatrix(100, 100, 10, 0, 60, 50),
+            contentMatrix(0, 0, 100, 100, 10, 0, 60, 50),
         )
     }
 
     @Test
     fun `degenerate rects coerce instead of dividing by zero`() {
-        val m = contentMatrix(100, 100, 5, 5, 5, 5)
+        val m = contentMatrix(0, 0, 100, 100, 5, 5, 5, 5)
         assertTrue(m.scaleX.isFinite() && m.scaleY.isFinite())
         assertTrue(m.transX.isFinite() && m.transY.isFinite())
     }

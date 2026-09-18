@@ -90,7 +90,7 @@ class ColourPipeline {
                 .apply { setFilterMode(BitmapShader.FILTER_MODE_LINEAR) }
             contents[bitmap] = content
         }
-        val placement = contentMatrix(bitmap.width, bitmap.height, left, top, right, bottom)
+        val placement = contentMatrix(0, 0, bitmap.width, bitmap.height, left, top, right, bottom)
         val m = matrix ?: Matrix().also { matrix = it }
         // The local matrix maps bitmap → canvas: scale by dst/bitmap, then translate by the
         // destination origin. postTranslate applies the shift AFTER the scale, so the origin

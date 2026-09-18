@@ -57,21 +57,28 @@ data class ContentMatrix(
 )
 
 /**
- * Matrix for a bitmap of [bitmapW]×[bitmapH] drawn in full into the integer rect
- * ([left], [top], [right], [bottom]). Degenerate rects coerce to 1 px: the draw call sites
- * already guarantee non-empty rects, and a zero divisor here would NaN the whole page.
+ * Matrix mapping the source rect ([srcLeft], [srcTop], [srcRight], [srcBottom]) in bitmap
+ * space to the destination rect ([dstLeft], [dstTop], [dstRight], [dstBottom]) in canvas
+ * space. Degenerate rects coerce to 1 px: the draw call sites already guarantee non-empty
+ * rects, and a zero divisor here would NaN the whole page.
  */
 fun contentMatrix(
-    bitmapW: Int,
-    bitmapH: Int,
-    left: Int,
-    top: Int,
-    right: Int,
-    bottom: Int,
+    srcLeft: Int,
+    srcTop: Int,
+    srcRight: Int,
+    srcBottom: Int,
+    dstLeft: Int,
+    dstTop: Int,
+    dstRight: Int,
+    dstBottom: Int,
 ): ContentMatrix {
-    val w = maxOf(1, right - left).toFloat()
-    val h = maxOf(1, bottom - top).toFloat()
-    val sx = w / bitmapW
-    val sy = h / bitmapH
-    return ContentMatrix(sx, sy, left.toFloat(), top.toFloat())
+    val srcW = maxOf(1, srcRight - srcLeft).toFloat()
+    val srcH = maxOf(1, srcBottom - srcTop).toFloat()
+    val dstW = maxOf(1, dstRight - dstLeft).toFloat()
+    val dstH = maxOf(1, dstBottom - dstTop).toFloat()
+    val sx = dstW / srcW
+    val sy = dstH / srcH
+    val tx = dstLeft - srcLeft * sx
+    val ty = dstTop - srcTop * sy
+    return ContentMatrix(sx, sy, tx, ty)
 }
