@@ -11,6 +11,7 @@ import org.apache.ftpserver.usermanager.impl.WritePermission
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -31,10 +32,11 @@ class CommonsNetFtpTransportRealServerTest {
     private lateinit var server: FtpServer
     private var port: Int = 0
     private lateinit var payload: ByteArray
+    private lateinit var root: java.nio.file.Path
 
     @Before
     fun startServer() {
-        val root = Files.createTempDirectory("ftp-real-server-test")
+        root = Files.createTempDirectory("ftp-real-server-test")
         payload = ByteArray(PAYLOAD_SIZE) { it.toByte() }
         Files.write(root.resolve(FILE_NAME), payload)
 
@@ -69,6 +71,36 @@ class CommonsNetFtpTransportRealServerTest {
         override fun connect(hostname: String, port: Int) {
             connects++
             super.connect(hostname, port)
+        }
+    }
+
+    @Test
+    fun `listDir names base entries with kinds and sizes on a real server`() {
+        val subdir = root.resolve("manga")
+        Files.createDirectory(subdir)
+        val inner = ByteArray(512) { 9 }
+        Files.write(subdir.resolve("inner.cbz"), inner)
+        val client = CountingFtpClient()
+        val location = FtpLocation("127.0.0.1", port, USERNAME, "/", useTls = false)
+        val transport = CommonsNetFtpTransport(location, { PASSWORD.toCharArray() }, { client })
+
+        val entries = transport.listDir("/").associateBy { it.name }
+        assertEquals(2, entries.size)
+        assertEquals(FtpEntry(FILE_NAME, false, PAYLOAD_SIZE.toLong()), entries[FILE_NAME])
+        // Directory sizes are server-dependent; the kind and the name are the contract.
+        assertEquals("manga" to true, entries["manga"]?.let { it.name to it.isDirectory })
+        assertEquals(inner.size.toLong(), transport.sizeBytes("/manga/inner.cbz"))
+    }
+
+    @Test
+    fun `listDir on a missing path throws instead of returning empty`() {
+        val location = FtpLocation("127.0.0.1", port, USERNAME, "/", useTls = false)
+        val transport = CommonsNetFtpTransport(location, { PASSWORD.toCharArray() }, { CountingFtpClient() })
+        try {
+            transport.listDir("/nope")
+            throw AssertionError("expected IOException")
+        } catch (expected: java.io.IOException) {
+            assertTrue(expected.message?.contains("cannot list") == true)
         }
     }
 

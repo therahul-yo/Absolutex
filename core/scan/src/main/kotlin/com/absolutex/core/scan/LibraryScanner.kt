@@ -10,9 +10,19 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
-/** What a scan found: a container file, or a folder of loose images treated as one book (§2). */
+/**
+ * What a scan found: a container file, or a folder of loose images treated as one book (§2).
+ *
+ * [displayName] is the file or folder's real name, kept alongside [path] because [path] is not
+ * always a name a route can be built from: a SAF [path] is a `content://` document Uri whose last
+ * segment is a percent-encoded document id, not the filename the user picked. `File(path).name`
+ * looked like the filename for a filesystem path and quietly was not one for a SAF path — see
+ * [com.absolutex.core.data.LibraryRepository.toEntity], which keys reading progress on this field
+ * for exactly that reason.
+ */
 data class ScannedBook(
     val path: String,
+    val displayName: String,
     val sizeBytes: Long,
     val parsed: ParsedName,
     val isImageFolder: Boolean = false,
@@ -74,11 +84,13 @@ class LibraryScanner(
     private fun parse(candidate: Candidate): ScannedBook = when (candidate) {
         is Candidate.Container -> ScannedBook(
             path = candidate.file.path,
+            displayName = candidate.file.name,
             sizeBytes = candidate.file.length(),
             parsed = FilenameParser.parse(candidate.file.path),
         )
         is Candidate.ImageFolder -> ScannedBook(
             path = candidate.file.path,
+            displayName = candidate.file.name,
             sizeBytes = candidate.bytes,
             // A folder book has no filename to parse, so the folder name is the whole of it.
             parsed = FilenameParser.parse(candidate.file.path),
@@ -137,6 +149,7 @@ class LibraryScanner(
                 if (!hasSubdir && images.size >= MIN_IMAGES_FOR_FOLDER_BOOK) {
                     return ScannedBook(
                         path = file.path,
+                        displayName = file.name,
                         sizeBytes = images.sumOf { it.length() },
                         parsed = FilenameParser.parse(file.path),
                         isImageFolder = true,
@@ -148,6 +161,7 @@ class LibraryScanner(
             if (file.isFile && EntryFilter.extensionOf(file.name) in CONTAINER_EXTENSIONS) {
                 return ScannedBook(
                     path = file.path,
+                    displayName = file.name,
                     sizeBytes = file.length(),
                     parsed = FilenameParser.parse(file.path),
                 )
