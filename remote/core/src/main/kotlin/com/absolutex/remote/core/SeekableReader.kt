@@ -1,4 +1,4 @@
-package com.absolutex.remote.smb
+package com.absolutex.remote.core
 
 import java.io.IOException
 import java.io.InputStream
@@ -6,11 +6,12 @@ import java.io.InputStream
 /**
  * Seekable reads over one remote file through a [BlockCache]. Missing ranges are coalesced:
  * one contiguous transport read covers all absent blocks in the span, because on a LAN one
- * larger read is cheaper than N round trips.
+ * larger read is cheaper than N round trips. Reads wider than the cache stream window by
+ * window instead of dying with "cache miss after fetch" — a span the cache cannot hold would
+ * evict its own head before it is copied.
  */
-class SeekableSmbReader(
-    private val transport: SmbTransport,
-    private val remotePath: String,
+class SeekableReader(
+    private val transport: RangeTransport,
     val sizeBytes: Long,
     private val cache: BlockCache = BlockCache(),
 ) {
@@ -48,6 +49,10 @@ class SeekableSmbReader(
         }
     }
 
+    /** Blocks touched by a span: the superset that must fit, whatever the alignment. */
+    private fun spanBlocks(offset: Long, length: Int): Long =
+        (offset + length - 1) / cache.blockSize - offset / cache.blockSize + 1
+
     private fun readCached(offset: Long, length: Int): ByteArray {
         val out = ByteArray(length)
         var done = 0
@@ -69,18 +74,13 @@ class SeekableSmbReader(
         return out
     }
 
-    /** Blocks touched by a span: the superset that must fit, whatever the alignment. */
-    private fun spanBlocks(offset: Long, length: Int): Long =
-        (offset + length - 1) / cache.blockSize - offset / cache.blockSize + 1
-
     private fun fetchDirect(offset: Long, length: Int): ByteArray {
-        // One RETR/read never buffers more than this; chunks keep any single transport
-        // buffer bounded however wide the span is.
+        // One transport read never buffers more than this, however wide the span is.
         val out = ByteArray(length)
         var done = 0
         while (done < length) {
             val chunk = minOf(DIRECT_CHUNK_BYTES, length - done)
-            val bytes = transport.readAt(remotePath, offset + done, chunk)
+            val bytes = transport.readAt(offset + done, chunk)
             bytesFetched += bytes.size
             readCalls++
             bytes.copyInto(out, done)
@@ -113,7 +113,7 @@ class SeekableSmbReader(
                 while (end + 1 <= lastBlock && cache.get(end + 1) == null) end++
                 val start = block * cache.blockSize
                 val stop = minOf((end + 1) * cache.blockSize, sizeBytes)
-                val bytes = transport.readAt(remotePath, start, (stop - start).toInt())
+                val bytes = transport.readAt(start, (stop - start).toInt())
                 bytesFetched += bytes.size
                 readCalls++
                 var cursor = 0
