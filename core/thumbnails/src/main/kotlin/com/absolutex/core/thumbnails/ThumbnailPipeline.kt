@@ -17,6 +17,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -63,6 +64,11 @@ class ThumbnailPipeline(
         request: ThumbRequest,
         config: Bitmap.Config = Bitmap.Config.HARDWARE,
     ): Bitmap {
+        // Empty book, local or remote: openPage(0) would throw IndexOutOfBounds, which is a
+        // bug report, not a book. This is the choke point every source routes through, so
+        // one guard fixes empty archives on both paths — and stays ahead of the memory
+        // cache, where a stale entry could otherwise depict a book that no longer exists.
+        if (source.pages.isEmpty()) throw IOException("archive has no pages")
         memory.get(request)?.let { return it }
         val deferred = inFlight.computeIfAbsent(request) {
             // Registered LAZY so the job cannot run inside this mapping function: a job that

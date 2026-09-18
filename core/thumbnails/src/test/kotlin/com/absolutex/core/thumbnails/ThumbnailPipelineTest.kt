@@ -73,10 +73,19 @@ class ThumbnailPipelineTest {
         pipeline().load(FakeSource(mapOf(0 to truncated())), request(0))
     }
 
+    @Test(expected = IOException::class)
+    fun `empty book throws IOException, never IndexOutOfBounds`() = runTest {
+        // Zero pages: without the guard this reaches openPage(0) and crashes. Local or
+        // remote, every source routes through load(), so one test covers both paths.
+        pipeline().load(FakeSource(emptyMap()), request(0))
+    }
+
     @Test fun `immediate failure preserves IOException and allows retry`() = runTest {
         // Inline execution forces completion before computeIfAbsent returns, without timing guesses.
         val thumbs = ThumbnailPipeline(File(tmp.root, "inline"), dispatcher = Dispatchers.Unconfined)
-        val source = FakeSource(emptyMap())
+        // Corrupt (not empty): the guard would throw before the first read, which is the
+        // empty-book test's case — here the failure must come out of the source instead.
+        val source = FakeSource(mapOf(0 to truncated()))
         try {
             repeat(2) {
                 val failure = runCatching { thumbs.load(source, request(0)) }.exceptionOrNull()
