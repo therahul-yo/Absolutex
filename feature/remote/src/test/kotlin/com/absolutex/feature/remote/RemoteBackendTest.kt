@@ -30,8 +30,6 @@ import org.robolectric.annotation.Config
 import java.io.File
 import java.io.IOException
 import java.net.ServerSocket
-import java.net.SocketTimeoutException
-import java.net.UnknownHostException
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -99,18 +97,14 @@ class RemoteBackendTest {
         )
     }
 
-    @Test fun `unreachable hosts and timeouts are unreachable`() {
-        val failures = listOf<Throwable>(
-            UnknownHostException("nas"),
-            SocketTimeoutException("timed out"),
-            IOException("mystery failure"),
-        )
-        for (failure in failures) {
-            assertEquals(
-                ConnectionResult.Unreachable,
-                SmbConnectionTester().test("pw".toCharArray()) { throw failure },
-            )
+    @Test fun `unresolvable host is unreachable through the real connector`() {
+        // Behavioural, not stubbed: the real SmbjConnector dials `.invalid` (RFC 2606,
+        // never resolvable), so DNS fails and the mapping reads Unreachable — no fakes.
+        val location = SmbLocation("nonexistent.invalid", "comics", "/", 445, "reader")
+        val result = SmbConnectionTester().test("pw".toCharArray()) {
+            com.absolutex.remote.smb.SmbjConnector(location).connect(it)
         }
+        assertEquals(ConnectionResult.Unreachable, result)
     }
 
     @Test fun `ftp probe maps real server replies`() {

@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.absolutex.remote.ftp.FtpLocation
 import com.absolutex.remote.smb.SmbLocation
+import com.absolutex.remote.smb.SmbjConnector
 import com.absolutex.remote.sync.ConnectionResult
 import com.absolutex.remote.sync.FtpServer
 import com.absolutex.remote.sync.KavitaConnectionProbe
