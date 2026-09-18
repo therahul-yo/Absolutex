@@ -75,6 +75,42 @@ class LibArchiveSourceTest {
         }
     }
 
+    @Test fun comicinfo_is_loaded_through_the_jni_bridge() {
+        // Corpus 01_basic_ltr.cbz writes ComicInfo.xml at raw ordinal 0, before the pages.
+        open("01_basic_ltr.cbz").use { src ->
+            assertEquals("Absolutex Corpus", src.comicInfo?.series)
+            assertEquals(12, src.comicInfo?.pageCount)
+        }
+    }
+
+    @Test fun truncated_archive_reports_payloads_without_renumbering_pages() {
+        open("11_truncated.cbz").use { src ->
+            assertEquals(14, src.pages.size)
+            assertEquals((0 until 14).toList(), src.pages.map { it.index })
+            assertEquals(com.absolutex.source.PageReadability(13, 20), src.pageReadability)
+            repeat(13) { assertTrue(src.openPage(it).use { stream -> stream.readBytes().isNotEmpty() }) }
+            assertTrue(runCatching { src.openPage(13).close() }.exceptionOrNull() is java.io.IOException)
+        }
+    }
+
+    @Test fun an_archive_without_comicinfo_opens_with_null_metadata() {
+        open("02_no_comicinfo.cbz").use { src ->
+            assertEquals(12, src.pages.size)
+            assertEquals(null, src.comicInfo)
+        }
+    }
+
+    @Test fun comicinfo_behind_junk_is_found_at_its_raw_ordinal() {
+        // Corpus 18: sidecar nested at scan/sub/COMICINFO.XML, raw ordinal 8, behind two junk
+        // entries the page filter drops. The locator must extract by RAW ordinal (8), not by
+        // filtered page index (0), and must match the basename case-insensitively.
+        open("18_comicinfo_behind_junk.cbz").use { src ->
+            assertEquals(6, src.pages.size)
+            assertEquals("Absolutex Corpus", src.comicInfo?.series)
+            assertEquals(6, src.comicInfo?.pageCount)
+        }
+    }
+
     @Test fun concurrent_reads_return_identical_bytes_to_serial_reads() {
         open("absolute-batman-001.cbr").use { src ->
             val serial = (0 until 6).map { src.openPage(it).readBytes().size }

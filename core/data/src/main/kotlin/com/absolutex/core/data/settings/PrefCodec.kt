@@ -9,6 +9,8 @@ import com.absolutex.model.PageTransition
 import com.absolutex.model.FitModeMemory
 import com.absolutex.model.PageLayout
 import com.absolutex.model.ReadingFlow
+import com.absolutex.core.data.settings.LibraryPrefCodec.decodeApp
+import com.absolutex.core.data.settings.LibraryPrefCodec.encodeApp
 
 /**
  * Translates between the preference models and a [PrefBag].
@@ -77,6 +79,9 @@ object PrefCodec {
             openGenericArchives = bag.boolean(KEY_GENERIC_ARCHIVES) ?: defaults.openGenericArchives,
             openImageFolders = bag.boolean(KEY_IMAGE_FOLDERS) ?: defaults.openImageFolders,
             locations = bag.stringSet(KEY_LOCATIONS) ?: defaults.locations,
+            // Lane keys decode in their own codec; this one line keeps them in the single
+            // AppPrefs snapshot without growing PrefCodec per feature.
+            useOriginalFilename = LibraryPrefCodec.decodeApp(bag).useOriginalFilename,
         )
     }
 
@@ -93,6 +98,7 @@ object PrefCodec {
         // skipping it left whatever was already stored (from before the last location was
         // dropped) untouched, so the store could never again agree that there were none.
         if (prefs.locations.isEmpty()) bag.remove(KEY_LOCATIONS) else bag.putStringSet(KEY_LOCATIONS, prefs.locations)
+        LibraryPrefCodec.encodeApp(prefs, bag)
     }
 
     fun decodeReader(bag: PrefBag): ReaderPrefs {

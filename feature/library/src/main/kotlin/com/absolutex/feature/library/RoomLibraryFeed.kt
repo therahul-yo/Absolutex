@@ -4,6 +4,7 @@ import com.absolutex.core.data.LibraryBook
 import com.absolutex.core.data.LibraryRepository
 import com.absolutex.core.data.ProgressDao
 import com.absolutex.core.data.ReadingProgress
+import com.absolutex.core.data.settings.AppPrefsSource
 import com.absolutex.model.BookIdentity
 import com.absolutex.model.IssueNumber
 import com.absolutex.model.ParsedName
@@ -30,6 +31,7 @@ import javax.inject.Singleton
 internal class RoomLibraryFeed @Inject constructor(
     private val repository: LibraryRepository,
     private val progressDao: ProgressDao,
+    private val appPrefsSource: AppPrefsSource,
 ) : LibraryFeed {
 
     override val capabilities = LibraryCapabilities(
@@ -42,19 +44,23 @@ internal class RoomLibraryFeed @Inject constructor(
     )
 
     override fun observeBooks(): Flow<List<LibraryBookUi>> =
-        combine(repository.observeLibrary(), progressDao.observeAll()) { books, progress ->
+        combine(repository.observeLibrary(), progressDao.observeAll(), appPrefsSource.appPrefs) {
+                books, progress, prefs ->
             // Index the positions once, then look up per book: scanning the progress table per
             // row instead would be quadratic on a large library.
             val byIdentity = progress.associateBy { it.bookId }
             // Deduplicated before mapping, so the expensive part runs once per book that is shown.
-            books.deduplicatedByIdentity().map { it.toUi(byIdentity) }
+            books.deduplicatedByIdentity().map { it.toUi(byIdentity, prefs.useOriginalFilename) }
             // Mapping thousands of rows is real work and Room emits on its own executor; Default
             // keeps it off both the main thread and Room's.
         }.flowOn(Dispatchers.Default)
 
     override suspend fun search(query: String): List<LibraryBookUi> {
         val progress = progressDao.observeAll().first().associateBy { it.bookId }
-        return repository.search(query).deduplicatedByIdentity().map { it.toUi(progress) }
+        val prefs = appPrefsSource.currentAppPrefs()
+        return repository.search(query)
+            .deduplicatedByIdentity()
+            .map { it.toUi(progress, prefs.useOriginalFilename) }
     }
 
     override suspend fun setFavorite(paths: Set<String>, favorite: Boolean): LibraryNotice =
@@ -97,11 +103,14 @@ internal class RoomLibraryFeed @Inject constructor(
     override suspend fun delete(paths: Set<String>): LibraryNotice =
         LibraryNotice.BatchUnsupported(UnsupportedReason.DELETE_NOT_IMPLEMENTED)
 
-    private fun LibraryBook.toUi(progress: Map<String, ReadingProgress>): LibraryBookUi {
+    private fun LibraryBook.toUi(
+        progress: Map<String, ReadingProgress>,
+        useOriginalFilename: Boolean,
+    ): LibraryBookUi {
         val position = progress[contentKey]
         return LibraryBookUi(
             path = path,
-            displayName = displayNameOf(this),
+            displayName = displayNameOf(this, useOriginalFilename),
             // BookIdentity.nameOf, not File(path).name: path is a content:// Uri for a
             // SAF-scanned book, and its last segment is a percent-encoded document id.
             originalFilename = BookIdentity.nameOf(contentKey, sizeBytes),
@@ -124,10 +133,15 @@ internal class RoomLibraryFeed @Inject constructor(
          * the app does. The persisted columns are that parse, taken apart by Room; putting them
          * back together beats a second copy of the formatting rules that would drift from it.
          *
-         * TODO(library): honour [com.absolutex.model.TitlePolicy.ORIGINAL_FILENAME], the §5.1
-         *  global switch for turning filename parsing off. It needs a settings store.
+         * §5.1's "use original filename" switch short-circuits the rebuild: the raw filename is
+         * the label for both display and search, which is what the switch's "escape hatch" means.
          */
-        fun displayNameOf(book: LibraryBook): String = ParsedName(
+        fun displayNameOf(book: LibraryBook, useOriginalFilename: Boolean): String {
+            // The escape hatch: show the file's own name instead of the parsed label. Sourced
+            // from BookIdentity.nameOf for the same reason as below — a SAF book's path is a
+            // content:// Uri, so File(path).name would yield a document id, not a filename.
+            if (useOriginalFilename) return BookIdentity.nameOf(book.contentKey, book.sizeBytes)
+            return ParsedName(
             series = book.series,
             issue = book.issue?.let { value -> IssueNumber(value, book.issueRaw ?: value.toString()) },
             volume = book.volume,
@@ -138,6 +152,7 @@ internal class RoomLibraryFeed @Inject constructor(
             // this is the string ParsedName.displayName falls back to when nothing else parsed.
             originalFilename = BookIdentity.nameOf(book.contentKey, book.sizeBytes),
         ).displayName
+        }
     }
 }
 

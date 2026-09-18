@@ -63,6 +63,8 @@ data class ReaderUiState(
     /** Scopes cached tiles to this book. Empty until a book is open. */
     val bookId: String = "",
     val error: String? = null,
+    /** Payload recovery report, never used as the pager/progress count. */
+    val recoveryNotice: String? = null,
 )
 
 @HiltViewModel
@@ -245,6 +247,7 @@ class ReaderViewModel internal constructor(
                 pageCount = count,
                 bookId = bookId,
                 currentPage = settledPage,
+                recoveryNotice = (source0 as? ComicSource)?.pageReadability?.let { context.recoveryNotice(it) },
             )
             // After the state that gates the first page: contents are chrome, and a PDF outline is
             // a JNI call whose cost must not land in the tap-to-first-page budget.

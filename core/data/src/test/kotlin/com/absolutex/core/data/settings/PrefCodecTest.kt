@@ -31,6 +31,7 @@ class PrefCodecTest {
         assertFalse(app.showHiddenFolders)
         assertFalse(app.openGenericArchives)
         assertTrue(app.openImageFolders)
+        assertFalse(app.useOriginalFilename)
     }
 
     @Test
@@ -49,6 +50,23 @@ class PrefCodecTest {
     }
 
     // ---------------------------------------------------------------- persistence round-trip
+
+    @Test
+    fun `the original filename switch survives a round-trip, both ways`() {
+        val on = AppPrefs(useOriginalFilename = true)
+        val bag = MapPrefBag()
+        PrefCodec.encodeApp(on, bag)
+        assertTrue(PrefCodec.decodeApp(bag).useOriginalFilename)
+        // Default off writes the key explicitly so the stored intent is visible in the file.
+        PrefCodec.encodeApp(AppPrefs(), bag)
+        assertFalse(PrefCodec.decodeApp(bag).useOriginalFilename)
+    }
+
+    @Test
+    fun `a wrongly typed original filename value falls back to its default`() {
+        val bag = MapPrefBag(mapOf(LibraryPrefKeys.USE_ORIGINAL_FILENAME to "yes"))
+        assertFalse(PrefCodec.decodeApp(bag).useOriginalFilename)
+    }
 
     @Test
     fun `app prefs survive an encode and decode unchanged`() {
@@ -190,6 +208,7 @@ class PrefCodecTest {
                 PrefCodec.KEY_SHOW_HIDDEN,
                 PrefCodec.KEY_GENERIC_ARCHIVES,
                 PrefCodec.KEY_IMAGE_FOLDERS,
+                LibraryPrefKeys.USE_ORIGINAL_FILENAME,
                 PrefCodec.KEY_READING_FLOW,
                 PrefCodec.KEY_FIT_MODE,
                 PrefCodec.KEY_VOLUME_KEYS,
@@ -332,6 +351,8 @@ class PrefCodecTest {
         assertEquals("show_hidden_folders", PrefCodec.KEY_SHOW_HIDDEN)
         assertEquals("open_generic_archives", PrefCodec.KEY_GENERIC_ARCHIVES)
         assertEquals("open_image_folders", PrefCodec.KEY_IMAGE_FOLDERS)
+        // Lane keys live in their own codec file, but they are on disk just the same.
+        assertEquals("use_original_filename", LibraryPrefKeys.USE_ORIGINAL_FILENAME)
         assertEquals("reading_flow", PrefCodec.KEY_READING_FLOW)
         assertEquals("fit_mode", PrefCodec.KEY_FIT_MODE)
         assertEquals("volume_keys_turn_pages", PrefCodec.KEY_VOLUME_KEYS)
