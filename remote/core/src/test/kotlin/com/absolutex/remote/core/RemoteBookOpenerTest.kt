@@ -52,6 +52,42 @@ class RemoteBookOpenerTest {
         assertEquals(RemoteLocation("nas", "/$name", name), location)
     }
 
+    @Test fun `encoder round-trips hostile names exactly`() {
+        val paths = listOf(
+            "/Batman + Robin.cbz",
+            "/comics/my book/v2.cbz",
+            "/a%2Fb.cbz",
+            "/100% legit + (special).cbz",
+            "/${String(charArrayOf(0x6F2B.toChar(), 0x753B.toChar()))}01.cbz",
+            "/plain.cbz",
+        )
+        for (path in paths) {
+            val uri = encodeRemoteUri("nas", path)
+            val location = parseRemoteUri(uri)
+            assertEquals(RemoteLocation("nas", path, path.substringAfterLast('/')), location)
+        }
+        // Spot-check the encoding itself: space is %20, plus is %2B, never a raw +.
+        assertEquals(
+            "absolutex-remote://nas/Batman%20%2B%20Robin.cbz",
+            encodeRemoteUri("nas", "/Batman + Robin.cbz"),
+        )
+    }
+
+    @Test fun `encoder rejects blank servers and relative paths`() {
+        for ((id, path) in listOf(
+            "" to "/b.cbz",
+            "na/s" to "/b.cbz",
+            "nas" to "b.cbz",
+        )) {
+            try {
+                encodeRemoteUri(id, path)
+                fail("expected IllegalArgumentException for $id $path")
+            } catch (expected: IllegalArgumentException) {
+                assertTrue(expected.message?.isNotEmpty() == true)
+            }
+        }
+    }
+
     @Test fun `dispatcher hands the file to the backend transport`() = runTest {
         val bytes = ZipBytes.cbz("page01.jpg" to ZipBytes.pageBytes(1))
         var seenServer = ""

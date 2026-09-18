@@ -83,6 +83,28 @@ fun parseRemoteUri(uri: String): RemoteLocation {
     return RemoteLocation(serverId, path, displayName)
 }
 
+/**
+ * Builds an `absolutex-remote://<serverId>/<path>` Uri from a server id and an
+ * absolute file path — the inverse of [parseRemoteUri], and the only way callers
+ * (browse UI, recents, widgets) may mint these Uris. Each `/`-separated segment is
+ * encoded on its own so separators survive: spaces become `%20` (never `+`), a
+ * literal `+` becomes `%2B`, `%` becomes `%25`, non-ASCII becomes UTF-8 escapes.
+ * A file genuinely named `Batman + Robin.cbz` must arrive encoded — a raw `+`
+ * decodes to a space by form rules, which is right for the parser and wrong for
+ * a filename. Encode-decode round-trips exactly; see the encoder tests.
+ */
+fun encodeRemoteUri(serverId: String, path: String): String {
+    require(serverId.isNotBlank() && '/' !in serverId) {
+        "remote uri needs a plain server id"
+    }
+    require(path.startsWith("/")) { "remote path must be absolute: $path" }
+    val encoded = path.split('/').joinToString("/") { encodeSegment(it) }
+    return "$REMOTE_URI_SCHEME://$serverId$encoded"
+}
+
+private fun encodeSegment(segment: String): String =
+    java.net.URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
+
 private fun decode(segment: String): String =
     runCatching { java.net.URLDecoder.decode(segment, "UTF-8") }.getOrDefault(segment)
 
