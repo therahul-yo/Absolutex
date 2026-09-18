@@ -38,6 +38,33 @@ class SafScannerTest {
         assertEquals(listOf(100L, 200L), books.map { it.sizeBytes })
     }
 
+    @Test fun `a container's displayName is the tree entry's name, not its Uri`() {
+        // The Uri DocumentsContract hands back is one percent-encoded segment, e.g.
+        // ".../document/primary%3AComics%2FBatman%20001.cbz" — nothing a reader would show, and
+        // nothing that matches the name the reader computes from OpenableColumns.DISPLAY_NAME.
+        val uri = "content://com.android.externalstorage.documents/tree/primary%3AComics/document/" +
+            "primary%3AComics%2FBatman%20001.cbz"
+        val books = scanAll(dir("root"), tree("root" to listOf(file(uri, "Batman 001.cbz", 100))))
+        val book = books.single()
+        assertEquals(uri, book.path)
+        assertEquals("Batman 001.cbz", book.displayName)
+    }
+
+    @Test fun `an image-folder book's displayName is the folder's name, not its Uri`() {
+        val uri = "content://com.android.externalstorage.documents/tree/primary%3AComics/document/" +
+            "primary%3AComics%2FChapter%201"
+        val books = scanAll(
+            dir("root"),
+            tree(
+                "root" to listOf(dir(uri, "Chapter 1")),
+                uri to listOf(file("p1", "001.jpg", 5), file("p2", "002.jpg", 7)),
+            ),
+        )
+        val book = books.single()
+        assertEquals(uri, book.path)
+        assertEquals("Chapter 1", book.displayName)
+    }
+
     @Test fun `junk and hidden entries are skipped, exactly as a filesystem scan skips them`() {
         val books = scanAll(
             dir("root"),

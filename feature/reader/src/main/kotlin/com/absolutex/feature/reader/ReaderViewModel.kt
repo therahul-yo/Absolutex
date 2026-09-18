@@ -203,6 +203,7 @@ class ReaderViewModel internal constructor(
                 // PDF, its native handle) because it was then never reachable by the generation
                 // check below, which is what already closes a result superseded by a newer,
                 // non-cancelling call to open().
+                // TODO(lead): route absolutex-remote:// Uris to RemoteBookOpener; OpenBook stays local.
                 withContext(NonCancellable) { bookOpener.open(uri) }
             } catch (e: CancellationException) {
                 throw e

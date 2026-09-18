@@ -1,5 +1,7 @@
 package com.absolutex.core.data.settings
 
+import com.absolutex.core.data.NextBookOrder
+import com.absolutex.core.data.NextBookScope
 import com.absolutex.core.gpu.ColourParams
 import com.absolutex.core.gpu.Upscaler
 import com.absolutex.model.FitContext
@@ -199,6 +201,9 @@ class PrefCodecTest {
                 PrefCodec.KEY_TRANSITION,
                 PrefCodec.KEY_PAGE_TURN_MS,
                 PrefCodec.KEY_SCROLL_STEP,
+                PrefCodec.KEY_AUTO_ADVANCE,
+                PrefCodec.KEY_NEXT_BOOK_SCOPE,
+                PrefCodec.KEY_NEXT_BOOK_ORDER,
                 PrefCodec.KEY_COLOUR_BRIGHTNESS,
                 PrefCodec.KEY_COLOUR_CONTRAST,
                 PrefCodec.KEY_COLOUR_SATURATION,
@@ -338,6 +343,9 @@ class PrefCodecTest {
         assertEquals("page_transition", PrefCodec.KEY_TRANSITION)
         assertEquals("page_turn_ms", PrefCodec.KEY_PAGE_TURN_MS)
         assertEquals("scroll_step_percent", PrefCodec.KEY_SCROLL_STEP)
+        assertEquals("auto_advance", PrefCodec.KEY_AUTO_ADVANCE)
+        assertEquals("next_book_scope", PrefCodec.KEY_NEXT_BOOK_SCOPE)
+        assertEquals("next_book_order", PrefCodec.KEY_NEXT_BOOK_ORDER)
     }
 
     @Test
@@ -366,6 +374,41 @@ class PrefCodecTest {
         val bag = MapPrefBag()
         PrefCodec.encodeReader(ReaderPrefs(volumeKeysTurnPages = true), bag)
         assertEquals(true, PrefCodec.decodeReader(bag).volumeKeysTurnPages)
+    }
+
+    // ---------------------------------------------------------------- auto-advance (§5.2)
+
+    @Test
+    fun `auto-advance is on by default, and the choice round-trips`() {
+        assertEquals(true, PrefCodec.decodeReader(MapPrefBag()).autoAdvance)
+        val bag = MapPrefBag()
+        PrefCodec.encodeReader(ReaderPrefs(autoAdvance = false), bag)
+        assertEquals(false, PrefCodec.decodeReader(bag).autoAdvance)
+    }
+
+    @Test
+    fun `every next-book scope and order combination survives a round-trip`() {
+        for (scope in NextBookScope.entries) {
+            for (order in NextBookOrder.entries) {
+                val original = ReaderPrefs(nextBookScope = scope, nextBookOrder = order)
+                val bag = MapPrefBag()
+                PrefCodec.encodeReader(original, bag)
+                assertEquals("failed on $scope/$order", original, PrefCodec.decodeReader(bag))
+            }
+        }
+    }
+
+    @Test
+    fun `an unrecognised next-book scope or order falls back to its default`() {
+        val bag = MapPrefBag(
+            mapOf(
+                PrefCodec.KEY_NEXT_BOOK_SCOPE to "EVERYWHERE",
+                PrefCodec.KEY_NEXT_BOOK_ORDER to "ALPHABETICAL",
+            ),
+        )
+        val decoded = PrefCodec.decodeReader(bag)
+        assertEquals(NextBookScope.WHOLE_LIBRARY, decoded.nextBookScope)
+        assertEquals(NextBookOrder.PARSED_NUMBER, decoded.nextBookOrder)
     }
 
     // ---------------------------------------------------------------- rendering (§4 colour)
