@@ -35,7 +35,8 @@ object LibraryIndex {
      */
     fun deduplicate(books: List<ScannedBook>): List<ScannedBook> {
         val seen = HashSet<Pair<String, Long>>(books.size * 2)
-        return books.filter { seen.add(File(it.path).name to it.sizeBytes) }
+        // displayName, not File(path).name: path is a content:// Uri for a SAF-scanned book.
+        return books.filter { seen.add(it.displayName to it.sizeBytes) }
     }
 
     /**
@@ -53,7 +54,7 @@ object LibraryIndex {
     private fun shelfOf(book: ScannedBook): String =
         book.parsed.series
             ?: File(book.path).parentFile?.name
-            ?: File(book.path).name
+            ?: book.displayName
 
     /**
      * @param ascending false reverses; §5.1 wants both directions for every key.
@@ -63,7 +64,7 @@ object LibraryIndex {
             // Natural order, so "issue 2" precedes "issue 10" — the whole reason NaturalOrder
             // exists. Sorting these by String.compareTo would interleave every double-digit issue.
             SortKey.NAME -> books.sortedWith(
-                compareBy(com.absolutex.source.NaturalOrder) { File(it.path).name },
+                compareBy(com.absolutex.source.NaturalOrder) { it.displayName },
             )
             SortKey.SIZE -> books.sortedBy { it.sizeBytes }
             SortKey.DATE -> books.sortedBy { File(it.path).lastModified() }
@@ -84,7 +85,7 @@ object LibraryIndex {
         return books.filter { book ->
             book.parsed.series?.lowercase(Locale.ROOT)?.contains(needle) == true ||
                 book.parsed.title?.lowercase(Locale.ROOT)?.contains(needle) == true ||
-                File(book.path).name.lowercase(Locale.ROOT).contains(needle)
+                book.displayName.lowercase(Locale.ROOT).contains(needle)
         }
     }
 }

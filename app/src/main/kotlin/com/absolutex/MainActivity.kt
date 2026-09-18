@@ -24,16 +24,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.ui.AbsolutexTheme
 import com.absolutex.feature.library.LibraryRoute
-import com.absolutex.feature.reader.ReaderScreen
-import com.absolutex.feature.settings.SETTINGS_ROUTE
 import com.absolutex.feature.settings.settingsDestination
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import java.io.File
 import com.absolutex.feature.reader.ReaderViewModel
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
+import java.util.concurrent.atomic.AtomicBoolean
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -97,6 +99,35 @@ private fun readerRoute(uri: Uri) = "reader/${Uri.encode(uri.toString())}"
 /** A library row's path: a document Uri as it stands, a device path as a file Uri. */
 private fun bookUri(path: String): Uri =
     if (path.startsWith("content://")) Uri.parse(path) else Uri.fromFile(File(path))
+
+/**
+ * §5.2 auto-advance: looks up the next book off the main thread and, if there is one, replaces
+ * this reader entry with it, so back from the next book returns to the library rather than to
+ * the one just finished. Does nothing when there is none — auto-advance off, or nothing next.
+ *
+ * [scope] must belong to the reader destination itself, not an app-wide scope: leaving the reader
+ * before the lookup resolves must cancel it, not navigate a screen the user already left behind.
+ * [inFlight] coalesces two rapid forward attempts on the last page into one lookup and one
+ * navigate, rather than firing a second of each before the first has come back.
+ */
+internal fun advanceFromReader(
+    scope: CoroutineScope,
+    vm: ShellViewModel,
+    nav: NavHostController,
+    bookId: String,
+    inFlight: AtomicBoolean,
+) {
+    if (!inFlight.compareAndSet(false, true)) return
+    scope.launch {
+        try {
+            vm.nextBook(bookId)?.let { next ->
+                nav.navigate(readerRoute(bookUri(next.path))) { popUpTo(READER_ROUTE) { inclusive = true } }
+            }
+        } finally {
+            inFlight.set(false)
+        }
+    }
+}
 
 /**
  * The app shell: the library is home, the reader and settings are destinations (§5.1, §5.4).
@@ -171,9 +202,7 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
             // The activity's ReaderViewModel, not the destination's own: MainActivity.onCreate
             // starts opening a launch Uri before anything composes, and a per-destination
             // ViewModel would throw that head start away and open the book a second time.
-            if (uri != null) {
-                ReaderScreen(uri = uri, vm = readerVm, onSettings = { nav.navigate(SETTINGS_ROUTE) })
-            }
+            if (uri != null) ReaderDestination(uri, readerVm, vm, nav)
         }
         settingsDestination()
     }
