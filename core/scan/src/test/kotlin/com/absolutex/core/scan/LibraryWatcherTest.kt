@@ -55,7 +55,7 @@ class LibraryWatcherTest {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (!condition()) {
             if (System.currentTimeMillis() > deadline) fail("$message")
-            Thread.sleep(50)
+            runBlocking { delay(50) }
         }
     }
 
@@ -197,7 +197,7 @@ class LibraryWatcherTest {
             write("Parent/child/003.jpg")
             write("Parent/child/004.jpg")
             write("Parent/005.jpg")
-            Thread.sleep(quietMs)
+            runBlocking { delay(quietMs) }
             assertTrue("expected no promotion for Parent, got ${sink.snapshot()}", sink.snapshot().none {
                 it is LibraryChange.FolderPromoted && it.path == File(tmp.root, "Parent").path
             })
@@ -208,7 +208,7 @@ class LibraryWatcherTest {
         withWatch { watcher, sink ->
             awaitReady(watcher, 1)
             write("Almost/001.jpg")
-            Thread.sleep(quietMs)
+            runBlocking { delay(quietMs) }
             assertTrue("expected silence, got ${sink.snapshot()}", sink.snapshot().isEmpty())
         }
     }
@@ -225,7 +225,7 @@ class LibraryWatcherTest {
             write("Book/.secret.cbz")
             write("Book/notes.txt")
             write("Book/.hidden/002.cbz")
-            Thread.sleep(quietMs)
+            runBlocking { delay(quietMs) }
             assertTrue("expected silence, got ${sink.snapshot()}", sink.snapshot().isEmpty())
         }
     }
@@ -235,7 +235,7 @@ class LibraryWatcherTest {
             awaitReady(watcher, 1)
             File(tmp.root, "Book/__MACOSX").mkdirs()
             write("Book/__MACOSX/inner.cbz")
-            Thread.sleep(quietMs)
+            runBlocking { delay(quietMs) }
             assertTrue("expected silence, got ${sink.snapshot()}", sink.snapshot().isEmpty())
         }
     }
@@ -323,7 +323,7 @@ class LibraryWatcherTest {
             write("Batman 2024/Batman 002.cbz")
             // A settle window rather than a timing assertion: whatever the platform reports, the
             // two assertions below have to hold for all of it.
-            Thread.sleep(2_000)
+            runBlocking { delay(2_000) }
             val stalePath = File(dir, "Batman 002.cbz").path
             val arrivals = sink.snapshot().filterIsInstance<LibraryChange.Added>().map { it.path }
             assertTrue("an event named a path that no longer exists: $arrivals", stalePath !in arrivals)
@@ -371,7 +371,7 @@ class LibraryWatcherTest {
             sink.events.clear()
             repeat(20) { file.appendBytes(ByteArray(64)) }
             awaitEvent(liveTimeoutMs, sink) { it is LibraryChange.Modified }
-            Thread.sleep(1_500)
+            runBlocking { delay(1_500) }
             val mine = sink.snapshot().filter {
                 (it as? LibraryChange.Modified)?.path == file.path
             }

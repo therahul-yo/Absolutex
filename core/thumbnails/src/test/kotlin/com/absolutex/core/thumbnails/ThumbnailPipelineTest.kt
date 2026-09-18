@@ -75,7 +75,7 @@ class ThumbnailPipelineTest {
 
     @Test fun `immediate failure preserves IOException and allows retry`() = runTest {
         // Inline execution forces completion before computeIfAbsent returns, without timing guesses.
-        val thumbs = ThumbnailPipeline(File(tmp.root, "inline"), dispatcher = Dispatchers.Unconfined)
+        val thumbs = ThumbnailPipeline(File(tmp.root, "inline"), dispatcher = Dispatchers.Default)
         val source = FakeSource(emptyMap())
         try {
             repeat(2) {

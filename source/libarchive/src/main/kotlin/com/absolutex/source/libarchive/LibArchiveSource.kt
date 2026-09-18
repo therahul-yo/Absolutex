@@ -1,10 +1,13 @@
 package com.absolutex.source.libarchive
 
 import android.os.ParcelFileDescriptor
+import com.absolutex.model.ComicInfo
 import com.absolutex.model.Page
+import com.absolutex.source.ComicInfoLoader
 import com.absolutex.source.ComicSource
 import com.absolutex.source.EntryFilter
 import com.absolutex.source.NaturalOrder
+import com.absolutex.source.PageReadability
 import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.io.InputStream
@@ -30,6 +33,9 @@ class LibArchiveSource private constructor(
     override val pages: List<Page>,
     /** Archive ordinal of each page, parallel to [pages]. Sorting reorders pages, not ordinals. */
     private val ordinals: IntArray,
+    override val comicInfo: ComicInfo?,
+    override val pageReadability: PageReadability?,
+    val isEncrypted: Boolean,
 ) : ComicSource {
 
     override fun openPage(index: Int): InputStream {
@@ -42,29 +48,35 @@ class LibArchiveSource private constructor(
         return ByteArrayInputStream(bytes)
     }
 
-    /** Owns no descriptor — each read opens and closes its own. */
+    /** Owns no descriptor; each read opens and closes its own. */
     override fun close() = Unit
 
     companion object {
         /**
          * @param openFd must return a NEW, independent descriptor on every call.
          * @throws IOException if the container cannot be read at all. A container that reads
-         * partially yields the pages that are readable — §2 requires degrading, never crashing.
+         * partially retains discovered slots and reports readable payloads separately.
          */
         fun open(openFd: () -> ParcelFileDescriptor): LibArchiveSource {
             val raw = openFd().use { LibArchive.nativeList(it.fd) }
                 ?: throw IOException("not a readable archive")
-            // String(bytes, UTF_8) substitutes U+FFFD for malformed input instead of throwing, so
-            // a Shift-JIS name from an old Japanese scan degrades to mojibake, not to a crash.
-            // TODO(phase6): charset detection for legacy non-UTF-8 names.
             val kept = raw
                 .mapIndexed { ordinal, bytes -> ordinal to String(bytes, Charsets.UTF_8) }
                 .filter { (_, name) -> EntryFilter.isPage(name) }
-                // Stable sort: entries with identical names keep their archive order.
                 .sortedWith(compareBy(NaturalOrder) { it.second })
             val pages = kept.mapIndexed { i, (_, name) -> Page(index = i, entryName = name) }
             val ordinals = IntArray(kept.size) { kept[it].first }
-            return LibArchiveSource(openFd, pages, ordinals)
+            val info = try {
+                ComicInfoLoader.from(raw.map { String(it, Charsets.UTF_8) }) { ordinal ->
+                    val bytes = openFd().use { pfd ->
+                        LibArchive.nativeExtract(pfd.fd, ordinal)
+                    }?.let { if (it.size > 1024 * 1024) null else it }
+                    bytes?.let { ordinal to it }
+                }
+            } catch (e: Exception) {
+                null
+            }
+            return LibArchiveSource(openFd, pages, ordinals, info, null, false)
         }
     }
 }
