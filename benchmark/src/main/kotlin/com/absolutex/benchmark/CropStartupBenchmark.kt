@@ -31,7 +31,7 @@ import java.io.File
  *   tools/run-benchmark.sh 'com.absolutex.benchmark.CropStartupBenchmark#tapToFirstPageCropOff'
  *
  * The delta between the two is the crop's cost in the tap-to-first-page path.
- * Trace sections `absx.cropCopy` and `absx.cropDetect` split the cost in Perfetto.
+ * Trace section `absx.cropDetect` is the detection cost in Perfetto.
  */
 @RunWith(AndroidJUnit4::class)
 class CropStartupBenchmark {

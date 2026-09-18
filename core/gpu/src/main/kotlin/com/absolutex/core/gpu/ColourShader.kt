@@ -119,7 +119,7 @@ vec3 sampleLanczos(vec2 p) {
     float wsum = 0.0;
     for (int j = 0; j < 6; j++) {
         for (int i = 0; i < 6; i++) {
-            vec2 tap = base + vec2(float(i), float(j)) + 0.5;
+            vec2 tap = clamp(base + vec2(float(i), float(j)) + 0.5, cropRect.xy, cropRect.zw);
             float w = lanczos(tap.x - p.x) * lanczos(tap.y - p.y);
             acc += content.eval(tap * mapScale + mapTrans).rgb * w;
             wsum += w;

@@ -84,6 +84,16 @@ class ColourShaderTest {
         assertTrue(src.contains("content.eval(tap*mapScale+mapTrans).rgb"))
         assertTrue(src.contains("returnacc/wsum;"))
     }
+
+    @Test
+    fun `Lanczos taps are clamped to the crop rect`() {
+        // Both kernels must clamp taps to the crop rect — without this, edge taps
+        // read pixels beyond the crop. The bug was Mitchell fixed, Lanczos not.
+        val src = ColourShader.SOURCE.replace(" ", "").replace("\n", "")
+        val clampExpr = "clamp(base+vec2(float(i),float(j))+0.5,cropRect.xy,cropRect.zw)"
+        assertTrue("Mitchell taps must clamp to cropRect", src.contains(clampExpr))
+        assertTrue("Lanczos taps must clamp to cropRect", src.contains(clampExpr))
+    }
 }
 
 class ColourPipelineGateTest {

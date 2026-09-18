@@ -324,8 +324,6 @@ fun PageCanvas(
             return@LaunchedEffect
         }
         if (cropDecided) return@LaunchedEffect
-        val (vw, vh) = viewport
-        if (vw <= 0 || vh <= 0) return@LaunchedEffect
         if (page.width <= 0 || page.height <= 0) return@LaunchedEffect
         try {
             val result = withContext(DecodeDispatchers.decode) {
