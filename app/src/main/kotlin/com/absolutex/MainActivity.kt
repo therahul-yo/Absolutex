@@ -38,6 +38,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
+import java.util.concurrent.atomic.AtomicBoolean
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -106,11 +107,27 @@ private fun bookUri(path: String): Uri =
  * §5.2 auto-advance: looks up the next book off the main thread and, if there is one, replaces
  * this reader entry with it, so back from the next book returns to the library rather than to
  * the one just finished. Does nothing when there is none — auto-advance off, or nothing next.
+ *
+ * [scope] must belong to the reader destination itself, not an app-wide scope: leaving the reader
+ * before the lookup resolves must cancel it, not navigate a screen the user already left behind.
+ * [inFlight] coalesces two rapid forward attempts on the last page into one lookup and one
+ * navigate, rather than firing a second of each before the first has come back.
  */
-private fun advanceFromReader(scope: CoroutineScope, vm: ShellViewModel, nav: NavHostController, bookId: String) {
+private fun advanceFromReader(
+    scope: CoroutineScope,
+    vm: ShellViewModel,
+    nav: NavHostController,
+    bookId: String,
+    inFlight: AtomicBoolean,
+) {
+    if (!inFlight.compareAndSet(false, true)) return
     scope.launch {
-        vm.nextBook(bookId)?.let { next ->
-            nav.navigate(readerRoute(bookUri(next.path))) { popUpTo(READER_ROUTE) { inclusive = true } }
+        try {
+            vm.nextBook(bookId)?.let { next ->
+                nav.navigate(readerRoute(bookUri(next.path))) { popUpTo(READER_ROUTE) { inclusive = true } }
+            }
+        } finally {
+            inFlight.set(false)
         }
     }
 }
@@ -128,8 +145,6 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
     val nav = rememberNavController()
     val context = androidx.compose.ui.platform.LocalContext.current
     val readerVm: ReaderViewModel = hiltViewModel(context as ComponentActivity)
-    // A plain callback cannot itself be a suspend function; onFinished below launches into this.
-    val scope = rememberCoroutineScope()
     // The book to resume (§5.2), once the store has been read. Navigation happens in the effect
     // below, never here: a NavController cannot navigate until its graph is set, which is what
     // composing the NavHost does — resuming from this effect crashed on every launch with a saved
@@ -191,11 +206,18 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
             // starts opening a launch Uri before anything composes, and a per-destination
             // ViewModel would throw that head start away and open the book a second time.
             if (uri != null) {
+                // Scoped to THIS destination, not Root's: a coroutine started here is cancelled the
+                // moment the reader is left, instead of resolving later and navigating a screen the
+                // user already backed out of.
+                val readerScope = rememberCoroutineScope()
+                val advanceInFlight = remember { AtomicBoolean(false) }
                 ReaderScreen(
                     uri = uri,
                     vm = readerVm,
                     onSettings = { nav.navigate(SETTINGS_ROUTE) },
-                    onFinished = { advanceFromReader(scope, vm, nav, readerVm.ui.value.bookId) },
+                    onFinished = {
+                        advanceFromReader(readerScope, vm, nav, readerVm.ui.value.bookId, advanceInFlight)
+                    },
                 )
             }
         }

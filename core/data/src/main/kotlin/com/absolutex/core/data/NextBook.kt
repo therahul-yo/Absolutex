@@ -1,7 +1,6 @@
 package com.absolutex.core.data
 
 import com.absolutex.source.NaturalOrder
-import java.io.File
 
 /**
  * Where auto-advance (§5.2) is allowed to look for the next book: the whole library, matched by
@@ -45,12 +44,12 @@ object NextBook {
             // A book with no series has nothing to auto-advance into library-wide; CURRENT_FOLDER
             // is the scope for exactly that shelf.
             NextBookScope.WHOLE_LIBRARY -> current.series != null && book.series == current.series
-            NextBookScope.CURRENT_FOLDER -> File(book.path).parent == File(current.path).parent
+            NextBookScope.CURRENT_FOLDER -> BookPath.parentOf(book.path) == BookPath.parentOf(current.path)
         }
 
     private fun comparatorFor(order: NextBookOrder): Comparator<LibraryBook> = when (order) {
-        NextBookOrder.RAW_FILENAME -> compareBy(NaturalOrder) { book -> File(book.path).name }
+        NextBookOrder.RAW_FILENAME -> compareBy(NaturalOrder) { book -> BookPath.nameOf(book.path) }
         NextBookOrder.PARSED_NUMBER -> compareBy<LibraryBook, Double?>(nullsLast()) { it.issue }
-            .thenBy(NaturalOrder) { book -> File(book.path).name }
+            .thenBy(NaturalOrder) { book -> BookPath.nameOf(book.path) }
     }
 }

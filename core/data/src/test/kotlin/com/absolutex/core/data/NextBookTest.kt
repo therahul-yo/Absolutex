@@ -88,6 +88,24 @@ class NextBookTest {
     }
 
     @Test
+    fun `current folder scope tells SAF folders apart by their decoded document id, not the raw Uri`() {
+        // Both documents sit under the same tree, so a File(uri)-based parent would collapse them
+        // into one "folder" (PR #30 finding 1) — the SAF equivalent of the folder test above.
+        val treeRoot = "content://com.android.externalstorage.documents/tree/primary%3AComics"
+        fun doc(id: String) = "$treeRoot/document/$id"
+        val inFolder = book(doc("primary%3AComics%2FChapter%201%2F001.jpg"), issue = 1.0)
+        val alsoInFolder = book(doc("primary%3AComics%2FChapter%201%2F002.jpg"), issue = 2.0)
+        val otherFolder = book(doc("primary%3AComics%2FChapter%202%2F001.jpg"), issue = 1.5)
+        val next = NextBook.after(
+            inFolder,
+            listOf(inFolder, alsoInFolder, otherFolder),
+            NextBookScope.CURRENT_FOLDER,
+            NextBookOrder.PARSED_NUMBER,
+        )
+        assertEquals(alsoInFolder, next)
+    }
+
+    @Test
     fun `the last book in scope has no next book`() {
         val one = book("/lib/Batman 001.cbz", issue = 1.0)
         val two = book("/lib/Batman 002.cbz", issue = 2.0)
