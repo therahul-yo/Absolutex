@@ -133,4 +133,16 @@ class InMemorySettingsTest {
         assertEquals(Upscaler.LANCZOS, reopened.renderingPrefs.first().upscaler)
         assertEquals(RenderingPrefs().colour, reopened.renderingPrefs.first().colour)
     }
+
+    @Test
+    fun `an auto background update persists and leaves upscaler alone`() = runTest {
+        val bag = MapPrefBag()
+        val settings = InMemorySettings(bag)
+        settings.updateRendering { it.copy(autoBackground = false) }
+        assertFalse(settings.renderingPrefs.first().autoBackground)
+        assertEquals(RenderingPrefs().upscaler, settings.renderingPrefs.first().upscaler)
+        // A fresh instance over the same bag is what a process restart looks like.
+        val reopened = InMemorySettings(bag)
+        assertFalse(reopened.renderingPrefs.first().autoBackground)
+    }
 }

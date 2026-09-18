@@ -24,6 +24,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.geometry.Offset
@@ -36,6 +37,7 @@ import com.absolutex.core.decode.PageImage
 import com.absolutex.core.decode.TileCache
 import com.absolutex.core.decode.TileGrid
 import com.absolutex.core.decode.TileKey
+import com.absolutex.core.gpu.BackgroundMath
 import com.absolutex.core.gpu.ColourParams
 import com.absolutex.core.gpu.ColourPipeline
 import com.absolutex.core.gpu.CropMath
@@ -174,6 +176,16 @@ fun PageCanvas(
      * cropped aspect so a cropped page leaves no clip or gap in a continuous strip.
      */
     onCropDecided: ((CropRect?) -> Unit)? = null,
+    /**
+     * Fires once per page load with the mean edge colour of the crop thumbnail (§4, §5.2,
+     * milestone 5) — the crop's own border when a crop was detected, the whole thumbnail
+     * otherwise. Piggybacks the M4 crop thumbnail this page already decodes: zero extra work
+     * when a crop is active. Fires before the crop decision lands (same effect, computed first),
+     * so the next page's colour is known before it settles. No report on a failed decode: the
+     * caller keeps its last colour rather than flashing to black. Always reports — the reader
+     * (ReaderScreen) decides whether to animate off it, gated on RenderingPrefs.autoBackground.
+     */
+    onBackgroundColour: (Color) -> Unit = {},
 ) {
     var scale by remember(pageIndex) { mutableFloatStateOf(1f) }
     var offsetX by remember(pageIndex) { mutableFloatStateOf(0f) }
@@ -193,6 +205,7 @@ fun PageCanvas(
     val edgeSwipe by rememberUpdatedState(onEdgeSwipe)
     val lockChanged by rememberUpdatedState(onPagerLockChanged)
     val cropDecidedCb by rememberUpdatedState(onCropDecided)
+    val backgroundColourCb by rememberUpdatedState(onBackgroundColour)
     // True while a pinch or a claimed pan owns this page. The draw lambda reads it to pick the
     // sampling kernel: kernel upscalers refine only at rest, so gesture frames never pay for
     // taps. Draw-observed like scale above — no recomposition on touch down or release.
@@ -328,22 +341,30 @@ fun PageCanvas(
         if (cropDecided) return@LaunchedEffect
         if (page.width <= 0 || page.height <= 0) return@LaunchedEffect
         try {
-            val result = withContext(DecodeDispatchers.decode) {
+            // Background colour rides the same thumbnail and the same pixel readback as crop
+            // detection (zero extra decode): sampled in thumbnail space, before the detected
+            // rect is scaled to full resolution, since a mean colour needs no precision.
+            val (result, background) = withContext(DecodeDispatchers.decode) {
                 val thumb = runCatching { page.decodeThumbnail(CropMath.THUMB_EDGE) }.getOrNull()
-                if (thumb == null) return@withContext null
+                    ?: return@withContext null to null
                 val sw = thumb.width
                 val sh = thumb.height
                 val pixels = IntArray(sw * sh)
                 Trace.beginSection("absx.cropDetect")
                 try {
                     thumb.getPixels(pixels, 0, sw, 0, 0, sw, sh)
-                    CropMath.detect(pixels, sw, sh)?.scaleFrom(sw, sh, page.width, page.height)
+                    val detected = CropMath.detect(pixels, sw, sh)
+                    val edge = BackgroundMath.sampleEdge(pixels, sw, sh, detected)
+                    detected?.scaleFrom(sw, sh, page.width, page.height) to edge
                 } finally {
                     Trace.endSection()
                     thumb.recycle()
                 }
             }
             crop = result
+            // A failed decode reports neither: the caller keeps its last background colour
+            // rather than flashing to black (keep-last semantics belong to the caller, not here).
+            if (background != null) backgroundColourCb(Color(background))
         } finally {
             cropDecided = true
             cropDecidedCb?.invoke(crop)

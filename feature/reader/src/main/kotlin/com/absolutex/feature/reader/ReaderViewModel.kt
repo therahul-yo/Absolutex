@@ -14,6 +14,8 @@ import com.absolutex.core.data.ReadingProgress
 import com.absolutex.core.data.TotalRamBytes
 import com.absolutex.core.data.settings.ReaderPrefs
 import com.absolutex.core.data.settings.ReaderPrefsSource
+import com.absolutex.core.data.settings.RenderingPrefs
+import com.absolutex.core.data.settings.RenderingPrefsSource
 import com.absolutex.core.decode.DecodeDispatchers
 import com.absolutex.core.decode.MemoryBudget
 import com.absolutex.core.decode.PageImage
@@ -71,11 +73,12 @@ class ReaderViewModel internal constructor(
     private val progressDao: ProgressDao,
     @TotalRamBytes private val totalRamBytes: Long,
     prefs: ReaderPrefsSource,
+    rendering: RenderingPrefsSource,
     private val bookOpener: BookOpener,
 ) : ViewModel() {
 
     /**
-     * The constructor Hilt uses; only the four Hilt-known params above are real dependencies.
+     * The constructor Hilt uses; only the five Hilt-known params above are real dependencies.
      * Needs its own internal constructor rather than a Kotlin default argument for [bookOpener]
      * because Dagger cannot see Kotlin defaults on an `@Inject` constructor (see
      * LibraryRepository for the same pattern and the same reason). Tests use the internal
@@ -86,7 +89,8 @@ class ReaderViewModel internal constructor(
         progressDao: ProgressDao,
         @TotalRamBytes totalRamBytes: Long,
         prefs: ReaderPrefsSource,
-    ) : this(context, progressDao, totalRamBytes, prefs, ContextBookOpener(context))
+        rendering: RenderingPrefsSource,
+    ) : this(context, progressDao, totalRamBytes, prefs, rendering, ContextBookOpener(context))
 
     /**
      * Reading flow and fit mode, live. Eager so the value is usually in hand before the first page:
@@ -94,6 +98,10 @@ class ReaderViewModel internal constructor(
      */
     val readerPrefs: StateFlow<ReaderPrefs> =
         prefs.readerPrefs.stateIn(viewModelScope, SharingStarted.Eagerly, ReaderPrefs())
+
+    /** Draw-time rendering behaviour (§5.4, Rendering group) — colour, upscaler, auto background. */
+    val renderingPrefs: StateFlow<RenderingPrefs> =
+        rendering.renderingPrefs.stateIn(viewModelScope, SharingStarted.Eagerly, RenderingPrefs())
 
     private val _ui = MutableStateFlow(ReaderUiState())
     val ui: StateFlow<ReaderUiState> = _ui.asStateFlow()

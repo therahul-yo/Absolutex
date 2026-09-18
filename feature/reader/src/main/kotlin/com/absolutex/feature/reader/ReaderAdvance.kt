@@ -4,6 +4,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.pager.PagerState
+import androidx.compose.runtime.MutableState
 import com.absolutex.core.data.settings.ReaderPrefs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -52,4 +53,14 @@ internal fun stripStep(
             )
         }
     }
+}
+
+/**
+ * A newly settled page, reported to progress persistence and to the auto background state in
+ * one place (§4, §5.2, milestone 5) — shared by [Pages] and [Strip] so the two settle effects
+ * stay one line each.
+ */
+internal fun ReaderViewModel.settlePage(page: Int, backgroundPage: MutableState<Int>) {
+    onPageChanged(page)
+    backgroundPage.value = page
 }
