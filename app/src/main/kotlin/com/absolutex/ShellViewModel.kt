@@ -5,7 +5,9 @@ import android.content.Intent
 import android.provider.DocumentsContract
 import android.util.Log
 import com.absolutex.core.data.ContentResolverTree
+import com.absolutex.core.data.LibraryBook
 import com.absolutex.core.data.LibraryRepository
+import com.absolutex.core.data.NextBook
 import com.absolutex.core.data.settings.SettingsWriter
 import com.absolutex.core.scan.TreeEntry
 import android.net.Uri
@@ -14,6 +16,7 @@ import androidx.lifecycle.viewModelScope
 import com.absolutex.core.data.LastBookStore
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.AppPrefsSource
+import com.absolutex.core.data.settings.ReaderPrefsSource
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +38,7 @@ class ShellViewModel @Inject constructor(
     private val library: LibraryRepository,
     private val tree: ContentResolverTree,
     private val writer: SettingsWriter,
+    private val readerPrefs: ReaderPrefsSource,
     prefs: AppPrefsSource,
 ) : ViewModel() {
 
@@ -100,11 +104,12 @@ class ShellViewModel @Inject constructor(
     suspend fun resumableBook(): Uri? {
         val saved = lastBookStore.get() ?: return null
         val uri = Uri.parse(saved)
-        val held = context.contentResolver.persistedUriPermissions.any { it.uri.toString() == saved }
-        if (!held) {
-            clearLastBook(saved)
-            return null
-        }
+        // Opening it IS the check: a document a library scan found lives under a granted TREE
+        // Uri, never its own entry in persistedUriPermissions, so matching that list by exact Uri
+        // rejected every book opened from the library, the app's main route. A failed open — the
+        // grant is gone, or the file is gone — throws or returns null either way, and this catches
+        // both, which a persistedUriPermissions lookup alone cannot: it only ever proves a grant
+        // exists, never that the document under it still does.
         val readable = withContext(Dispatchers.IO) {
             runCatching { context.contentResolver.openFileDescriptor(uri, "r")?.close() }.isSuccess
         }
@@ -113,6 +118,22 @@ class ShellViewModel @Inject constructor(
             return null
         }
         return uri
+    }
+
+    /**
+     * The book after [currentBookId] (§5.2 auto-advance), by the stored scope and order — or null
+     * when auto-advance is off, the current book is not one the library knows, or it is the last
+     * one in scope. Off the main thread: a library can run to several thousand rows, and this is
+     * called from the reader's own turn-forward gesture.
+     */
+    suspend fun nextBook(currentBookId: String): LibraryBook? {
+        val prefs = readerPrefs.currentReaderPrefs()
+        if (!prefs.autoAdvance) return null
+        return withContext(Dispatchers.Default) {
+            val books = library.search("")
+            val current = books.firstOrNull { it.contentKey == currentBookId } ?: return@withContext null
+            NextBook.after(current, books, prefs.nextBookScope, prefs.nextBookOrder)
+        }
     }
 
     fun rememberBook(uri: String) {

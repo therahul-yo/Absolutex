@@ -18,6 +18,16 @@ object BookIdentity {
     fun of(displayName: String, sizeBytes: Long): String = "$displayName:$sizeBytes"
 
     /**
+     * The reverse of [of]: the display name folded into [contentKey], given the same [sizeBytes]
+     * it was built with.
+     *
+     * Recovering it here rather than persisting a second column is sound because [of]'s shape
+     * never changes — every `contentKey` the library persists came from exactly this join — so
+     * subtracting the known, exact suffix cannot lose or misread anything.
+     */
+    fun nameOf(contentKey: String, sizeBytes: Long): String = contentKey.removeSuffix(":$sizeBytes")
+
+    /**
      * Identity when the route may not report both parts, falling back to [fallback].
      *
      * A SAF provider is allowed to omit the size, and a nameless or sizeless identity would

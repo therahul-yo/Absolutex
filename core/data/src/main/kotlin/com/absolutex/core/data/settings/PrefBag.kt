@@ -15,6 +15,7 @@ package com.absolutex.core.data.settings
 interface PrefBag {
     fun boolean(key: String): Boolean?
     fun int(key: String): Int?
+    fun float(key: String): Float?
     fun string(key: String): String?
     fun stringSet(key: String): Set<String>?
 }
@@ -23,8 +24,17 @@ interface PrefBag {
 interface MutablePrefBag : PrefBag {
     fun putBoolean(key: String, value: Boolean)
     fun putInt(key: String, value: Int)
+    fun putFloat(key: String, value: Float)
     fun putString(key: String, value: String)
     fun putStringSet(key: String, value: Set<String>)
+
+    /**
+     * Deletes [key] outright, distinct from writing an empty or default value in its place:
+     * `putStringSet(key, emptySet())` still leaves a present entry, and a set backed by
+     * [DataStoreSettings] only ever forgets a stored value this way — writing one value over
+     * another never removes what the store no longer needs (see [PrefCodec.encodeApp]).
+     */
+    fun remove(key: String)
 }
 
 /**
@@ -33,17 +43,19 @@ interface MutablePrefBag : PrefBag {
  *
  * Type mismatches resolve to null exactly as the contract requires, so a test can seed a wrongly
  * typed value and see the same fallback a migrated store would produce.
+ *
+ * `snapshot()` is a free function ([snapshot]) so this class stays within detekt's
+ * TooManyFunctions limit (11) — the lead's merged PR pushed it to 12.
  */
 class MapPrefBag(initial: Map<String, Any> = emptyMap()) : MutablePrefBag {
 
-    private val values: MutableMap<String, Any> = LinkedHashMap(initial)
-
-    /** Snapshot, for asserting what was persisted. */
-    fun snapshot(): Map<String, Any> = LinkedHashMap(values)
+    internal val values: MutableMap<String, Any> = LinkedHashMap(initial)
 
     override fun boolean(key: String): Boolean? = values[key] as? Boolean
 
     override fun int(key: String): Int? = values[key] as? Int
+
+    override fun float(key: String): Float? = values[key] as? Float
 
     override fun string(key: String): String? = values[key] as? String
 
@@ -63,11 +75,19 @@ class MapPrefBag(initial: Map<String, Any> = emptyMap()) : MutablePrefBag {
         values[key] = value
     }
 
+    override fun putFloat(key: String, value: Float) {
+        values[key] = value
+    }
+
     override fun putString(key: String, value: String) {
         values[key] = value
     }
 
     override fun putStringSet(key: String, value: Set<String>) {
         values[key] = LinkedHashSet(value)
+    }
+
+    override fun remove(key: String) {
+        values.remove(key)
     }
 }
