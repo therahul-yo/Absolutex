@@ -173,14 +173,11 @@ class ServerViewModelTest {
         servers.save(SmbServer("a", "nas", "comics", "books", username = "u"))
         store.saveSmbPassword("a", "pw".toCharArray())
         val viewModel = listViewModel(servers, secrets = store)
-        viewModel.deleteServer("a")
+        // The delete Job is the completion signal: joining it awaits the record write
+        // and the secret wipe in program order — no wall-clock poll, no virtual delay.
+        viewModel.deleteServer("a").join()
         viewModel.state.first {
             it is ServerListState.Ready && it.servers.isEmpty()
-        }
-        // The list updates on the record write; the secret wipe lands right after — poll.
-        val deadline = System.currentTimeMillis() + 10_000L
-        while (store.loadSmbPassword("a") != null && System.currentTimeMillis() < deadline) {
-            kotlinx.coroutines.delay(50)
         }
         assertNull(store.loadSmbPassword("a"))
     }
@@ -196,15 +193,16 @@ class ServerViewModelTest {
         dao.upsert(ReadingProgress("B.cbz:100", 3, 24, 1_800_000_000_000L))
         val viewModel = listViewModel(servers, http, dao, store)
         viewModel.refresh()
-        // A manual sync pulls through the server: the refresh drove network, then settled.
-        // Synchronized: the sync under test appends on Dispatchers.IO while the test polls.
+        // Awaiting the indicator instead of polling the call log: virtual-time friendly,
+        // no wall clock, and nothing is left running at cleanup. The state write that
+        // clears the indicator is ordered after the last network append, so the log is
+        // fully visible once the indicator settles. The read stays synchronized: the
+        // sync under test appends on Dispatchers.IO.
         fun listed(): Boolean = synchronized(http.calls) {
             http.calls.any { it.contains("/api/v1/books/list") }
         }
-        val deadline = System.currentTimeMillis() + 10_000L
-        while (!listed() && System.currentTimeMillis() < deadline) {
-            kotlinx.coroutines.delay(50)
-        }
+        viewModel.refreshing.first { it }
+        viewModel.refreshing.first { !it }
         assertTrue(listed())
         viewModel.refreshing.first { !it }
     }
