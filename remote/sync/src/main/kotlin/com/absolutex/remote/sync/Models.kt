@@ -6,11 +6,35 @@ enum class ServerKind {
     KAVITA,
 }
 
+/**
+ * One Komga/Kavita server for read-progress sync. Secrets never live here — only the
+ * username (non-secret) and which secret to load; see [SyncSecrets]. Mapped from a
+ * [KomgaServer]/[KavitaServer] record at the sync boundary; file servers never map.
+ */
+data class SyncServer(
+    val id: String,
+    val kind: ServerKind,
+    val baseUrl: String,
+    val allowCleartext: Boolean = false,
+    val username: String? = null,
+    val usesApiKey: Boolean = false,
+)
+
 /** Minimal series identity (required fields only, no defaults on identity fields). */
 data class SeriesRef(val id: String, val name: String)
 
 /** Minimal book identity (required fields only, no defaults on identity fields). */
-data class BookRef(val id: String, val name: String, val seriesId: String, val pageCount: Int)
+data class BookRef(
+    val id: String,
+    val name: String,
+    val seriesId: String,
+    val pageCount: Int,
+    /**
+     * File size in bytes (BookDto.sizeBytes). Null when the server omits it — such a book can
+     * never match a local identity and is left alone, never guessed.
+     */
+    val sizeBytes: Long? = null,
+)
 
 /** One entry of a remote book page listing (required fields only). */
 data class PageRef(val number: Int, val fileName: String, val mediaType: String)
@@ -31,8 +55,8 @@ data class SyncProgress(val bookId: String, val pageIndex: Int, val pageCount: I
 data class LibraryRef(val id: Int, val name: String)
 
 /**
- * Kavita chapter progress payload. Field names mirror ProgressDto; the pageNum base is
- * unverified against a live server — see the TODO(experimental) notes on KavitaClient.
+ * Kavita chapter progress payload. Field names mirror ProgressDto; pageNum is 0-based like the
+ * local index (verified: ReaderController.GetImage clamps `page < 0` to 0 and caches by it).
  */
 data class KavitaProgress(
     val volumeId: Int,
@@ -47,6 +71,19 @@ internal data class KavitaSession(val token: String, val refreshToken: String)
 
 /** One Komga Spring-Data page (content + last flag drive accumulation). */
 data class KomgaPage<out T>(val items: List<T>, val last: Boolean)
+
+/**
+ * A newer remote position that arrived after its book was already open. The reader must never
+ * move the page under the user, so this is offered — never applied — for the reader chrome
+ * to surface as "Continue at page N from <server>". Null in [SyncRunner.offers] means there
+ * is nothing to offer.
+ */
+data class RemoteProgressOffer(
+    val bookId: String,
+    val pageIndex: Int,
+    val serverId: String,
+    val serverLabel: String,
+)
 
 /** A Komga book plus its embedded read progress (absent until first read). */
 internal data class KomgaBook(val book: BookRef, val progress: RemoteProgress?)

@@ -14,6 +14,9 @@ enum class SyncTrigger {
     /** A book was opened or closed. */
     OPEN_CLOSE,
 
+    /** The app left the foreground while a book was open. */
+    APP_BACKGROUND,
+
     /** OS-scheduled background work. */
     BACKGROUND,
 }
@@ -31,18 +34,30 @@ enum class SyncDecision {
 }
 
 /**
+ * Gaps at or under this read as ties, not orderings. Covers the `Date`-header one-second
+ * granularity plus LAN latency on the skew measurement: without it a correction landing a
+ * few seconds off flip-flops one real write into a push-then-pull loop. Genuine cross-device
+ * writes closer together than this stay local until the next trigger — the cost of never
+ * adopting a regression.
+ */
+const val SYNC_TOLERANCE_MS = 10_000L
+
+/**
  * Pure last-write-wins decision, matching local Progress semantics (updatedAt decides).
  *
  * Tie keeps local: equal stamps mean neither side moved, so IN_SYNC writes nothing anywhere.
  *
  * Clock-skew caution: [SyncProgress.updatedAt] mixes the device clock with server clocks, so a
  * millisecond margin is not a trustworthy ordering — it only breaks ties consistently. Callers
- * must not treat a 1 ms gap as a real signal, and tests use fixed stamps, never wall-clock.
+ * comparing across clocks must convert to one clock first (see [ServerClock]) and pass
+ * [SYNC_TOLERANCE_MS]; the zero default keeps the unconverted single-clock semantics the
+ * existing tests pin. Tests use fixed stamps, never wall-clock.
  */
-fun syncDecision(local: SyncProgress, remote: SyncProgress?): SyncDecision {
+fun syncDecision(local: SyncProgress, remote: SyncProgress?, toleranceMs: Long = 0L): SyncDecision {
     if (remote == null) return SyncDecision.PUSH
-    if (local.updatedAt > remote.updatedAt) return SyncDecision.PUSH
-    if (local.updatedAt < remote.updatedAt) return SyncDecision.PULL
+    val gap = local.updatedAt - remote.updatedAt
+    if (gap > toleranceMs) return SyncDecision.PUSH
+    if (gap < -toleranceMs) return SyncDecision.PULL
     return SyncDecision.IN_SYNC
 }
 

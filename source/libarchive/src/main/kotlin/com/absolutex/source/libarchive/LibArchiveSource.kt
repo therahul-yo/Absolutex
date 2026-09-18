@@ -1,6 +1,7 @@
 package com.absolutex.source.libarchive
 
 import android.os.ParcelFileDescriptor
+import android.os.Trace
 import com.absolutex.model.ComicInfo
 import com.absolutex.model.Page
 import com.absolutex.source.ComicInfoLoader
@@ -44,8 +45,10 @@ class LibArchiveSource private constructor(
             ?: throw IndexOutOfBoundsException("page $index of ${pages.size}")
         // By ordinal, never by name: two entries can share a name, and names do not survive a
         // JNI round trip byte-for-byte (see nativeList in archive_jni.c).
-        val bytes = passphrase.useBytes { password ->
-            openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinals[index], password) }
+        val bytes = traced("absx.entryExtract") {
+            passphrase.useBytes { password ->
+                openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinals[index], password) }
+            }
         } ?: throw IOException("unreadable entry: ${page.entryName}")
         return ByteArrayInputStream(bytes)
     }
@@ -54,6 +57,15 @@ class LibArchiveSource private constructor(
     override fun close() = passphrase.close()
 
     companion object {
+        private inline fun <T> traced(name: String, block: () -> T): T {
+            Trace.beginSection(name)
+            return try {
+                block()
+            } finally {
+                Trace.endSection()
+            }
+        }
+
         /**
          * @param openFd must return a NEW, independent descriptor on every call.
          * @throws IOException if the container cannot be read at all. A container that reads
@@ -68,7 +80,7 @@ class LibArchiveSource private constructor(
          * TODO(lead): catch ArchivePasswordException at the reader open boundary, prompt/retry
          * for required/rejected passwords, and show unsupported encryption without retrying.
          */
-        fun open(passphrase: CharArray?, openFd: () -> ParcelFileDescriptor): LibArchiveSource {
+        fun open(passphrase: CharArray?, openFd: () -> ParcelFileDescriptor): LibArchiveSource = traced("absx.archiveOpen") {
             val owned = ArchivePassphrase(passphrase)
             var transferred = false
             return try {
@@ -103,7 +115,7 @@ class LibArchiveSource private constructor(
         ): LibArchiveSource {
             val complete = BooleanArray(1)
             val encrypted = BooleanArray(1)
-            val raw = openFd().use { LibArchive.nativeList(it.fd, complete, encrypted, password) }
+            val raw = traced("absx.entryList") { openFd().use { LibArchive.nativeList(it.fd, complete, encrypted, password) } }
                 ?: throw IOException("not a readable archive")
             // String(bytes, UTF_8) substitutes U+FFFD for malformed input instead of throwing, so
             // a Shift-JIS name from an old Japanese scan degrades to mojibake, not to a crash.

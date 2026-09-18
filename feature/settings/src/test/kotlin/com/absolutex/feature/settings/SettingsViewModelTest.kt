@@ -4,7 +4,9 @@ import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.InMemorySettings
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.data.settings.ReaderPrefs
+import com.absolutex.core.data.settings.RenderingPrefs
 import com.absolutex.core.data.settings.SettingsWriter
+import com.absolutex.core.gpu.ColourParams
 import com.absolutex.model.FitMode
 import com.absolutex.model.FitModeMemory
 import com.absolutex.model.PageLayout
@@ -25,9 +27,11 @@ import org.junit.Test
 private class FakeSettingsWriter(
     var app: AppPrefs = AppPrefs(),
     var reader: ReaderPrefs = ReaderPrefs(),
+    var rendering: RenderingPrefs = RenderingPrefs(),
 ) : SettingsWriter {
     val appWrites = mutableListOf<AppPrefs>()
     val readerWrites = mutableListOf<ReaderPrefs>()
+    val renderingWrites = mutableListOf<RenderingPrefs>()
 
     override suspend fun updateApp(transform: (AppPrefs) -> AppPrefs) {
         app = transform(app)
@@ -37,6 +41,11 @@ private class FakeSettingsWriter(
     override suspend fun updateReader(transform: (ReaderPrefs) -> ReaderPrefs) {
         reader = transform(reader)
         readerWrites += reader
+    }
+
+    override suspend fun updateRendering(transform: (RenderingPrefs) -> RenderingPrefs) {
+        rendering = transform(rendering)
+        renderingWrites += rendering
     }
 }
 
@@ -58,15 +67,16 @@ class SettingsViewModelTest {
     private fun viewModel(fake: FakeSettingsWriter): SettingsViewModel {
         // InMemorySettings is the real read side; only the write side is faked.
         val backing = InMemorySettings()
-        return SettingsViewModel(backing, backing, fake)
+        return SettingsViewModel(backing, backing, backing, fake)
     }
 
     @Test
     fun `the exposed flows start on the contract defaults`() = runTest {
         val backing = InMemorySettings()
-        val vm = SettingsViewModel(backing, backing, FakeSettingsWriter())
+        val vm = SettingsViewModel(backing, backing, backing, FakeSettingsWriter())
         assertEquals(AppPrefs(), vm.appPrefs.value)
         assertEquals(ReaderPrefs(), vm.readerPrefs.value)
+        assertEquals(RenderingPrefs(), vm.renderingPrefs.value)
     }
 
     @Test
@@ -191,5 +201,14 @@ class SettingsViewModelTest {
         advanceUntilIdle()
         assertEquals(2, fake.appWrites.size)
         assertEquals(512, fake.app.cacheSizeMiB)
+    }
+
+    @Test
+    fun `updateRendering forwards the transform to the writer`() = runTest {
+        val fake = FakeSettingsWriter()
+        viewModel(fake).updateRendering { it.withColour(ColourParams(temperature = 0.4f)) }
+        advanceUntilIdle()
+        assertEquals(0.4f, fake.rendering.colour.temperature)
+        assertEquals(1, fake.renderingWrites.size)
     }
 }

@@ -35,6 +35,12 @@ internal class PdfPageImage private constructor(
         return runCatching { document.renderTile(pageIndex, region, SCALE / n) }.getOrNull()
     }
 
+    /** Crop-detection thumbnail: PDFium renders to a software bitmap, so no readback stall. */
+    override fun decodeThumbnail(targetEdge: Int): Bitmap? {
+        val (w, h) = PageImage.fitInside(width, height, targetEdge, targetEdge)
+        return runCatching { document.renderTile(pageIndex, Rect(0, 0, w, h), SCALE * w / width) }.getOrNull()
+    }
+
     /** The document owns every native resource; a page holds none. */
     override fun close() = Unit
 

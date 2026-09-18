@@ -156,9 +156,14 @@ class LibraryRepository internal constructor(
 
     private fun ScannedBook.toEntity(scanId: Long) = LibraryBook(
         path = path,
-        // Identity for cross-location deduplication (§5.1): the same file seen twice through
-        // two configured roots. Name and size, because hashing contents is unaffordable.
-        contentKey = BookIdentity.of(File(path).name, sizeBytes),
+        // Identity for cross-location deduplication (§5.1) and for joining reading progress,
+        // which the reader keys the same way (see Context.identityOf): name and size, because
+        // hashing contents is unaffordable. displayName, not File(path).name — path is a
+        // content:// document Uri for a SAF-scanned book, and its last segment is a
+        // percent-encoded document id, not the filename. No migration needed: contentKey already
+        // exists, and a location rescans whenever the library opens, so every row gets the
+        // corrected key on its next scan.
+        contentKey = BookIdentity.of(displayName, sizeBytes),
         series = parsed.series,
         title = parsed.title,
         issue = parsed.issue?.value,

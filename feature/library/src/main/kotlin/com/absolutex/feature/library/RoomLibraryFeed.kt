@@ -5,6 +5,7 @@ import com.absolutex.core.data.LibraryRepository
 import com.absolutex.core.data.ProgressDao
 import com.absolutex.core.data.ReadingProgress
 import com.absolutex.core.data.settings.AppPrefsSource
+import com.absolutex.model.BookIdentity
 import com.absolutex.model.IssueNumber
 import com.absolutex.model.ParsedName
 import dagger.Binds
@@ -17,7 +18,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
-import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -50,7 +50,7 @@ internal class RoomLibraryFeed @Inject constructor(
             // row instead would be quadratic on a large library.
             val byIdentity = progress.associateBy { it.bookId }
             // Deduplicated before mapping, so the expensive part runs once per book that is shown.
-            books.deduplicatedByIdentity().map { it.toUi(byIdentity, prefs.useOriginalFilename) }
+            books.deduplicatedByIdentity().map { it.toUi(byIdentity) }
             // Mapping thousands of rows is real work and Room emits on its own executor; Default
             // keeps it off both the main thread and Room's.
         }.flowOn(Dispatchers.Default)
@@ -60,7 +60,7 @@ internal class RoomLibraryFeed @Inject constructor(
         val prefs = appPrefsSource.currentAppPrefs()
         return repository.search(query)
             .deduplicatedByIdentity()
-            .map { it.toUi(progress, prefs.useOriginalFilename) }
+            .map { it.toUi(progress) }
     }
 
     override suspend fun setFavorite(paths: Set<String>, favorite: Boolean): LibraryNotice =
@@ -105,13 +105,14 @@ internal class RoomLibraryFeed @Inject constructor(
 
     private fun LibraryBook.toUi(
         progress: Map<String, ReadingProgress>,
-        useOriginalFilename: Boolean,
     ): LibraryBookUi {
         val position = progress[contentKey]
         return LibraryBookUi(
             path = path,
-            displayName = displayNameOf(this, useOriginalFilename),
-            originalFilename = File(path).name,
+            displayName = displayNameOf(this),
+            // BookIdentity.nameOf, not File(path).name: path is a content:// Uri for a
+            // SAF-scanned book, and its last segment is a percent-encoded document id.
+            originalFilename = BookIdentity.nameOf(contentKey, sizeBytes),
             series = series,
             sizeBytes = sizeBytes,
             lastModified = lastModified,
@@ -134,17 +135,17 @@ internal class RoomLibraryFeed @Inject constructor(
          * §5.1's "use original filename" switch short-circuits the rebuild: the raw filename is
          * the label for both display and search, which is what the switch's "escape hatch" means.
          */
-        fun displayNameOf(book: LibraryBook, useOriginalFilename: Boolean): String {
-            if (useOriginalFilename) return File(book.path).name
-            return ParsedName(
-                series = book.series,
-                issue = book.issue?.let { value -> IssueNumber(value, book.issueRaw ?: value.toString()) },
-                volume = book.volume,
-                year = book.year,
-                title = book.title,
-                originalFilename = File(book.path).name,
-            ).displayName
-        }
+        fun displayNameOf(book: LibraryBook): String = ParsedName(
+            series = book.series,
+            issue = book.issue?.let { value -> IssueNumber(value, book.issueRaw ?: value.toString()) },
+            volume = book.volume,
+            year = book.year,
+            title = book.title,
+            // BookIdentity.nameOf, not File(book.path).name: path is a content:// Uri for a
+            // SAF-scanned book, so its last path segment is a document id, not a filename — and
+            // this is the string ParsedName.displayName falls back to when nothing else parsed.
+            originalFilename = BookIdentity.nameOf(book.contentKey, book.sizeBytes),
+        ).displayName
     }
 }
 

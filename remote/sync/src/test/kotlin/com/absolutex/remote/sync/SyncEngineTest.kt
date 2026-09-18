@@ -31,6 +31,20 @@ class SyncEngineTest {
         assertEquals(SyncDecision.PULL, syncDecision(progress(updatedAt = 1_000L), progress(updatedAt = 1_001L)))
     }
 
+    @Test fun toleranceBandReadsSmallGapsAsTies() {
+        val local = progress(updatedAt = 50_000L)
+        assertEquals(SyncDecision.IN_SYNC, syncDecision(local, progress(updatedAt = 51_000L), SYNC_TOLERANCE_MS))
+        assertEquals(SyncDecision.IN_SYNC, syncDecision(local, progress(updatedAt = 49_000L), SYNC_TOLERANCE_MS))
+    }
+
+    @Test fun toleranceBandKeepsLargeGapsOrdered() {
+        val local = progress(updatedAt = 50_000L)
+        val older = progress(updatedAt = 50_000L - SYNC_TOLERANCE_MS - 1L)
+        val newer = progress(updatedAt = 50_000L + SYNC_TOLERANCE_MS + 1L)
+        assertEquals(SyncDecision.PUSH, syncDecision(local, older, SYNC_TOLERANCE_MS))
+        assertEquals(SyncDecision.PULL, syncDecision(local, newer, SYNC_TOLERANCE_MS))
+    }
+
     @Test fun enginePushesIfAndOnlyIfLocalNewer() {
         val stored = mutableListOf<SyncProgress>()
         val engine = SyncEngine(object : RemoteStore {

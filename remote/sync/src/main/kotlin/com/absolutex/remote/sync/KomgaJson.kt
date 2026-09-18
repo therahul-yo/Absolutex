@@ -50,6 +50,7 @@ internal fun parseBookRef(item: JSONObject): BookRef {
         name = req(item, "name", item::getString),
         seriesId = req(item, "seriesId", item::getString),
         pageCount = req(media, "pagesCount", media::getInt),
+        sizeBytes = optLong(item, "sizeBytes"),
     )
 }
 
