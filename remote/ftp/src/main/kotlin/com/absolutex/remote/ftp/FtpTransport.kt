@@ -9,7 +9,7 @@ import java.io.IOException
  * batch through the shared streaming stack, which coalesces contiguous ranges and caches
  * blocks. All methods block on the network; call off the main thread.
  */
-interface FtpTransport {
+interface FtpTransport : AutoCloseable {
     /** Total file size in bytes. */
     @Throws(IOException::class)
     fun sizeBytes(path: String): Long
@@ -40,4 +40,7 @@ fun FtpTransport.bind(path: String): com.absolutex.remote.core.RangeTransport =
 
         override fun readAt(offset: Long, length: Int): ByteArray =
             this@bind.readAt(path, offset, length)
+
+        // Forwarded: the opener closes the bound file, and the session must die with it.
+        override fun close() = this@bind.close()
     }

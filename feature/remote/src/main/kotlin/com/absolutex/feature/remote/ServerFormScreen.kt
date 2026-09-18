@@ -78,11 +78,7 @@ fun ServerFormScreen(
                 onKind = { viewModel.update(form.copy(kind = it)) },
             )
             FormFields(form = form, status = status, onUpdate = viewModel::update)
-            if (form.kind == RemoteKind.SMB) {
-                Text(stringResource(R.string.remote_test_pending_smb))
-            } else {
-                TestButton(testing = status.testing, onTest = viewModel::testConnection)
-            }
+            TestButton(testing = status.testing, onTest = viewModel::testConnection)
             status.testResult?.let { TestResultLine(result = it) }
             if (status.saveBlocked) {
                 Text(stringResource(R.string.remote_invalid_details))

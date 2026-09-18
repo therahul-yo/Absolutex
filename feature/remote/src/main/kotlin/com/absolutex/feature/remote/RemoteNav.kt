@@ -15,10 +15,12 @@ const val REMOTE_FORM_ROUTE = "remote/form?serverId={serverId}"
  * Remote servers destination for the app-level NavHost.
  *
  * TODO(agent3): attach from the app graph with `remoteDestination()` inside the NavHost
- * builder, next to `settingsDestination()`. The list navigates to the form through
- * [onOpenForm] (null id means a new server) and the form reports completion through
- * [onFormDone] — wire both to the host NavController; back navigation otherwise stays the
- * host's concern. Do not edit MainActivity or the NavHost from this lane.
+ * builder in MainActivity, next to `settingsDestination()`. Pass `onOpenForm = { id ->
+ * nav.navigate(if (id == null) "remote/form" else "remote/form?serverId=$id") }` and
+ * `onFormDone = { nav.popBackStack() }`; back navigation otherwise stays the host's
+ * concern. Also add `implementation(project(":feature:remote"))` to app/build.gradle.kts —
+ * that dependency is what ships the transports, so report the APK delta and re-arm the
+ * baseline with the user when you do. Do not edit MainActivity or the NavHost from this lane.
  */
 fun NavGraphBuilder.remoteDestination(
     onOpenForm: (String?) -> Unit = {},

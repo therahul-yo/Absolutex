@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.absolutex.remote.ftp.FtpLocation
+import com.absolutex.remote.smb.SmbLocation
 import com.absolutex.remote.sync.ConnectionResult
 import com.absolutex.remote.sync.FtpServer
 import com.absolutex.remote.sync.KavitaConnectionProbe
@@ -69,6 +70,7 @@ class ServerFormViewModel @Inject constructor(
     private val komgaProbe: KomgaConnectionProbe,
     private val kavitaProbe: KavitaConnectionProbe,
     private val ftpProbe: FtpConnectionProbe,
+    private val smbProbe: SmbConnectionTester,
 ) : ViewModel() {
 
     private val _form = MutableStateFlow(ServerForm())
@@ -251,8 +253,17 @@ class ServerFormViewModel @Inject constructor(
                     ),
                     secret.copyOf(),
                 )
-                // No :remote:smb on this stack yet (#9 unmerged): the screen says so explicitly.
-                RemoteKind.SMB -> null
+                RemoteKind.SMB -> smbProbe.test(
+                    SmbLocation(
+                        host = form.host.trim(),
+                        share = form.share.trim(),
+                        path = form.path.trim(),
+                        port = form.port.toInt(),
+                        username = form.username.trim(),
+                        allowUnsigned = form.allowUnsigned,
+                    ),
+                    secret.copyOf(),
+                )
             }
         }
 

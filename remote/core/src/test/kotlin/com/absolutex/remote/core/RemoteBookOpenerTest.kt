@@ -1,5 +1,6 @@
 package com.absolutex.remote.core
 
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -31,7 +32,12 @@ class RemoteBookOpenerTest {
         }
     }
 
-    @Test fun `dispatcher hands the file to the backend transport`() {
+    @Test fun `encoded names decode like BookPath`() = runTest {
+        val location = parseRemoteUri("absolutex-remote://nas/comics/my%20book%2Fv2.cbz")
+        assertEquals(RemoteLocation("nas", "/comics/my book/v2.cbz", "v2.cbz"), location)
+    }
+
+    @Test fun `dispatcher hands the file to the backend transport`() = runTest {
         val bytes = ZipBytes.cbz("page01.jpg" to ZipBytes.pageBytes(1))
         var seenServer = ""
         var seenPath = ""
@@ -50,7 +56,7 @@ class RemoteBookOpenerTest {
         ready.source.close()
     }
 
-    @Test fun `transport failure propagates as IOException, never download-required`() {
+    @Test fun `transport failure propagates as IOException, never download-required`() = runTest {
         val opener = TransportBookOpener { _, _ -> throw IOException("server down") }
         try {
             opener.open("absolutex-remote://nas/comics/book.cbz")

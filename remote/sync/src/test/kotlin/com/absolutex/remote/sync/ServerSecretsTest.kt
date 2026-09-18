@@ -62,4 +62,17 @@ class ServerSecretsTest {
         assertNull(secrets.loadSmbPassword("nope"))
         assertNull(secrets.loadFtpPassword("nope"))
     }
+
+    @Test fun `single-kind clears wipe only their slot`() {
+        val secrets = SyncSecrets(InMemoryCredentialStore())
+        secrets.saveSmbPassword("s", "smb".toCharArray())
+        secrets.saveFtpPassword("s", "ftp".toCharArray())
+        secrets.savePassword("s", "pw".toCharArray())
+        secrets.clearSmbPassword("s")
+        assertNull(secrets.loadSmbPassword("s"))
+        assertEquals("ftp", secrets.loadFtpPassword("s")?.concatToString())
+        secrets.clearFtpPassword("s")
+        assertNull(secrets.loadFtpPassword("s"))
+        assertEquals("pw", secrets.loadPassword("s")?.concatToString())
+    }
 }

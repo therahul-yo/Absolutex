@@ -18,8 +18,13 @@ import com.absolutex.source.ComicSource
  * OpenBook stays local-only; the opener returns a ComicSource the reader already knows.
  */
 interface RemoteBookOpener {
+    /**
+     * Opens the book behind [uri]. Suspending: resolving the server id reads the server
+     * list (DataStore), so callers must not call this on the main thread — the reader
+     * calls it from its open coroutine, same as every other open path.
+     */
     @Throws(java.io.IOException::class)
-    fun open(uri: String): RemoteOpenResult
+    suspend fun open(uri: String): RemoteOpenResult
 }
 
 /** Where an `absolutex-remote://` Uri points: which server, which path, which file name. */
@@ -48,10 +53,10 @@ const val REMOTE_URI_SCHEME = "absolutex-remote"
  * (SMB/FTP connect lazily) and never shared across books.
  */
 class TransportBookOpener(
-    private val transports: (serverId: String, path: String) -> RangeTransport,
+    private val transports: suspend (serverId: String, path: String) -> RangeTransport,
 ) : RemoteBookOpener {
 
-    override fun open(uri: String): RemoteOpenResult {
+    override suspend fun open(uri: String): RemoteOpenResult {
         val location = parseRemoteUri(uri)
         val transport = transports(location.serverId, location.path)
         return CoreComicSource.open(transport, location.displayName)
@@ -65,12 +70,19 @@ fun parseRemoteUri(uri: String): RemoteLocation {
         throw IllegalArgumentException("remote uri must use $REMOTE_URI_SCHEME: $uri")
     }
     val serverId = parsed.authority
-    val displayName = parsed.path.orEmpty().substringAfterLast('/')
+    // Percent-decode like BookPath does for SAF document ids: a display name carrying
+    // %20 or %2F must resolve to the literal name, or its identity will never match the
+    // local copy of the same file. Undecodable input keeps its raw form, never crashes.
+    val path = decode(parsed.path.orEmpty())
+    val displayName = path.substringAfterLast('/')
     if (serverId.isNullOrBlank() || displayName.isEmpty()) {
         throw IllegalArgumentException("remote uri needs a server and a file: $uri")
     }
-    return RemoteLocation(serverId, parsed.path, displayName)
+    return RemoteLocation(serverId, path, displayName)
 }
+
+private fun decode(segment: String): String =
+    runCatching { java.net.URLDecoder.decode(segment, "UTF-8") }.getOrDefault(segment)
 
 private fun parseUri(uri: String): java.net.URI {
     try {

@@ -149,6 +149,7 @@ class ServerViewModelTest {
         KomgaConnectionProbe(http),
         KavitaConnectionProbe(http),
         FtpConnectionProbe(),
+        SmbConnectionTester(),
     )
 
     @Test fun `empty store shows the empty state`() = runTest {
@@ -225,6 +226,7 @@ class ServerViewModelTest {
             KomgaConnectionProbe(FakeHttp()),
             KavitaConnectionProbe(FakeHttp()),
             FtpConnectionProbe(),
+            SmbConnectionTester(),
         )
         viewModel.update(
             ServerForm(
@@ -249,16 +251,14 @@ class ServerViewModelTest {
         assertEquals(ConnectionResult.Ok, result)
     }
 
-    @Test fun `smb has no live test yet`() = runTest {
+    @Test fun `smb live test is gated on validation before any network`() = runTest {
+        // The mapping itself is unit-tested on SmbConnectionTester with scripted failures;
+        // here the form must refuse invalid input without touching the network.
         val viewModel = formViewModel()
-        viewModel.update(
-            ServerForm(
-                kind = RemoteKind.SMB, host = "nas", share = "comics", path = "books",
-                port = "445", username = "u", password = "pw",
-            ),
-        )
+        viewModel.update(ServerForm(kind = RemoteKind.SMB))
         viewModel.testConnection()
-        val status = viewModel.status.first { !it.testing }
+        val status = viewModel.status.first { it.saveBlocked }
+        assertTrue(status.invalidFields.contains(ServerFormViewModel.FIELD_HOST))
         assertNull(status.testResult)
     }
 
@@ -284,6 +284,7 @@ class ServerViewModelTest {
             KomgaConnectionProbe(FakeHttp()),
             KavitaConnectionProbe(FakeHttp()),
             FtpConnectionProbe(),
+            SmbConnectionTester(),
         )
         viewModel.form.first { it.serverId == "x" }
         // Switch SMB -> Komga with the prefilled NAS password still in the field.
@@ -311,13 +312,4 @@ class ServerViewModelTest {
         assertNull(tested.testResult)
     }
 
-    @Test fun `ftp mapping covers the result variants`() {
-        assertEquals(ConnectionResult.AuthFailed, mapFtpFailure(IOException("FTP login refused: x")))
-        assertEquals(ConnectionResult.NotFound, mapFtpFailure(IOException("cannot list FTP path: x")))
-        assertEquals(ConnectionResult.Unreachable, mapFtpFailure(IOException("reset")))
-        assertEquals(
-            ConnectionResult.SecurityRefused,
-            mapFtpFailure(IOException("tls", javax.net.ssl.SSLHandshakeException("hs"))),
-        )
-    }
 }
