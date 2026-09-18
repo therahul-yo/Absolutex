@@ -40,7 +40,7 @@ class KomgaClient(
             authHeaders() + JSON_HEADERS,
             "{}",
         )
-        if (response.code != HTTP_OK) throw IOException("series list failed: ${response.code}")
+        if (response.code != HTTP_OK) throw HttpStatusException(response.code, "series list failed: ${response.code}")
         return parseSeriesPage(response.body)
     }
 
@@ -56,7 +56,7 @@ class KomgaClient(
             authHeaders() + JSON_HEADERS,
             JSONObject().put("condition", condition).toString(),
         )
-        if (response.code != HTTP_OK) throw IOException("books list failed: ${response.code}")
+        if (response.code != HTTP_OK) throw HttpStatusException(response.code, "books list failed: ${response.code}")
         return parseBooksPage(response.body)
     }
 
@@ -65,7 +65,7 @@ class KomgaClient(
 
     fun listPages(bookId: String): List<PageRef> {
         val response = http.request("GET", "$root/api/v1/books/$bookId/pages", authHeaders(), null)
-        if (response.code != HTTP_OK) throw IOException("pages list failed: ${response.code}")
+        if (response.code != HTTP_OK) throw HttpStatusException(response.code, "pages list failed: ${response.code}")
         return parsePages(response.body)
     }
 
@@ -79,7 +79,7 @@ class KomgaClient(
             authHeaders() + extra,
         )
         if (response.code != HTTP_OK && response.code != HTTP_PARTIAL) {
-            throw IOException("page fetch failed: ${response.code}")
+            throw HttpStatusException(response.code, "page fetch failed: ${response.code}")
         }
         return response.bytes
     }
@@ -87,8 +87,7 @@ class KomgaClient(
     fun getProgress(bookId: String): RemoteProgress? {
         // No dedicated progress GET exists; ReadProgress rides on BookDto and is absent pre-read.
         val response = http.request("GET", "$root/api/v1/books/$bookId", authHeaders(), null)
-        if (response.code == HTTP_NOT_FOUND) return null
-        if (response.code != HTTP_OK) throw IOException("progress GET failed: ${response.code}")
+        if (response.code != HTTP_OK) throw HttpStatusException(response.code, "progress GET failed: ${response.code}")
         return parseBookWithProgress(response.body).progress
     }
 
@@ -100,7 +99,9 @@ class KomgaClient(
             authHeaders() + JSON_HEADERS,
             body,
         )
-        if (response.code != HTTP_NO_CONTENT) throw IOException("progress PUT failed: ${response.code}")
+        if (response.code != HTTP_NO_CONTENT) {
+            throw HttpStatusException(response.code, "progress PUT failed: ${response.code}")
+        }
     }
 
     fun clearProgress(bookId: String): Unit {
@@ -110,6 +111,8 @@ class KomgaClient(
             authHeaders(),
             null,
         )
-        if (response.code != HTTP_NO_CONTENT) throw IOException("progress DELETE failed: ${response.code}")
+        if (response.code != HTTP_NO_CONTENT) {
+            throw HttpStatusException(response.code, "progress DELETE failed: ${response.code}")
+        }
     }
 }

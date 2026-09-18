@@ -1,4 +1,8 @@
-plugins { alias(libs.plugins.android.library) }
+plugins {
+    alias(libs.plugins.android.library)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.hilt)
+}
 android {
     namespace = "com.absolutex.remote.sync"
     compileSdk = libs.versions.compileSdk.get().toInt()
@@ -12,8 +16,17 @@ android {
     testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 dependencies {
-    // Zero shipped dependencies: HTTP is HttpURLConnection, JSON is org.json (both platform).
-    // JUnit + Robolectric are test-only and already used by :core:data — nothing new ships.
+    implementation(project(":core:model"))
+    implementation(project(":core:data"))
+    implementation(libs.datastore.preferences)
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
+    implementation(libs.kotlinx.coroutines.android)
+    // Still zero shipped third-party dependencies: HTTP is HttpURLConnection, JSON is org.json
+    // (both platform); Hilt/Room/DataStore/coroutines already ship in the app (see apkanalyzer
+    // note in the wiring PR). JUnit + Robolectric + MockWebServer are test-only.
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
+    testImplementation(libs.mockwebserver3)
+    testImplementation(libs.kotlinx.coroutines.test)
 }

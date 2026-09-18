@@ -68,6 +68,13 @@ commonsNet           = "3.13.0"
 ftpserverCore        = "1.2.1"
 minaCore             = "2.2.4"
 slf4jApiFtpTest      = "1.7.36"
+# mockwebserver3: test-only, a real in-process HTTP server so sync wiring tests speak the
+# actual Komga/Kavita endpoints (a fake HttpCall can't reproduce a genuine 401/5xx or a
+# truncated chunked body). Verified 2026-09-16:
+#   curl -s https://repo1.maven.org/maven2/com/squareup/okhttp3/mockwebserver3/maven-metadata.xml
+# reports <latest>5.5.0</latest>/<release>5.5.0</release>. Apache-2.0 (Square).
+# Test classpath only — confirm with apkanalyzer that okhttp/okio never enter the release APK.
+mockwebserver3       = "5.5.0"
 
 # SDK levels — see plan §2. minSdk 33 is the AGSL floor; costs ~0% inside our hardware class.
 compileSdk           = "37"
@@ -116,6 +123,7 @@ commons-net                  = { module = "commons-net:commons-net", version.ref
 ftpserver-core                = { module = "org.apache.ftpserver:ftpserver-core", version.ref = "ftpserverCore" }
 mina-core                    = { module = "org.apache.mina:mina-core", version.ref = "minaCore" }
 slf4j-api-ftp-test            = { module = "org.slf4j:slf4j-api", version.ref = "slf4jApiFtpTest" }
+mockwebserver3               = { module = "com.squareup.okhttp3:mockwebserver3", version.ref = "mockwebserver3" }
 
 # Single Glance artifact: classic RemoteViews needs a layout XML resource, which the
 # brief bans outside splash, so there is no classic fallback to pin (see PR notes).
