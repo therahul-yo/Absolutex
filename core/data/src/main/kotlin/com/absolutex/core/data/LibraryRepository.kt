@@ -1,5 +1,6 @@
 package com.absolutex.core.data
 
+import android.net.Uri
 import com.absolutex.core.scan.LibraryChange
 import com.absolutex.core.scan.DocumentTree
 import com.absolutex.core.scan.LibraryScanner
@@ -42,9 +43,17 @@ class LibraryRepository internal constructor(
 
     fun observeLibrary(): Flow<List<LibraryBook>> = dao.observeAll()
 
-    /** A blank query is not a search for nothing — it is the whole library (§5.1). */
-    suspend fun search(query: String): List<LibraryBook> =
-        if (query.isBlank()) dao.allOnce() else dao.search(query.trim())
+    /**
+     * A blank query is not a search for nothing — it is the whole library (§5.1).
+     *
+     * A SAF book's [LibraryBook.path] is a percent-encoded document Uri, so a typed query with a
+     * space or any other reserved character never matches it as-is. [Uri.encode] is the same
+     * encoding Android used to build that Uri, so the encoded query matches the encoded path.
+     */
+    suspend fun search(query: String): List<LibraryBook> {
+        val trimmed = query.trim()
+        return if (trimmed.isEmpty()) dao.allOnce() else dao.search(trimmed, Uri.encode(trimmed))
+    }
 
     /**
      * Scans [root] and reconciles the database with what is on disk.

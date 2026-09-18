@@ -110,6 +110,12 @@ data class AppPrefs(
     val openImageFolders: Boolean = true,
     /** Library locations (§5.1): SAF tree Uris the user granted, as strings. */
     val locations: Set<String> = emptySet(),
+    /**
+     * §5.1 escape hatch: display and search the raw filename instead of the parse. Off by
+     * default — the parse is the better label for almost every real library — and read by the
+     * library at display time, so flipping it re-labels without a rescan.
+     */
+    val useOriginalFilename: Boolean = false,
 ) {
     companion object {
         const val DEFAULT_CACHE_MIB: Int = 512

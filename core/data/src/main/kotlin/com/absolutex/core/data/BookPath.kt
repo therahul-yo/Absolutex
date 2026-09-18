@@ -5,7 +5,8 @@ import java.net.URLDecoder
 
 /**
  * A book's [android path][LibraryBook.path] split into its parent folder and its own name — for
- * [NextBookScope.CURRENT_FOLDER] and the raw-filename tiebreak (§5.2).
+ * the library's display name and search (§5.1), and for anything else (a per-folder scope, a
+ * raw-filename tiebreak) that needs a book's real folder or filename rather than its raw Uri.
  *
  * A SAF document Uri's document id is percent-encoded as ONE path segment: any "/" that is part
  * of the id's own relative path (e.g. "primary:Comics/Chapter 1/001.jpg") comes back as a literal
@@ -13,8 +14,12 @@ import java.net.URLDecoder
  * every document under a tree and can never tell two folders apart. Decoding that segment and
  * splitting IT on its last "/" recovers the real parent and name. A filesystem path never had
  * this problem and is handled by [File] exactly as before.
+ *
+ * The decoded id also carries a `<root>:` prefix (e.g. "primary:Batman 001.cbz" for a document at
+ * the tree's own root, with no "/" at all) — that root label is not part of the name and is
+ * stripped before splitting, so a root-level document's name is never "primary:Batman 001.cbz".
  */
-internal object BookPath {
+object BookPath {
 
     private const val DOCUMENT_SEGMENT = "/document/"
 
@@ -30,11 +35,12 @@ internal object BookPath {
         }
         val prefix = path.substring(0, documentAt + DOCUMENT_SEGMENT.length)
         val documentId = decode(path.substring(documentAt + DOCUMENT_SEGMENT.length))
-        val slash = documentId.lastIndexOf('/')
+        val relativePath = documentId.substringAfter(':', documentId)
+        val slash = relativePath.lastIndexOf('/')
         return if (slash < 0) {
-            prefix to documentId
+            prefix to relativePath
         } else {
-            (prefix + documentId.substring(0, slash)) to documentId.substring(slash + 1)
+            (prefix + relativePath.substring(0, slash)) to relativePath.substring(slash + 1)
         }
     }
 

@@ -39,4 +39,8 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    // RoomLibraryFeedTest renders labels from a real Room table on the JVM, mirroring :core:data.
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.room.testing)
 }
