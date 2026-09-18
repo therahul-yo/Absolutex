@@ -87,7 +87,8 @@ class ServerViewModelTest {
     }
 
     private class FakeHttp : HttpCall {
-        val calls = mutableListOf<String>()
+        // Synchronized: the sync under test appends on Dispatchers.IO while the test polls.
+        val calls = java.util.Collections.synchronizedList(mutableListOf<String>())
         var loginBody = "{\"token\":\"t\",\"refreshToken\":\"r\"}"
         var seriesBody = "{\"content\":[{\"id\":\"s1\",\"name\":\"S\"}],\"last\":true}"
 
@@ -196,11 +197,15 @@ class ServerViewModelTest {
         val viewModel = listViewModel(servers, http, dao, store)
         viewModel.refresh()
         // A manual sync pulls through the server: the refresh drove network, then settled.
+        // Synchronized: the sync under test appends on Dispatchers.IO while the test polls.
+        fun listed(): Boolean = synchronized(http.calls) {
+            http.calls.any { it.contains("/api/v1/books/list") }
+        }
         val deadline = System.currentTimeMillis() + 10_000L
-        while (http.calls.none { it.contains("/api/v1/books/list") } && System.currentTimeMillis() < deadline) {
+        while (!listed() && System.currentTimeMillis() < deadline) {
             kotlinx.coroutines.delay(50)
         }
-        assertTrue(http.calls.any { it.contains("/api/v1/books/list") })
+        assertTrue(listed())
         viewModel.refreshing.first { !it }
     }
 
