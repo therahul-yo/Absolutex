@@ -97,7 +97,9 @@ class ColourPipeline {
         upscaler: Upscaler,
         atRest: Boolean,
     ): Paint? {
-        val magnifying = isMagnifying(bitmap.width, bitmap.height, dstLeft, dstTop, dstRight, dstBottom)
+        val srcW = srcRight - srcLeft
+        val srcH = srcBottom - srcTop
+        val magnifying = isMagnifying(srcW, srcH, dstLeft, dstTop, dstRight, dstBottom)
         val mode = shadeMode(upscaler, atRest, magnifying)
         if (params.isNeutral && mode == Upscaler.PLATFORM) return null
         val rt = runtime ?: RuntimeShader(ColourShader.SOURCE).also {

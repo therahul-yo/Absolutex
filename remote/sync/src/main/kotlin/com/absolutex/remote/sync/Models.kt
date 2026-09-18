@@ -6,6 +6,20 @@ enum class ServerKind {
     KAVITA,
 }
 
+/**
+ * One Komga/Kavita server for read-progress sync. Secrets never live here — only the
+ * username (non-secret) and which secret to load; see [SyncSecrets]. Mapped from a
+ * [KomgaServer]/[KavitaServer] record at the sync boundary; file servers never map.
+ */
+data class SyncServer(
+    val id: String,
+    val kind: ServerKind,
+    val baseUrl: String,
+    val allowCleartext: Boolean = false,
+    val username: String? = null,
+    val usesApiKey: Boolean = false,
+)
+
 /** Minimal series identity (required fields only, no defaults on identity fields). */
 data class SeriesRef(val id: String, val name: String)
 

@@ -203,6 +203,8 @@ fun PageCanvas(
     var crop by remember(pageIndex, cropEnabled) { mutableStateOf<CropRect?>(null) }
     var cropDecided by remember(pageIndex, cropEnabled) { mutableStateOf(!cropEnabled) }
 
+    // Plain holder: tracing the first successful draw must not invalidate composition or draw.
+    val firstDraw = remember(bookId, pageIndex) { booleanArrayOf(true) }
     val src = remember { Rect() }
     val dst = remember { Rect() }
     val paint = remember { Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG) }
@@ -324,8 +326,6 @@ fun PageCanvas(
             return@LaunchedEffect
         }
         if (cropDecided) return@LaunchedEffect
-        val (vw, vh) = viewport
-        if (vw <= 0 || vh <= 0) return@LaunchedEffect
         if (page.width <= 0 || page.height <= 0) return@LaunchedEffect
         try {
             val result = withContext(DecodeDispatchers.decode) {
@@ -617,6 +617,9 @@ fun PageCanvas(
         val originX = (vw - drawW) / 2f + ox + spreadSide.gutter * max(0f, (vw - drawW) / 2f)
         val originY = (vh - drawH) / 2f + oy
 
+        val traceFirstDraw = firstDraw[0]
+        if (traceFirstDraw) Trace.beginSection("absx.firstDraw")
+        try {
         drawIntoCanvas { canvas ->
             val native = canvas.nativeCanvas
 
@@ -690,6 +693,12 @@ fun PageCanvas(
                         native.drawBitmap(tile, src, dst, paint)
                     }
                 }
+            }
+        }
+        } finally {
+            if (traceFirstDraw) {
+                firstDraw[0] = false
+                Trace.endSection()
             }
         }
     }

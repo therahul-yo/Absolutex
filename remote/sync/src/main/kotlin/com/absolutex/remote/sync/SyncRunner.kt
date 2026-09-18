@@ -23,7 +23,7 @@ import java.io.IOException
  */
 class SyncRunner(
     private val progressDao: ProgressDao,
-    private val servers: SyncServers,
+    private val servers: RemoteServers,
     private val queue: SyncQueue,
     private val komga: ServerSync,
     private val kavita: ServerSync,
@@ -36,7 +36,7 @@ class SyncRunner(
     suspend fun pushBook(bookId: String, attemptStopped: Boolean = false) {
         val local = progressDao.get(bookId)?.toSync() ?: return
         var queued = false
-        for (server in servers.current()) {
+        for (server in servers.current().mapNotNull { it.toSyncServer() }) {
             if (!attemptStopped && server.id in _stoppedServers.value) continue
             try {
                 runnerFor(server).sync(server, local)
@@ -70,12 +70,11 @@ class SyncRunner(
         onOffer: (RemoteProgressOffer) -> Unit,
     ): SyncProgress? {
         val local = progressDao.get(bookId)?.toSync() ?: return null
-        for (server in servers.current()) {
-            val pulled = if (!attemptStopped && server.id in _stoppedServers.value) {
-                null
-            } else {
-                pullOrNull(server, local)
-            } ?: continue
+        val targets = servers.current()
+            .mapNotNull { it.toSyncServer() }
+            .filter { attemptStopped || it.id !in _stoppedServers.value }
+        for (server in targets) {
+            val pulled = pullOrNull(server, local) ?: continue
             val offered = openBookId == bookId && offerWhenOpen
             if (offered) {
                 onOffer(RemoteProgressOffer(bookId, pulled.pageIndex, server.id, server.baseUrl))
@@ -112,15 +111,16 @@ class SyncRunner(
         // and a still-dead one re-stops without queueing. Within one server, the first
         // auth failure stops the rest of its books — no point hammering a dead credential.
         val locals = progressDao.observeAll().first()
-        for (server in servers.current()) {
+        for (server in servers.current().mapNotNull { it.toSyncServer() }) {
             pullFromServer(server, locals, openBookId, onOffer)
         }
     }
 
     /** Folder browse / refresh for one server: its outbox, then a pull through it. */
     suspend fun syncServer(serverId: String, openBookId: String?, onOffer: (RemoteProgressOffer) -> Unit) {
-        val server = servers.current().firstOrNull { it.id == serverId } ?: return
-        drainQueueFor(server)
+        val server = servers.current().firstOrNull { it.id == serverId }?.toSyncServer() ?: return
+        val now = System.currentTimeMillis()
+        drainEntries(server, queue.due(now).filter { it.serverId == server.id }, now)
         pullFromServer(server, progressDao.observeAll().first(), openBookId, onOffer)
     }
 
@@ -161,14 +161,9 @@ class SyncRunner(
         val now = System.currentTimeMillis()
         val byServer = queue.due(now).groupBy { it.serverId }
         for ((serverId, entries) in byServer) {
-            val server = servers.current().firstOrNull { it.id == serverId } ?: continue
+            val server = servers.current().firstOrNull { it.id == serverId }?.toSyncServer() ?: continue
             drainEntries(server, entries, now)
         }
-    }
-
-    private suspend fun drainQueueFor(server: SyncServer) {
-        val now = System.currentTimeMillis()
-        drainEntries(server, queue.due(now).filter { it.serverId == server.id }, now)
     }
 
     private suspend fun drainEntries(server: SyncServer, entries: List<PendingPush>, now: Long) {
@@ -202,6 +197,16 @@ class SyncRunner(
 
     private fun runnerFor(server: SyncServer): ServerSync =
         if (server.kind == ServerKind.KOMGA) komga else kavita
+
+    /**
+     * Sync covers Komga/Kavita records only; file servers (SMB/FTP) never map and are
+     * skipped by every pass below, never guessed.
+     */
+    private fun RemoteServer.toSyncServer(): SyncServer? = when (this) {
+        is KomgaServer -> SyncServer(id, ServerKind.KOMGA, baseUrl, allowCleartext, username, usesApiKey)
+        is KavitaServer -> SyncServer(id, ServerKind.KAVITA, baseUrl, allowCleartext, username, usesApiKey)
+        else -> null
+    }
 }
 
 /** Auth refusals stop a server; every other status keeps its own path (retry or skip). */
