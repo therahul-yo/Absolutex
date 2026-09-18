@@ -36,10 +36,8 @@ class SyncRunner(
     suspend fun pushBook(bookId: String, attemptStopped: Boolean = false) {
         val local = progressDao.get(bookId)?.toSync() ?: return
         var queued = false
-        val targets = servers.current()
-            .mapNotNull { it.toSyncServer() }
-            .filter { attemptStopped || it.id !in _stoppedServers.value }
-        for (server in targets) {
+        for (server in servers.current().mapNotNull { it.toSyncServer() }) {
+            if (!attemptStopped && server.id in _stoppedServers.value) continue
             try {
                 runnerFor(server).sync(server, local)
                 _stoppedServers.update { it - server.id }
