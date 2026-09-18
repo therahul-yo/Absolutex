@@ -26,8 +26,12 @@ class SmbBookBackend @Inject constructor(
     private val secrets: SyncSecrets,
 ) {
     fun transportFor(server: SmbServer, path: String): RangeTransport {
+        // Presence check only: the transport retrieves (and zeroes) its own copy later
+        // through smbStore, so this copy must not outlive the check. A live plaintext
+        // password with no bounded lifetime is exactly what a heap dump carries away.
         val password = secrets.loadSmbPassword(server.id)
             ?: throw IOException("no SMB password for ${server.id}")
+        password.fill(Char.MIN_VALUE)
         val location = server.toLocation(path)
         return SmbjTransport(location, smbStore(server.id), server.id).bind(location.path)
     }
@@ -85,22 +89,37 @@ class RemoteBackendResolver @Inject constructor(
 }
 
 /** Record plus Uri path to a transport-ready location. Records store roots; Uris are absolute. */
-internal fun SmbServer.toLocation(path: String): SmbLocation = SmbLocation(
-    host = host,
-    share = share,
-    path = absolutePath(path),
-    port = port,
-    username = username,
-    allowUnsigned = allowUnsigned,
-)
+internal fun SmbServer.toLocation(path: String): SmbLocation {
+    try {
+        return SmbLocation(
+            host = host,
+            share = share,
+            path = absolutePath(path),
+            port = port,
+            username = username,
+            allowUnsigned = allowUnsigned,
+        )
+    } catch (e: IllegalArgumentException) {
+        // A stale Uri or a hostile listing can carry .. segments the record validators
+        // would never have stored: degrade to IOException (which the reader catches)
+        // rather than crashing on a require.
+        throw IOException("invalid SMB path: $path", e)
+    }
+}
 
-internal fun FtpServer.toLocation(path: String): FtpLocation = FtpLocation(
-    host = host,
-    port = port,
-    username = username,
-    path = absolutePath(path),
-    useTls = useTls,
-)
+internal fun FtpServer.toLocation(path: String): FtpLocation {
+    try {
+        return FtpLocation(
+            host = host,
+            port = port,
+            username = username,
+            path = absolutePath(path),
+            useTls = useTls,
+        )
+    } catch (e: IllegalArgumentException) {
+        throw IOException("invalid FTP path: $path", e)
+    }
+}
 
 /**
  * Uri paths address files absolutely within the share. A missing leading slash can only

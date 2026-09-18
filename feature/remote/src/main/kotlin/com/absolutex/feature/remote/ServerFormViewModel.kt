@@ -253,17 +253,17 @@ class ServerFormViewModel @Inject constructor(
                     ),
                     secret.copyOf(),
                 )
-                RemoteKind.SMB -> smbProbe.test(
-                    SmbLocation(
+                RemoteKind.SMB -> {
+                    val location = SmbLocation(
                         host = form.host.trim(),
                         share = form.share.trim(),
                         path = form.path.trim(),
                         port = form.port.toInt(),
                         username = form.username.trim(),
                         allowUnsigned = form.allowUnsigned,
-                    ),
-                    secret.copyOf(),
-                )
+                    )
+                    smbProbe.test(secret.copyOf()) { SmbjConnector(location).connect(it) }
+                }
             }
         }
 

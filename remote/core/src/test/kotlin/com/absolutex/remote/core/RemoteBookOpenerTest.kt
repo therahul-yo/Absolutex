@@ -37,6 +37,21 @@ class RemoteBookOpenerTest {
         assertEquals(RemoteLocation("nas", "/comics/my book/v2.cbz", "v2.cbz"), location)
     }
 
+    @Test fun `plus escapes survive, raw plus follows form rules`() = runTest {
+        // %2B is an encoded plus and decodes to one; a raw + is form data and decodes
+        // to a space — same contract as BookPath, so builders must encode literal plus.
+        val encoded = parseRemoteUri("absolutex-remote://nas/Batman%20%2B%20Robin.cbz")
+        assertEquals(RemoteLocation("nas", "/Batman + Robin.cbz", "Batman + Robin.cbz"), encoded)
+        val raw = parseRemoteUri("absolutex-remote://nas/a+b.cbz")
+        assertEquals(RemoteLocation("nas", "/a b.cbz", "a b.cbz"), raw)
+    }
+
+    @Test fun `non-ascii names decode from utf-8 escapes`() = runTest {
+        val name = String(charArrayOf(0x6F2B.toChar(), 0x753B.toChar())) + "01.cbz"
+        val location = parseRemoteUri("absolutex-remote://nas/%E6%BC%AB%E7%94%BB01.cbz")
+        assertEquals(RemoteLocation("nas", "/$name", name), location)
+    }
+
     @Test fun `dispatcher hands the file to the backend transport`() = runTest {
         val bytes = ZipBytes.cbz("page01.jpg" to ZipBytes.pageBytes(1))
         var seenServer = ""

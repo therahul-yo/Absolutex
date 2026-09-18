@@ -42,4 +42,8 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.datastore.preferences)
+    // Real in-process FTP server for the probe's behavioural mapping (same trio the
+    // :remote:ftp module's own wire tests use). Test-only, off the release classpath.
+    testImplementation(libs.ftpserver.core)
+    testImplementation(libs.slf4j.api.ftp.test)
 }

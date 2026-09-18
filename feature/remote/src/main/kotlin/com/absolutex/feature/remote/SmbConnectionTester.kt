@@ -17,9 +17,12 @@ import kotlinx.coroutines.CancellationException
  * Live connection test for an SMB record, for the servers form's test-then-save.
  *
  * Lives here (not in `:remote:smb`) because the result contract lives in `:remote:sync`,
- * and neither transport module may depend on the other. Credentials ride as parameters:
- * the form tests before anything is saved. The probe connects, authenticates and opens
- * the share, then closes — one logon, no reads.
+ * and neither transport module may depend on the other. The caller supplies an already
+ * built connector — production passes `SmbjConnector(location)::connect`, tests pass
+ * fakes throwing the real smbj exception types — so this class owns only the mapping and
+ * the copy lifecycle, never construction. Credentials ride as parameters: the form tests
+ * before anything is saved. The probe connects, authenticates and opens the share, then
+ * closes — one logon, no reads.
  *
  * Status mapping, verified against smbj-0.15.0 (javap over the Central jar, plus a jshell
  * probe of the [NtStatus] codes — never from memory): a dead or refused socket surfaces
@@ -30,11 +33,24 @@ import kotlinx.coroutines.CancellationException
 class SmbConnectionTester @Inject constructor() {
 
     fun test(
-        location: SmbLocation,
         password: CharArray,
-        connect: (CharArray) -> SmbConnection = { secret -> SmbjConnector(location).connect(secret) },
+        connect: (CharArray) -> SmbConnection,
     ): ConnectionResult {
-        val failure = runCatching { connect(password).close() }.exceptionOrNull()
+        // The caller passes a copy it owns (and clears itself); this copy is owned here
+        // and cleared on every exit, success or failure alike.
+        val secret = password.copyOf()
+        try {
+            return testSecret(secret, connect)
+        } finally {
+            secret.fill(Char.MIN_VALUE)
+        }
+    }
+
+    private fun testSecret(
+        secret: CharArray,
+        connect: (CharArray) -> SmbConnection,
+    ): ConnectionResult {
+        val failure = runCatching { connect(secret).close() }.exceptionOrNull()
         if (failure is CancellationException) throw failure
         return if (failure == null) ConnectionResult.Ok else mapSmbFailure(failure)
     }

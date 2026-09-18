@@ -1,6 +1,7 @@
 package com.absolutex.feature.remote
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import com.absolutex.remote.ftp.FtpLocation
 import com.absolutex.remote.smb.RemoteFileHandle
 import com.absolutex.remote.smb.SmbConnection
 import com.absolutex.remote.smb.SmbLocation
@@ -28,8 +29,11 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
 import java.io.IOException
+import java.net.ServerSocket
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.nio.file.Files
+import java.nio.file.Path
 
 /**
  * SMB failure mapping over real smbj exception types, plus backend resolution without a
@@ -59,7 +63,7 @@ class RemoteBackendTest {
     @Test fun `successful connect is ok and closes the share`() {
         var closed = false
         var seen: CharArray? = null
-        val result = SmbConnectionTester().test(location(), "pw".toCharArray()) {
+        val result = SmbConnectionTester().test("pw".toCharArray()) {
             seen = it.copyOf()
             FakeShare { closed = true }
         }
@@ -71,25 +75,25 @@ class RemoteBackendTest {
     @Test fun `logon failure and access denied are auth failed`() {
         assertEquals(
             ConnectionResult.AuthFailed,
-            SmbConnectionTester().test(location(), "pw".toCharArray()) { throw smbApi(0xC000006DL) },
+            SmbConnectionTester().test("pw".toCharArray()) { throw smbApi(0xC000006DL) },
         )
         assertEquals(
             ConnectionResult.AuthFailed,
-            SmbConnectionTester().test(location(), "pw".toCharArray()) { throw smbApi(0xC0000022L) },
+            SmbConnectionTester().test("pw".toCharArray()) { throw smbApi(0xC0000022L) },
         )
     }
 
     @Test fun `missing share is not found`() {
         assertEquals(
             ConnectionResult.NotFound,
-            SmbConnectionTester().test(location(), "pw".toCharArray()) { throw smbApi(0xC00000CCL) },
+            SmbConnectionTester().test("pw".toCharArray()) { throw smbApi(0xC00000CCL) },
         )
     }
 
     @Test fun `signing refusal is security refused`() {
         assertEquals(
             ConnectionResult.SecurityRefused,
-            SmbConnectionTester().test(location(), "pw".toCharArray()) {
+            SmbConnectionTester().test("pw".toCharArray()) {
                 throw SMB2GuestSigningRequiredException()
             },
         )
@@ -104,19 +108,62 @@ class RemoteBackendTest {
         for (failure in failures) {
             assertEquals(
                 ConnectionResult.Unreachable,
-                SmbConnectionTester().test(location(), "pw".toCharArray()) { throw failure },
+                SmbConnectionTester().test("pw".toCharArray()) { throw failure },
             )
         }
     }
 
-    @Test fun `ftp mapping covers the result variants`() {
-        assertEquals(ConnectionResult.AuthFailed, mapFtpFailure(IOException("FTP login refused: x")))
-        assertEquals(ConnectionResult.NotFound, mapFtpFailure(IOException("cannot list FTP path: x")))
-        assertEquals(ConnectionResult.Unreachable, mapFtpFailure(IOException("reset")))
-        assertEquals(
-            ConnectionResult.SecurityRefused,
-            mapFtpFailure(IOException("tls", javax.net.ssl.SSLHandshakeException("hs"))),
+    @Test fun `ftp probe maps real server replies`() {
+        // Behavioural, not string-matched: a wrong password, a missing path, a closed
+        // port and a healthy listing against the in-process server.
+        val root = Files.createTempDirectory("ftp-probe-test")
+        val (port, server) = startFtpServer(root)
+        try {
+            val probe = FtpConnectionProbe()
+            fun location(path: String) = FtpLocation(
+                host = "127.0.0.1",
+                port = port,
+                username = "reader",
+                path = path,
+                useTls = false,
+            )
+            assertEquals(ConnectionResult.AuthFailed, probe.test(location("/"), "wrong".toCharArray()))
+            assertEquals(ConnectionResult.NotFound, probe.test(location("/nope"), "pw".toCharArray()))
+            assertEquals(ConnectionResult.Ok, probe.test(location("/"), "pw".toCharArray()))
+        } finally {
+            server.stop()
+        }
+        val refused = FtpLocation(
+            host = "127.0.0.1",
+            port = closedPort(),
+            username = "reader",
+            path = "/",
+            useTls = false,
         )
+        assertEquals(ConnectionResult.Unreachable, FtpConnectionProbe().test(refused, "pw".toCharArray()))
+    }
+
+    private fun startFtpServer(root: Path): Pair<Int, org.apache.ftpserver.FtpServer> {
+        val userManager = org.apache.ftpserver.usermanager.PropertiesUserManagerFactory()
+            .createUserManager()
+        val user = org.apache.ftpserver.usermanager.impl.BaseUser().apply {
+            name = "reader"
+            password = "pw"
+            homeDirectory = root.toString()
+            authorities = listOf(org.apache.ftpserver.usermanager.impl.WritePermission())
+        }
+        userManager.save(user)
+        val factory = org.apache.ftpserver.FtpServerFactory().apply {
+            val listener = org.apache.ftpserver.listener.ListenerFactory().apply { port = 0 }.createListener()
+            addListener("default", listener)
+            setUserManager(userManager)
+        }
+        val server = factory.createServer().also { it.start() }
+        return factory.getListener("default")!!.port to server
+    }
+
+    private fun closedPort(): Int {
+        ServerSocket(0).use { return it.localPort }
     }
 
     private fun dataStore(name: String) = PreferenceDataStoreFactory.create(
@@ -134,6 +181,23 @@ class RemoteBackendTest {
         servers.save(KomgaServer("komga", "https://k.lan", username = "u"))
         val resolver = RemoteBackendResolver(servers, SmbBookBackend(secrets), FtpBookBackend(secrets))
         return Triple(servers, secrets, resolver)
+    }
+
+    @Test fun `dot-dot paths degrade to IOException, never crash`() {
+        val smb = SmbServer("s", "nas", "comics", "/books", 445, "u")
+        try {
+            smb.toLocation("/../secret.cbz")
+            throw AssertionError("expected IOException")
+        } catch (expected: IOException) {
+            assertTrue(expected.message?.contains("invalid SMB path") == true)
+        }
+        val ftp = FtpServer("f", "nas", 21, "/pub", "u", useTls = false)
+        try {
+            ftp.toLocation("/../secret.cbz")
+            throw AssertionError("expected IOException")
+        } catch (expected: IOException) {
+            assertTrue(expected.message?.contains("invalid FTP path") == true)
+        }
     }
 
     @Test fun `smb record maps to its location absolutely`() {

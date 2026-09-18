@@ -70,10 +70,12 @@ fun parseRemoteUri(uri: String): RemoteLocation {
         throw IllegalArgumentException("remote uri must use $REMOTE_URI_SCHEME: $uri")
     }
     val serverId = parsed.authority
-    // Percent-decode like BookPath does for SAF document ids: a display name carrying
-    // %20 or %2F must resolve to the literal name, or its identity will never match the
-    // local copy of the same file. Undecodable input keeps its raw form, never crashes.
-    val path = decode(parsed.path.orEmpty())
+    // The raw path, decoded exactly once: URI.getPath() already decodes %XX escapes, so
+    // decoding that again would mangle literal escapes — and URLDecoder implements form
+    // encoding, turning a legitimate '+' in a file name into a space. Decoding rawPath
+    // once matches BookPath's single decode of the raw SAF document id, so encoded names
+    // resolve to the literal names (and identities) of their local copies.
+    val path = decode(parsed.rawPath.orEmpty())
     val displayName = path.substringAfterLast('/')
     if (serverId.isNullOrBlank() || displayName.isEmpty()) {
         throw IllegalArgumentException("remote uri needs a server and a file: $uri")
