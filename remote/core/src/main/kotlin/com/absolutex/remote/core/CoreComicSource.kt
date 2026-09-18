@@ -139,17 +139,28 @@ class CoreComicSource private constructor(
 
         @Throws(IOException::class)
         fun open(transport: RangeTransport, displayName: String): RemoteOpenResult {
-            val size = transport.sizeBytes()
-            sniffReason(transport, size)?.let { return RemoteOpenResult.DownloadRequired(it) }
-            val reader = SeekableReader(transport, size)
-            val entries = ZipDirectory.open(reader::readAt, size)
-                .filter { EntryFilter.isPage(it.name) }
-                .sortedWith { a, b -> NaturalOrder.compare(a.name, b.name) }
-            val pages = entries.mapIndexed { index, entry ->
-                Page(index = index, entryName = entry.name, sizeBytes = entry.uncompressedSize)
+            // Whoever opens the book owns the transport: Ready hands it to the source
+            // (closed with the book), and every other exit closes it here. Without this,
+            // each DownloadRequired verdict or hostile archive leaks a live socket.
+            var ready = false
+            try {
+                val size = transport.sizeBytes()
+                sniffReason(transport, size)?.let { return RemoteOpenResult.DownloadRequired(it) }
+                val reader = SeekableReader(transport, size)
+                val entries = ZipDirectory.open(reader::readAt, size)
+                    .filter { EntryFilter.isPage(it.name) }
+                    .sortedWith { a, b -> NaturalOrder.compare(a.name, b.name) }
+                val pages = entries.mapIndexed { index, entry ->
+                    Page(index = index, entryName = entry.name, sizeBytes = entry.uncompressedSize)
+                }
+                val source = CoreComicSource(transport, reader, entries, pages)
+                ready = true
+                return RemoteOpenResult.Ready(source, BookIdentity.of(displayName, size), displayName, size)
+            } finally {
+                if (!ready) {
+                    runCatching { transport.close() }
+                }
             }
-            val source = CoreComicSource(transport, reader, entries, pages)
-            return RemoteOpenResult.Ready(source, BookIdentity.of(displayName, size), displayName, size)
         }
 
         /**

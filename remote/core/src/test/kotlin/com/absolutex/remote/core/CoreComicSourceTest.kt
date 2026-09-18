@@ -91,6 +91,38 @@ class CoreComicSourceTest {
         assertEquals(bytes.size.toLong(), ready.sizeBytes)
     }
 
+    @Test fun `non-ready exits close the transport exactly once`() {
+        // A DownloadRequired verdict must not strand the session the verdict was read on.
+        val transport = FakeRangeTransport(ByteArray(4096) { 3 })
+        val result = CoreComicSource.open(transport, "book.cbr")
+        assertTrue(result is RemoteOpenResult.DownloadRequired)
+        assertEquals(1, transport.closes)
+    }
+
+    @Test fun `throwing index closes the transport exactly once`() {
+        // A truncated archive fails inside ZipDirectory.open; the transport still closes.
+        val full = ZipBytes.cbz("page01.jpg" to ZipBytes.pageBytes(1))
+        val cut = full.copyOf(full.size / 2)
+        val transport = FakeRangeTransport(cut)
+        try {
+            CoreComicSource.open(transport, "book.cbz")
+            fail("expected IOException")
+        } catch (expected: IOException) {
+            assertTrue(expected.message?.contains("end-of-central-directory") == true)
+        }
+        assertEquals(1, transport.closes)
+    }
+
+    @Test fun `ready keeps the transport for the source`() {
+        val bytes = archive(2)
+        val transport = FakeRangeTransport(bytes)
+        val result = CoreComicSource.open(transport, "book.cbz")
+        assertTrue(result is RemoteOpenResult.Ready)
+        assertEquals(0, transport.closes)
+        (result as RemoteOpenResult.Ready).source.close()
+        assertEquals(1, transport.closes)
+    }
+
     @Test fun `non-zip magic downloads instead of parsing`() {
         val bytes = ByteArray(4096) { 3 }
         val result = CoreComicSource.open(FakeRangeTransport(bytes), "book.cbr")
