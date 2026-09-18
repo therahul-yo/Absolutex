@@ -33,6 +33,49 @@ env:
   COMPILE_SDK: "37"
 
 jobs:
+  # Seconds, no SDK, no Gradle. Three branches have reached CI this week with merge
+  # markers committed, or built on a base so old the merge would have deleted whole
+  # modules. Both are invisible to a green local gate: a branch missing four modules
+  # compiles perfectly. This job is the cheapest place to catch them.
+  hygiene:
+    name: Branch hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: No conflict markers
+        run: |
+          if git grep -nE '^(<<<<<<<|=======|>>>>>>>) ' -- ':!*.md' ':!.github/workflows/ci.yml'; then
+            echo "::error::conflict markers are committed — resolve them before pushing"
+            exit 1
+          fi
+
+      # A pull request that removes an include() from settings.gradle.kts is either
+      # deliberate (say so in the title) or the signature of a stale base. The title and
+      # base ref go through env, never through ${{ }} inside the script: an expression
+      # interpolated into a shell line lets a PR title run commands on the runner.
+      - name: No module dropped by accident
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          git fetch --no-tags origin "$BASE_REF"
+          dropped=$(git diff "origin/$BASE_REF...HEAD" -- settings.gradle.kts | grep -E '^-include' || true)
+          if [ -n "$dropped" ]; then
+            echo "::error::this branch removes modules from settings.gradle.kts:"
+            echo "$dropped"
+            if [[ "$PR_TITLE" == *"drops module"* ]]; then
+              echo "declared in the title — allowed"
+            else
+              echo "If that is deliberate, put 'drops module' in the PR title."
+              exit 1
+            fi
+          fi
+
   # Pure Python, no SDK, no Gradle. Runs in seconds and is the fastest signal that a
   # refactor changed the hostile corpus (spec §8).
   corpus:

@@ -71,6 +71,7 @@ object SafScanner {
                 emit(
                     ScannedBook(
                         path = file.uri,
+                        displayName = file.name,
                         sizeBytes = file.sizeBytes,
                         parsed = FilenameParser.parse(file.name),
                     ),
@@ -83,6 +84,7 @@ object SafScanner {
             emit(
                 ScannedBook(
                     path = dir.uri,
+                    displayName = dir.name,
                     sizeBytes = images.sumOf { it.sizeBytes },
                     parsed = FilenameParser.parse(dir.name),
                     isImageFolder = true,

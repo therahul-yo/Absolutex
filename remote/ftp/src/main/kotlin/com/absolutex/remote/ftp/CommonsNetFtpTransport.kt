@@ -61,6 +61,26 @@ class CommonsNetFtpTransport(
     /** Logs out and disconnects. Safe to call more than once. */
     override fun close() = synchronized(lock) { drop() }
 
+    override fun listDir(path: String): List<FtpEntry> = synchronized(lock) {
+        try {
+            val live = connected()
+            // LIST, not MLSD: probed against the in-process server, MLSD answers a missing
+            // path with 226 and an empty listing — indistinguishable from an empty folder —
+            // while LIST answers 450, which is detectable below. Encoding edge cases in LIST
+            // output lose to that distinction; revisit if a real server mis-parses.
+            val files = live.listFiles(path)
+            if (files.isEmpty() && !FTPReply.isPositiveCompletion(live.replyCode)) {
+                fail("cannot list FTP path: $path (reply ${live.replyCode})")
+            }
+            return@synchronized files.map { file ->
+                FtpEntry(file.name.substringAfterLast('/'), file.isDirectory, file.size)
+            }
+        } catch (e: IOException) {
+            drop()
+            throw e
+        }
+    }
+
     private fun transfer(path: String, offset: Long, length: Int): ByteArray {
         val live = connected()
         live.setRestartOffset(offset)

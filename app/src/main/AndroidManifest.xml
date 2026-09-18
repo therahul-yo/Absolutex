@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Sync (milestone 5): Komga/Kavita live on the LAN. Cleartext stays per-host opt-in
+         (SyncServer.allowCleartext); the per-host network security config is milestone 3's. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- Pre-release: no Drive backup history of reading state. Revisit with a
          dataExtractionRules allowlist before 1.0 if backup is wanted. -->
     <application
@@ -32,5 +36,18 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
+
+        <!-- Continue Reading widget (receiver registration only; UI lives in :feature:widget). -->
+        <receiver
+            android:name="com.absolutex.feature.widget.ContinueReadingProvider"
+            android:exported="false"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/continue_reading_info" />
+        </receiver>
     </application>
 </manifest>

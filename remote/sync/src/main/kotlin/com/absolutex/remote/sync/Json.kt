@@ -49,3 +49,28 @@ internal fun optInstant(obj: JSONObject, key: String): Long {
     if (!obj.has(key) || obj.isNull(key)) return 0L
     return parseInstant(obj.getString(key))
 }
+
+/** Optional long: absent/null (or a server that omits it) degrades to null, never a crash. */
+internal fun optLong(obj: JSONObject, key: String): Long? {
+    if (!obj.has(key) || obj.isNull(key)) return null
+    return obj.getLong(key)
+}
+
+/** Optional int with the same degrade-to-null contract. */
+internal fun optInt(obj: JSONObject, key: String): Int? {
+    if (!obj.has(key) || obj.isNull(key)) return null
+    return obj.getInt(key)
+}
+
+/** Optional object array: absent/null degrades to empty, never a crash. */
+internal fun optObjects(obj: JSONObject, key: String): List<JSONObject> {
+    if (!obj.has(key) || obj.isNull(key)) return emptyList()
+    val array = obj.getJSONArray(key)
+    return List(array.length(), array::getJSONObject)
+}
+
+/** Optional string with the same degrade-to-null contract. */
+internal fun optString(obj: JSONObject, key: String): String? {
+    if (!obj.has(key) || obj.isNull(key)) return null
+    return obj.getString(key)
+}
