@@ -151,8 +151,6 @@ fun PageCanvas(
      * draw scope, so a slider drag repaints at 120 fps with no recomposition of the page — the
      * same reason pan/zoom state lives in draw-observed state above. Null (the default) is
      * neutral: the draw calls below are then exactly the pre-shader ones.
-     * TODO(lead): milestone 2's RenderingPrefs feed this — pass the prefs state here from the
-     * reader chrome (ColourPanel) and the settings Rendering group.
      */
     colour: State<ColourParams>? = null,
     /**
@@ -160,7 +158,6 @@ fun PageCanvas(
      * bilinear tap, MITCHELL/LANCZOS are kernel shaders applied only when the page is at rest
      * (see gestureActive below). A plain param, not draw-observed state: switches are rare
      * settings edits, not 120 fps drags, so one recomposition per switch is the right trade.
-     * TODO(lead): pass RenderingPrefs.upscaler here alongside `colour` above.
      */
     upscaler: Upscaler = Upscaler.PLATFORM,
     /**
@@ -224,11 +221,15 @@ fun PageCanvas(
     // Draw-time colour state. Hoisted like Rect/Paint above: uniforms update in place per frame,
     // nothing here allocates per frame, per tile or per draw call.
     val colourPipeline = remember(pageIndex) { ColourPipeline() }
-    // Macrobenchmark hook: GpuBenchmark launches the reader with EXTRA_COLOUR on the intent to
-    // drive the corrected path with no settings UI. Read once per page, never per frame; the
-    // draw lambda below only reads the resolved value. Gated on FLAG_DEBUGGABLE so the hook is
-    // inert in release builds — no intent extra is read at all outside a debuggable build.
-    // TODO(lead): milestone 2 replaces this with RenderingPrefs passed as `colour` above.
+    // Macrobenchmark hook: GpuBenchmark launches the reader with EXTRA_COLOUR /
+    // EXTRA_UPSCALER on the intent to drive the corrected/upscaled path with no settings
+    // UI. Read once per page, never per frame — the draw lambda below only reads the
+    // resolved value. Gated on FLAG_DEBUGGABLE so the hook is inert in release — no
+    // intent extra is read at all outside a debuggable build.
+    // Precedence: the debuggable-only intent extra OVERRIDES the prefs value when
+    // present (so benchmarks force a specific param), prefs apply otherwise. Resolving
+    // prefs ?: benchmark would silently measure the neutral default while the extras
+    // stay ignored, so the order below matters.
     val context = LocalContext.current
     val benchmarkColour = remember(pageIndex) {
         val appInfo = context.applicationInfo
@@ -239,14 +240,22 @@ fun PageCanvas(
                 ?.let(ColourParams::decode)
         }
     }
-    // Upscaling rides a second extra, so each codec stays total on its own.
+    // Upscaling rides a second extra, so each codec stays total on its own. Same
+    // FLAG_DEBUGGABLE gate as colour: the hook must be inert in release builds.
     val benchmarkUpscaler = remember(pageIndex) {
-        (context as? Activity)?.intent?.getStringExtra(Upscaler.EXTRA_UPSCALER)
-            ?.let(Upscaler::decodeExtra)
+        val appInfo = context.applicationInfo
+        if (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE == 0) {
+            null
+        } else {
+            (context as? Activity)?.intent?.getStringExtra(Upscaler.EXTRA_UPSCALER)
+                ?.let(Upscaler::decodeExtra)
+        }
     }
-    // Crop rides a third: "0" disables it for the off-benchmark.
+    // Crop rides a third: "0" disables it for the off-benchmark. Same gate.
     val benchmarkCropOff = remember(pageIndex) {
-        (context as? Activity)?.intent?.getStringExtra(CropMath.EXTRA_CROP) == "0"
+        val appInfo = context.applicationInfo
+        (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) &&
+            (context as? Activity)?.intent?.getStringExtra(CropMath.EXTRA_CROP) == "0"
     }
     val cropActive = cropEnabled && !benchmarkCropOff
 
