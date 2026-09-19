@@ -28,10 +28,16 @@ class PrefetchEngineTest {
         val cancelled = mutableListOf<Int>()
         val gates = mutableMapOf<Int, CompletableDeferred<Unit>>()
         var autoComplete = true
+        /** Pages whose decode reports OutOfMemory instead of completing. */
+        val oomPages = mutableSetOf<Int>()
+        /** Pages whose decode reports Unreadable instead of completing. */
+        val unreadablePages = mutableSetOf<Int>()
 
-        suspend fun decode(page: Int) {
+        suspend fun decode(page: Int): DecodeOutcome {
             started += page
-            if (autoComplete) return
+            if (page in oomPages) return DecodeOutcome.OutOfMemory
+            if (page in unreadablePages) return DecodeOutcome.Unreadable
+            if (autoComplete) return DecodeOutcome.Decoded(FAKE_IMAGE)
             val gate = gates.getOrPut(page) { CompletableDeferred() }
             try {
                 gate.await()
@@ -39,6 +45,7 @@ class PrefetchEngineTest {
                 cancelled += page
                 throw e
             }
+            return DecodeOutcome.Decoded(FAKE_IMAGE)
         }
     }
 
@@ -65,7 +72,7 @@ class PrefetchEngineTest {
             budgetBytes = { budget.get() },
             tileBytes = { tile.get() },
             pageBytesEstimate = { pageBytes },
-            onDecoded = { _, est -> est },
+            onDecoded = { _, est, _ -> est },
             decode = { decode.decode(it) },
         )
         engine.onEvicted = { page, _ -> evicted += page }
@@ -180,4 +187,53 @@ class PrefetchEngineTest {
         assertEquals(setOf(11, 12, 13), h.decode.cancelled.toSet())
         assertEquals(0, h.engine.residentBytes)
     }
+
+    @Test
+    fun `an OOM decode sheds, stops the batch, and leaves the page unmarked`() = runTest {
+        val h = harness()
+        h.decode.oomPages += 12
+        var shed = 0
+        h.engine.onOutOfMemory = { shed++ }
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 3)
+        advanceUntilIdle()
+        // 11 decoded fine; 12 OOMed and the batch stopped — 13 never starts.
+        assertEquals(listOf(11, 12), h.decode.started)
+        assertEquals(1, shed)
+        // Everything resident was dropped: the budget is restored.
+        assertEquals(0, h.engine.residentBytes)
+        // The stopped batch stays stopped: a same-page settle is a no-op, and even a new
+        // layout hint through onBudgetChanged plans nothing while stopped.
+        h.engine.onBudgetChanged()
+        assertTrue(h.decode.started.size == 2)
+        // A new settle is a new batch: pressure may have passed, so the window replans.
+        // Depth 2 from page 11 is {12, 13}: 12 now decodes (the OOM never marked it),
+        // 13 starts fresh — it never ran in the stopped batch.
+        h.decode.oomPages.clear()
+        h.engine.onSettled(11, 200, PageLayout.SINGLE, depth = 2)
+        advanceUntilIdle()
+        assertEquals(listOf(11, 12, 12, 13), h.decode.started)
+    }
+
+    @Test
+    fun `an unreadable prefetch decode is done-not-resident, not a failure`() = runTest {
+        val h = harness()
+        h.decode.unreadablePages += 12
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 3)
+        advanceUntilIdle()
+        // 12 was attempted, reported unreadable, and the batch carried on to 13.
+        assertEquals(listOf(11, 12, 13), h.decode.started)
+        // Only the two decodable pages are resident; 12 holds no bytes.
+        assertEquals(2 * 100_000, h.engine.residentBytes)
+    }
+}
+
+/** A stand-in image the fake decode hands back; the engine only forwards it to onDecoded. */
+private val FAKE_IMAGE: PageImage = object : PageImage {
+    override val width = 1
+    override val height = 1
+    override fun decodeBase(targetWidth: Int, targetHeight: Int): android.graphics.Bitmap =
+        throw UnsupportedOperationException("not used in engine tests")
+    override fun decodeTile(tile: Tile): android.graphics.Bitmap? = null
+    override fun decodeThumbnail(targetEdge: Int): android.graphics.Bitmap? = null
+    override fun close() {}
 }

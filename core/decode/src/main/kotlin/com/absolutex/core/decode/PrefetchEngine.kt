@@ -3,6 +3,7 @@ package com.absolutex.core.decode
 import com.absolutex.model.PageLayout
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
@@ -47,10 +48,10 @@ class PrefetchEngine(
     private val tileBytes: () -> Long,
     /** Bytes one page is estimated at, before decode. */
     private val pageBytesEstimate: (page: Int) -> Long,
-    /** Actual bytes a decode cost once it landed. */
-    private val onDecoded: (page: Int, estimated: Long) -> Long,
-    /** Decode one page. Must honour cancellation promptly. */
-    private val decode: suspend (page: Int) -> Unit,
+    /** Actual bytes a decoded page holds, once it lands. */
+    private val onDecoded: (page: Int, estimated: Long, image: PageImage) -> Long,
+    /** Decode one page, classifying the outcome at the boundary that sees the cause. */
+    private val decode: suspend (page: Int) -> DecodeOutcome,
 ) {
 
     private val inFlight = ConcurrentHashMap<Int, PrefetchEntry>()
@@ -69,11 +70,24 @@ class PrefetchEngine(
     /** Fired when a prefetched page is dropped, so the host can free what it holds for it. */
     var onEvicted: (page: Int, bytes: Long) -> Unit = { _, _ -> }
 
+    /**
+     * Fired when a prefetch decode reports [DecodeOutcome.OutOfMemory]: the engine has
+     * already dropped everything; the host sheds its own state (tile cache, base layers)
+     * here. The batch is stopped — no further decodes launch until the next settle, so
+     * prefetch never re-attempts the allocation that just failed.
+     */
+    var onOutOfMemory: () -> Unit = {}
+
+    /** True while an OOM has stopped the batch; cleared by the next settle. */
+    @Volatile
+    private var batchStopped = false
+
     /** A settle: update direction, cancel behind-work, restore the budget, plan ahead. */
     fun onSettled(page: Int, pageCount: Int, layout: PageLayout, depth: Int) {
         if (page == settled) return
         direction = if (settled < 0) 0 else (page - settled).sign().takeIf { it != 0 } ?: direction
         settled = page
+        batchStopped = false // a new settle is a new batch: pressure may have passed
         cancelBehind()
         reconcile(protect = -1)
         planWindow(page, pageCount, layout, depth)
@@ -97,8 +111,10 @@ class PrefetchEngine(
     }
 
     private fun planWindow(page: Int, pageCount: Int, layout: PageLayout, depth: Int) {
+        if (batchStopped) return
         val window = PrefetchPlanner.window(page, pageCount, layout, direction, depth)
         for (target in window) {
+            if (batchStopped) return
             if (inFlight.containsKey(target) || resident.containsKey(target)) continue
             // Make room farthest-first, never dropping the settled page or the page about to
             // be decoded; if the budget still says no, skip the page until the next settle.
@@ -113,21 +129,41 @@ class PrefetchEngine(
 
     private fun launchDecode(target: Int) {
         val estimate = pageBytesEstimate(target)
-        // Launched straight into the scope, no wrapping Job(parent): a bare Job never
-        // completes on its own, which would leave the scope's job tree permanently active
-        // and hang every structured-concurrency joiner. The finally still cleans inFlight
-        // on cancellation.
-        val job = scope.launch(decodeDispatcher) {
+        // LAZY start with register-then-run: with a synchronous dispatcher (Unconfined in
+        // tests, or a decode that completes without suspending), the body can finish
+        // inside scope.launch() BEFORE the inFlight put below would run — the finally's
+        // remove would then be a no-op and the stale entry would block that page from
+        // ever being prefetched again. Registering first and starting after makes the
+        // ordering a guarantee instead of a race. Still launched straight into the scope:
+        // a wrapping Job(parent) never completes on its own and hangs the job tree.
+        val job = scope.launch(decodeDispatcher, start = CoroutineStart.LAZY) {
             try {
-                decode(target)
-                val actual = onDecoded(target, estimate)
-                synchronized(resident) { resident[target] = actual }
-                reconcile(protect = target)
+                when (val outcome = decode(target)) {
+                    is DecodeOutcome.Decoded -> {
+                        val actual = onDecoded(target, estimate, outcome.image)
+                        synchronized(resident) { resident[target] = actual }
+                        reconcile(protect = target)
+                    }
+                    DecodeOutcome.Unreadable ->
+                        // A property of the page: done, not resident, no bytes. The
+                        // caller's own failure mark (if any) is its business; prefetch
+                        // never marks and never retries within the window.
+                        Unit
+                    DecodeOutcome.OutOfMemory -> {
+                        // Resource event (docs/decode-oom-policy.md): shed everything,
+                        // stop this batch, leave the page unmarked. The visible page's
+                        // own path retries once with the budget actually freed.
+                        batchStopped = true
+                        dropAll()
+                        onOutOfMemory()
+                    }
+                }
             } finally {
                 inFlight.remove(target)
             }
         }
         inFlight[target] = PrefetchEntry(target, job, estimate)
+        job.start()
     }
 
     /** Restores the budget invariant: evict farthest-first until tile + resident fits. */
