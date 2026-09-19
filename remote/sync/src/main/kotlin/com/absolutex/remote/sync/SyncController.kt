@@ -83,9 +83,17 @@ class SyncController @Inject constructor(
     private val _offers = MutableStateFlow<RemoteProgressOffer?>(null)
 
     /**
-     * Serialises the full passes: app start, manual sync and background can overlap
-     * (a slow start pull with a backgrounding mid-way), and two concurrent drain+pull
-     * runs would push the same outbox twice and interleave pull adoptions.
+     * Serialises the full passes only: app start, manual sync, background, `syncNow` and
+     * `syncBooks`. Those can overlap (a slow start pull with a backgrounding mid-way), and two
+     * concurrent drain+pull runs would push the same outbox twice and interleave pull adoptions.
+     *
+     * Single-book lifecycle calls (`onBookOpened`, `onBookClosed`, `onPageSettled`) stay outside
+     * this lock on purpose, so a pass never blocks the reader-latency path. That exception is
+     * safe but not free: a book-close push and its trailing drain can still race a locked pass
+     * over the same entry. It stays benign because every `SyncQueue` mutation runs inside one
+     * DataStore `edit` (atomic), and every push re-reads the other side first — `ServerSync.sync`
+     * is compare-then-push, so two attempts for one book settle on one value instead of
+     * duplicating it. Coalescing the trailing drain into the mutex is deliberately out of scope.
      */
     private val runMutex = Mutex()
 
