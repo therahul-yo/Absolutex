@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import com.absolutex.core.ui.A11y
 
 /** Shelf title and count, rendered as an item of the one lazy container. */
 @Composable
@@ -116,7 +117,7 @@ internal fun LibraryEmptyState(
         if (reason == LibraryEmptyReason.NO_LOCATIONS) {
             Button(
                 onClick = onAddLocation,
-                modifier = Modifier.heightIn(min = Space.MinTouchTarget),
+                modifier = Modifier.heightIn(min = A11y.MinTouchTarget),
             ) { Text(stringResource(R.string.library_empty_no_locations_action)) }
         }
     }
