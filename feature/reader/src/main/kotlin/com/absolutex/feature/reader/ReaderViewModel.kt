@@ -145,13 +145,20 @@ class ReaderViewModel internal constructor(
     val tileCache = TileCache(MemoryBudget.defaultCacheBytes(totalRamBytes))
 
     /**
-     * Applies cache-size changes mid-book. The open() coroutine applies the setting once at
-     * open; this collector keeps it live: a user who raises the cache while a book is open
-     * gets the bigger budget without reopening. Resize clamps and trims on shrink, so a
-     * mid-read downsize evicts correctly. distinctUntilChanged: resize is idempotent but
-     * not free, and every app-pref write re-emits the whole AppPrefs object.
+     * Applies cache-size changes mid-book, started once from init on viewModelScope — NOT
+     * from open(): a child of openJob would keep openJob active forever, and lines that
+     * treat openJob.isActive as "an open is in flight" would inherit a permanent hang. The
+     * collector is per-ViewModel, not per-book; open() still applies the setting once, first,
+     * for ordering. Resize clamps and trims on shrink, so a mid-read downsize evicts
+     * correctly. distinctUntilChanged: resize is idempotent but not free, and every app-pref
+     * write re-emits the whole AppPrefs object.
      */
-    private var cacheSizeJob: Job? = null
+    private val cacheSizeJob: Job = viewModelScope.launch {
+        appPrefs.appPrefs
+            .map { it.cacheSizeMiB }
+            .distinctUntilChanged()
+            .collect { mib -> tileCache.resize(userCacheBytes(mib)) }
+    }
 
     /** The open book: a [ComicSource] whose pages are encoded images, or a [PdfDocument]. */
     private var source: Closeable? = null
@@ -419,6 +426,14 @@ class ReaderViewModel internal constructor(
     fun onPageChanged(index: Int) {
         if (index == settledPage) return
         settledPage = index
+        // Prefetch reacts to the settle: cancels behind-work on a reversal, plans the
+        // window ahead in the reading direction, inside the shared budget.
+        prefetch.onSettled(
+            page = index,
+            pageCount = _ui.value.pageCount,
+            layout = readerPrefs.value.pageLayout,
+            depth = PREFETCH_DEPTH,
+        )
         val id = bookId
         // Capture before launching: a book switch mid-write must not persist the new
         // book's index against the old count (or vice versa).
@@ -448,7 +463,7 @@ class ReaderViewModel internal constructor(
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { progressDao.upsert(progress) }
         }
         openJob?.cancel()
-        cacheSizeJob?.cancel()
+        // cacheSizeJob lives on viewModelScope and dies with it; nothing to cancel by hand.
         _toc.value = emptyList()
         pageImages.values.forEach { runCatching { it.close() } }
         pageImages.clear()
