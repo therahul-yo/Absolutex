@@ -5,6 +5,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -224,6 +225,42 @@ class PrefetchEngineTest {
         assertEquals(listOf(11, 12, 13), h.decode.started)
         // Only the two decodable pages are resident; 12 holds no bytes.
         assertEquals(2 * 100_000, h.engine.residentBytes)
+    }
+
+    @Test
+    fun `cancelInFlight waits for the gated decode to stop before the caller closes`() = runTest {
+        // The recycle-under-decode race: evictFarPages closes a far page's PageImage on
+        // Main while a decodeRegion for that page is still running on the decode pool —
+        // the close blocks on the decoder's native lock until the decode finishes. The
+        // contract under test: cancelInFlight(page) returns only after the decode has
+        // actually stopped, so the close that follows runs against a quiet decoder.
+        val h = harness()
+        h.decode.autoComplete = false
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 3)
+        advanceUntilIdle() // 11, 12, 13 started, parked on their gates
+
+        var closeAfterCancel = false
+        val closer = launch {
+            h.engine.cancelInFlight(12)
+            // If cancelInFlight returned while the decode still held the gate, this
+            // would race the decode's cancellation instead of ordering after it.
+            closeAfterCancel = 12 in h.decode.cancelled
+        }
+        advanceUntilIdle()
+        // Under Unconfined the cancellation is delivered synchronously, so the closer may
+        // already be done — what must hold is the ORDER: the decode recorded its
+        // cancellation before cancelInFlight returned, which closeAfterCancel asserts.
+        // Release the gate in case the decode is still parked (a queueing dispatcher
+        // would leave it so until cancellation is processed).
+        h.decode.gates[12]?.complete(Unit)
+        advanceUntilIdle()
+        assertTrue(closer.isCompleted)
+        assertTrue("close must observe the decode as already cancelled", closeAfterCancel)
+        // The other gated decodes are untouched — cancelInFlight is per-page.
+        assertTrue(11 !in h.decode.cancelled)
+        assertTrue(13 !in h.decode.cancelled)
+        h.engine.dropAll()
+        advanceUntilIdle()
     }
 }
 

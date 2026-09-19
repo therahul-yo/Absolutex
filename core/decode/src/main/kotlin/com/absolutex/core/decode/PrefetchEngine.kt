@@ -110,6 +110,24 @@ class PrefetchEngine(
         }
     }
 
+    /**
+     * Cancels one page's in-flight decode and suspends until it has actually stopped, so
+     * the caller can safely close that page's [PageImage] afterwards. The ordering is the
+     * point (see the recycle-under-decode race): BitmapRegionDecoder.close() synchronises
+     * on the decoder's native lock, so closing while a decodeRegion for the same page is
+     * still running makes the closing thread — Main, from evictFarPages — wait for the
+     * decode to finish. Cancelling first and waiting for the stop means the close runs
+     * against a quiet decoder: a frame hitch becomes a non-event.
+     *
+     * Must be called from the engine's own scope (it joins the job); returns immediately
+     * for a page that is not in flight.
+     */
+    suspend fun cancelInFlight(page: Int) {
+        val job = inFlight[page]?.job ?: return
+        job.cancel()
+        job.join()
+    }
+
     private fun planWindow(page: Int, pageCount: Int, layout: PageLayout, depth: Int) {
         if (batchStopped) return
         val window = PrefetchPlanner.window(page, pageCount, layout, direction, depth)
