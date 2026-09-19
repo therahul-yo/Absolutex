@@ -20,6 +20,12 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:ui"))
     implementation(project(":core:data"))
+    // Grid covers decode through the shared thumbnail pipeline at its width buckets.
+    implementation(project(":core:thumbnails"))
+    // Folder rows show book files only, filtered against the scanner's container set.
+    implementation(project(":core:scan"))
+    // Last-folder-per-server memory for the browser; stored, never networked.
+    implementation(libs.datastore.preferences)
     implementation(project(":remote:core"))
     implementation(project(":remote:sync"))
     implementation(project(":remote:ftp"))
@@ -41,7 +47,6 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(libs.datastore.preferences)
     // Real in-process FTP server for the probe's behavioural mapping (same trio the
     // :remote:ftp module's own wire tests use). Test-only, off the release classpath.
     testImplementation(libs.ftpserver.core)

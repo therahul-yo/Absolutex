@@ -41,4 +41,13 @@
     <string name="remote_result_unreachable">The server could not be reached.</string>
     <string name="remote_result_security_refused">The secure connection was refused.</string>
     <string name="remote_result_not_found">Connected, but nothing expected answers there.</string>
+
+    <string name="remote_edit">Edit server</string>
+
+    <string name="remote_browse_title">Browse</string>
+    <string name="remote_browse_empty">This folder is empty.</string>
+    <string name="remote_browse_failed">Could not list this folder.</string>
+    <string name="remote_browse_up">Up one folder</string>
+    <string name="remote_browse_folder">Folder: %1$s</string>
+    <string name="remote_browse_no_cover">No cover for %1$s</string>
 </resources>
