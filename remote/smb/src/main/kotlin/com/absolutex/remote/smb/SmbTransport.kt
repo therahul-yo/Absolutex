@@ -15,6 +15,14 @@ interface SmbTransport : AutoCloseable {
     /** Exactly [length] bytes from [offset], or IOException on short read. Never partial. */
     @Throws(IOException::class)
     fun readAt(remotePath: String, offset: Long, length: Int): ByteArray
+
+    /**
+     * Entries of the directory at [remotePath]: subfolders plus files. Names are base names
+     * for display and matching; the folder browser filters them against the container
+     * extensions. A missing path throws [IOException].
+     */
+    @Throws(IOException::class)
+    fun listDir(remotePath: String): List<SmbEntry>
 }
 
 /**
@@ -30,6 +38,10 @@ interface SmbConnector {
 interface SmbConnection : AutoCloseable {
     @Throws(IOException::class)
     fun openFile(remotePath: String): RemoteFileHandle
+
+    /** Base-name entries of one directory; hostile names are sieved by the mapper, not here. */
+    @Throws(IOException::class)
+    fun listDir(remotePath: String): List<SmbEntry>
 }
 
 /** A single open remote file: length plus pread-style reads. */
@@ -44,11 +56,13 @@ interface RemoteFileHandle : AutoCloseable {
     fun read(buffer: ByteArray, fileOffset: Long, bufferOffset: Int, length: Int): Int
 }
 
+/** One remote directory entry: a subfolder, or a file with its size in bytes. */
+data class SmbEntry(val name: String, val isDirectory: Boolean, val sizeBytes: Long)
+
 /**
  * Binds this path-based transport to one file for the shared streaming stack: the same
  * [SeekableReader] serves SMB and FTP once each path has an adapter.
- */
-fun SmbTransport.bind(remotePath: String): com.absolutex.remote.core.RangeTransport =
+ */fun SmbTransport.bind(remotePath: String): com.absolutex.remote.core.RangeTransport =
     object : com.absolutex.remote.core.RangeTransport {
         override fun sizeBytes(): Long = this@bind.sizeBytes(remotePath)
 

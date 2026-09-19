@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -48,7 +49,9 @@ import com.absolutex.remote.sync.SmbServer
 /**
  * Server list: loading, empty, error and content states, pull-to-refresh that syncs,
  * and delete with confirmation (secrets die with the record). Add/edit navigate out
- * through the callbacks the app graph supplies.
+ * through the callbacks the app graph supplies; tapping a file server (SMB/FTP) opens
+ * its folder browser, while sync servers (Komga/Kavita hold no files) still open the
+ * form for editing.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,6 +59,7 @@ fun ServerListScreen(
     viewModel: ServerListViewModel = hiltViewModel(),
     onAddServer: () -> Unit = {},
     onEditServer: (String) -> Unit = {},
+    onOpenServer: (String) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
@@ -93,6 +97,7 @@ fun ServerListScreen(
             onRefresh = viewModel::refresh,
             onRetry = viewModel::retry,
             onEditServer = onEditServer,
+            onOpenServer = onOpenServer,
             onDelete = { pendingDelete = it },
             modifier = Modifier.padding(padding),
         )
@@ -117,6 +122,7 @@ private fun RefreshableContent(
     onRefresh: () -> Unit,
     onRetry: () -> Unit,
     onEditServer: (String) -> Unit,
+    onOpenServer: (String) -> Unit,
     onDelete: (RemoteServer) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -137,6 +143,7 @@ private fun RefreshableContent(
                     ServerRows(
                         servers = state.servers,
                         onEdit = onEditServer,
+                        onOpen = onOpenServer,
                         onDelete = onDelete,
                     )
                 }
@@ -187,17 +194,34 @@ private fun FailedPane(onRetry: () -> Unit) {
 private fun ServerRows(
     servers: List<RemoteServer>,
     onEdit: (String) -> Unit,
+    onOpen: (String) -> Unit,
     onDelete: (RemoteServer) -> Unit,
 ) {
     val deleteLabel = stringResource(R.string.remote_delete)
+    val editLabel = stringResource(R.string.remote_edit)
     LazyColumn(Modifier.fillMaxSize()) {
         items(servers, key = { it.id }) { server ->
             val label = serverLabel(server)
             val subtitle = serverSubtitle(server)
+            // File servers open their browser on tap; sync servers hold no files, so a
+            // tap edits instead and the browser never meets an unlistable server.
+            val open = {
+                if (server.kind == RemoteKind.SMB || server.kind == RemoteKind.FTP) {
+                    onOpen(server.id)
+                } else {
+                    onEdit(server.id)
+                }
+            }
             ListItem(
                 headlineContent = { Text(label) },
                 supportingContent = { Text(subtitle) },
                 trailingContent = {
+                    IconButton(
+                        onClick = { onEdit(server.id) },
+                        modifier = Modifier.semantics { contentDescription = editLabel },
+                    ) {
+                        Icon(Icons.Filled.Edit, contentDescription = null)
+                    }
                     IconButton(
                         onClick = { onDelete(server) },
                         modifier = Modifier.semantics { contentDescription = deleteLabel },
@@ -207,7 +231,7 @@ private fun ServerRows(
                 },
                 modifier = Modifier
                     .semantics { contentDescription = label }
-                    .clickable { onEdit(server.id) },
+                    .clickable { open() },
             )
         }
     }
