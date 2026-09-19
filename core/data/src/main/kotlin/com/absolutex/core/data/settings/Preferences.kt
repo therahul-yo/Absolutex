@@ -1,6 +1,8 @@
 package com.absolutex.core.data.settings
 
 import com.absolutex.core.data.BookPrefs
+import com.absolutex.core.data.NextBookOrder
+import com.absolutex.core.data.NextBookScope
 import com.absolutex.model.FitContext
 import com.absolutex.model.FitMode
 import com.absolutex.model.FitModeMemory
@@ -52,6 +54,15 @@ data class ReaderPrefs(
     val pageTurnMs: Int = DEFAULT_PAGE_TURN_MS,
     /** How far a key press or edge tap scrolls a continuous strip, as a percentage of the screen. */
     val scrollStepPercent: Int = DEFAULT_SCROLL_STEP_PERCENT,
+    /**
+     * Turn forward past the last page and the reader offers the next book in the series (§5.2).
+     * On by default: doing nothing at the end of a book is the surprise, not this.
+     */
+    val autoAdvance: Boolean = true,
+    /** Where auto-advance looks for that next book: the whole library, or just this folder. */
+    val nextBookScope: NextBookScope = NextBookScope.WHOLE_LIBRARY,
+    /** How the books in that scope are ordered, to find which one comes next. */
+    val nextBookOrder: NextBookOrder = NextBookOrder.PARSED_NUMBER,
 )
 
 /**

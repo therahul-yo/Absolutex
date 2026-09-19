@@ -1,5 +1,6 @@
 package com.absolutex.feature.library
 
+import com.absolutex.core.data.BookPath
 import com.absolutex.core.data.LibraryBook
 import com.absolutex.core.data.LibraryRepository
 import com.absolutex.core.data.ProgressDao
@@ -17,7 +18,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
-import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -58,6 +58,10 @@ internal class RoomLibraryFeed @Inject constructor(
     override suspend fun search(query: String): List<LibraryBookUi> {
         val progress = progressDao.observeAll().first().associateBy { it.bookId }
         val prefs = appPrefsSource.currentAppPrefs()
+        // The DAO is the source of truth for what matches (series, title, path, and — since a SAF
+        // book's path is a percent-encoded document Uri — the encoded query too). Filtering again
+        // here could only ever remove rows the DAO already chose correctly, never add the ones it
+        // missed, so a full parsed-label search (e.g. #1 vs stored 001) stays noted for M5 instead.
         return repository.search(query)
             .deduplicatedByIdentity()
             .map { it.toUi(progress, prefs.useOriginalFilename) }
@@ -111,7 +115,7 @@ internal class RoomLibraryFeed @Inject constructor(
         return LibraryBookUi(
             path = path,
             displayName = displayNameOf(this, useOriginalFilename),
-            originalFilename = File(path).name,
+            originalFilename = BookPath.nameOf(path),
             series = series,
             sizeBytes = sizeBytes,
             lastModified = lastModified,
@@ -135,14 +139,14 @@ internal class RoomLibraryFeed @Inject constructor(
          * the label for both display and search, which is what the switch's "escape hatch" means.
          */
         fun displayNameOf(book: LibraryBook, useOriginalFilename: Boolean): String {
-            if (useOriginalFilename) return File(book.path).name
+            if (useOriginalFilename) return BookPath.nameOf(book.path)
             return ParsedName(
                 series = book.series,
                 issue = book.issue?.let { value -> IssueNumber(value, book.issueRaw ?: value.toString()) },
                 volume = book.volume,
                 year = book.year,
                 title = book.title,
-                originalFilename = File(book.path).name,
+                originalFilename = BookPath.nameOf(book.path),
             ).displayName
         }
     }

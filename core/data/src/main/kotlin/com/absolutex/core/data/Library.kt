@@ -82,6 +82,11 @@ interface LibraryDao {
      * Instant-as-you-type search (§5.1). LIKE with a leading wildcard cannot use an index, but at
      * 5,000 rows SQLite scans in well under a frame, and the alternative — FTS — is a second copy
      * of every title to keep in sync.
+     *
+     * [path] is a percent-encoded SAF document Uri for a SAF book, so a typed query never matches
+     * one on [path] alone (a space never appears as a literal space there). [encoded] is [query]
+     * percent-encoded the same way, so the row still matches on the encoded path even when the
+     * decoded filename was never persisted as its own column.
      */
     @Query(
         """
@@ -89,10 +94,11 @@ interface LibraryDao {
         WHERE series LIKE '%' || :query || '%'
            OR title  LIKE '%' || :query || '%'
            OR path   LIKE '%' || :query || '%'
+           OR path   LIKE '%' || :encoded || '%'
         ORDER BY series IS NULL, series, issue
         """,
     )
-    suspend fun search(query: String): List<LibraryBook>
+    suspend fun search(query: String, encoded: String): List<LibraryBook>
 
     /**
      * Removes every row for [path] — for a path the watcher reported as gone (§5.1 file

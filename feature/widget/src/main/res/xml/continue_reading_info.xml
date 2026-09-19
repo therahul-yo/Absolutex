@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Provider config, not a layout: the only XML the widget ships (brief bans layout XML outside splash). -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="0"
+    android:description="@string/widget_desc"
+    android:widgetCategory="home_screen"
+    android:initialLayout="@layout/glance_default_loading_layout" />
+    <!-- updatePeriodMillis=0: no polling drain; refreshes come from onUpdate plus explicit ACTION_REFRESH. -->
+    <!-- initialLayout is Glance's own bundled loading layout, not a hand-written one. -->

@@ -3,15 +3,26 @@ package com.absolutex.remote.ftp
 import java.io.IOException
 
 /** In-memory [FtpTransport]: exact slices of [bytes], with call recording for cost assertions. */
-internal class FakeFtpTransport(val bytes: ByteArray) : FtpTransport {
+internal class FakeFtpTransport(
+    val bytes: ByteArray,
+    private val entries: List<FtpEntry> = emptyList(),
+) : FtpTransport {
 
     var readCalls = 0
         private set
     var bytesServed = 0L
         private set
     val calls = mutableListOf<Pair<Long, Int>>()
+    var closes = 0
+        private set
 
     override fun sizeBytes(path: String): Long = bytes.size.toLong()
+
+    override fun close() {
+        closes++
+    }
+
+    override fun listDir(path: String): List<FtpEntry> = entries
 
     override fun readAt(path: String, offset: Long, length: Int): ByteArray {
         require(offset >= 0) { "negative offset: $offset" }

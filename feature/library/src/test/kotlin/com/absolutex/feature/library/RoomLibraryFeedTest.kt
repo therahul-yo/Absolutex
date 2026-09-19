@@ -105,6 +105,27 @@ class RoomLibraryFeedTest {
         assertEquals("Absolute Batman #1", parsed.single().displayName)
     }
 
+    @Test fun `search finds a SAF book by its visible filename, not its percent-encoded path`() = runTest {
+        // A real SAF document Uri for a file picked at a tree's own root. The stored path holds
+        // "Absolute%20Batman%20001%20(2024).cbr" — never the literal "Absolute Batman 001" a
+        // person types — and "Absolute Batman 001" is not a substring of the series column
+        // ("Absolute Batman") either, so this can only pass through the path's encoded form.
+        val uri = "content://com.android.externalstorage.documents/tree/primary%3AComics/document/" +
+            "primary%3AComics%2FAbsolute%20Batman%20001%20(2024).cbr"
+        insert(uri)
+        assertEquals(1, feed(AppPrefs()).search("Absolute Batman 001").size)
+    }
+
+    @Test fun `search finds a SAF book whose id has a literal percent-encoded slash before the name`() = runTest {
+        // Two encoded slashes here ("%2F"): one before the subfolder, one before the file itself.
+        // The match must land on the filename wherever it sits in the id, not only right after
+        // the tree's own root.
+        val uri = "content://com.android.externalstorage.documents/tree/primary%3AComics/document/" +
+            "primary%3AComics%2FSpecial%20Editions%2FAbsolute%20Batman%20001%20(2024).cbr"
+        insert(uri)
+        assertEquals(1, feed(AppPrefs()).search("Absolute Batman 001").size)
+    }
+
     @Test fun `a progress row still joins under either policy`() = runTest {
         val path = "Absolute Batman 001 (2024).cbr"
         val b = book(path)

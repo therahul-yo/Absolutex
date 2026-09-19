@@ -7,6 +7,7 @@ import android.content.pm.ActivityInfo
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.Flow
 import com.absolutex.core.data.settings.ReaderPrefs
+import com.absolutex.core.gpu.CropRect
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.isShiftPressed
@@ -20,7 +21,7 @@ import android.app.Activity
 import android.graphics.Bitmap
 import android.os.Trace
 import android.net.Uri
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
@@ -33,7 +34,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -102,10 +102,17 @@ fun ReaderScreen(
     modifier: Modifier = Modifier,
     /** Opens the settings destination; null where the host has none (previews, tests). */
     onSettings: (() -> Unit)? = null,
+    /**
+     * Turning forward past the last screen (§5.2 auto-advance); null where the host has nowhere
+     * to send it (previews, tests). Fires once per attempt, never on every frame — see [Pages]
+     * and [Strip].
+     */
+    onFinished: (() -> Unit)? = null,
     vm: ReaderViewModel = hiltViewModel(),
 ) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val global by vm.readerPrefs.collectAsStateWithLifecycle()
+    val rendering by vm.renderingPrefs.collectAsStateWithLifecycle()
     // A book's own choices win over the global ones (§5.2), and only for this book.
     val options: ReaderOptionsViewModel = hiltViewModel()
     val book by remember(ui.bookId) { options.bookPrefs(ui.bookId) }.collectAsStateWithLifecycle(null)
@@ -116,14 +123,24 @@ fun ReaderScreen(
     // rememberSaveable also survives a config change this activity does not declare (font scale,
     // locale, keyboard) — MainActivity would otherwise have to declare every such change instead.
     val chromeState = rememberSaveable { mutableStateOf(false) }
+    // Auto background (§4, §5.2, milestone 5): hoisted like chromeState above — Pages and Strip
+    // are different call sites, and state owned by either one would be torn down the moment the
+    // other is composed instead. One colour per settled page (PageCanvas reports one per page it
+    // loads); backgroundPage names which of those is live right now. TODO(lead) from #26 done here.
+    val pageBackgrounds = remember { mutableStateMapOf<Int, Color>() }
+    val backgroundPage = remember { mutableStateOf(0) }
+    val targetBackground = readerBackgroundFor(rendering.autoBackground, pageBackgrounds, backgroundPage.value)
+    val animatedBackground by animateColorAsState(targetBackground, label = "readerBackground")
 
     LaunchedEffect(uri) { vm.open(uri) }
 
     Box(
         modifier
             .fillMaxSize()
-            // The reading surface is not a Material surface, it is the page (§7).
-            .background(Color.Black),
+            // The reading surface is not a Material surface, it is the page (§7). Auto background
+            // crossfades this to the settled page's own edge colour; off (or before a first
+            // report) it is exactly today's flat black.
+            .background(animatedBackground),
         contentAlignment = Alignment.Center,
     ) {
         when {
@@ -143,11 +160,31 @@ fun ReaderScreen(
                 color = Color.White,
             )
             prefs.pageLayout == PageLayout.CONTINUOUS_VERTICAL ->
-                Strip(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, chromeState)
-            else -> Pages(ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, chromeState)
+                Strip(
+                    ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, onFinished,
+                    chromeState, pageBackgrounds, backgroundPage,
+                )
+            else ->
+                Pages(
+                    ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, onFinished,
+                    chromeState, pageBackgrounds, backgroundPage,
+                )
         }
     }
 }
+
+/**
+ * The letterbox's target colour right now (§4, §5.2, milestone 5): the settled page's own
+ * sampled colour when auto background is on and that page has reported one; opaque black
+ * otherwise — off, or before any page has settled — which is exactly today's flat background.
+ * Pure and total, so the one-colour-per-settled-page rule is unit-tested on the JVM, with no
+ * page geometry, animation or instrumentation harness involved.
+ */
+internal fun readerBackgroundFor(
+    autoBackground: Boolean,
+    pageBackgrounds: Map<Int, Color>,
+    settledPage: Int,
+): Color = if (autoBackground) pageBackgrounds[settledPage] ?: Color.Black else Color.Black
 
 internal const val CHROME_ALPHA = 0.9f
 
@@ -160,7 +197,8 @@ private const val ZOOM_STEP_BUFFER = 4
 
 private const val HALF = 0.5f
 
-private const val PERCENT = 100f
+/** Shared with [pagerStep] and [stripStep] in ReaderAdvance.kt. */
+internal const val PERCENT = 100f
 
 @Composable
 private fun Pages(
@@ -171,7 +209,12 @@ private fun Pages(
     prefs: ReaderPrefs,
     vm: ReaderViewModel,
     onSettings: (() -> Unit)?,
+    onFinished: (() -> Unit)?,
     chromeState: MutableState<Boolean>,
+    /** One sampled background colour per page loaded so far (§4, §5.2, milestone 5). */
+    pageBackgrounds: MutableMap<Int, Color>,
+    /** Which page's colour the letterbox is crossfading toward. */
+    backgroundPage: MutableState<Int>,
 ) {
     val flow = prefs.readingFlow
     // The pager counts screens; everything else (progress, seeking, keys) speaks book pages.
@@ -184,8 +227,9 @@ private fun Pages(
     // Per page, not one flag: page N's zoom or overflow must not lock the pager on page N+1.
     val locks = remember(pageCount) { mutableStateMapOf<Int, Boolean>() }
     val scope = rememberCoroutineScope()
-    // Edge swipes arrive in screen terms; in a mirrored right-to-left book left brings the previous page.
-    val goTo: (Int) -> Unit = { step -> scope.launch { pagerState.turn(step, spreads.lastIndex, prefs) } }
+    // Edge swipes arrive in screen terms; in a mirrored right-to-left book left brings the previous
+    // page. See pagerStep (ReaderAdvance.kt) for the last-screen / onFinished behaviour.
+    val goTo: (Int) -> Unit = pagerStep(pagerState, spreads.lastIndex, prefs, scope, onFinished)
     val turn: (Boolean) -> Unit = { forward -> goTo(if (forward != (flow == ReadingFlow.RTL)) 1 else -1) }
     var chrome by chromeState
     val tap: (TapZone) -> Unit = { zone -> onTapZone(zone, goTo) { chrome = !chrome } }
@@ -209,7 +253,7 @@ private fun Pages(
     // it is coarser.
     val currentSpreads by rememberUpdatedState(spreads)
     LaunchedEffect(pagerState) {
-        snapshotFlow { pagerState.settledPage }.collect { vm.onPageChanged(currentSpreads[it].first) }
+        snapshotFlow { pagerState.settledPage }.collect { vm.settlePage(currentSpreads[it].first, backgroundPage) }
     }
 
     // §3's "tap book -> first page rendered" ends here, not at the first frame: the window is up
@@ -235,6 +279,7 @@ private fun Pages(
                 onPagerLockChanged = { locks[index] = it },
                 onEdgeSwipe = turn, onTapZone = tap, spreadSide = side,
                 zoomSteps = if (current) zoomSteps else null,
+                onBackgroundColour = { pageBackgrounds[index] = it },
             )
         }
     }
@@ -269,29 +314,26 @@ private fun Strip(
     prefs: ReaderPrefs,
     vm: ReaderViewModel,
     onSettings: (() -> Unit)?,
+    onFinished: (() -> Unit)?,
     chromeState: MutableState<Boolean>,
+    /** One sampled background colour per page loaded so far (§4, §5.2, milestone 5). */
+    pageBackgrounds: MutableMap<Int, Color>,
+    /** Which page's colour the letterbox is crossfading toward. */
+    backgroundPage: MutableState<Int>,
 ) {
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = startPage)
     val scope = rememberCoroutineScope()
     var chrome by chromeState
     ReaderWindow(prefs, immersive = !chrome)
-    val step: (Int) -> Unit = { direction ->
-        scope.launch {
-            val info = listState.layoutInfo
-            val extent = (info.viewportEndOffset - info.viewportStartOffset).toFloat()
-            listState.animateScrollBy(
-                direction * extent * prefs.scrollStepPercent / PERCENT,
-                animationSpec = tween(prefs.pageTurnMs),
-            )
-        }
-    }
+    // See stripStep (ReaderAdvance.kt) for the can't-scroll-further / onFinished behaviour.
+    val step: (Int) -> Unit = stripStep(listState, prefs, scope, onFinished)
     val jump: (Int) -> Unit = { to -> scope.launch { listState.scrollToItem(to.coerceIn(0, pageCount - 1)) } }
     val tap: (TapZone) -> Unit = { zone -> onTapZone(zone, step) { chrome = !chrome } }
     val rtl = prefs.readingFlow == ReadingFlow.RTL
     // ponytail: no keyboard zoom in a strip; pinch zooms a page in place. Add when a strip has a focus page.
     val keys = readerKeys(rtl, prefs.volumeKeysTurnPages, step, jump, pageCount - 1, { false }) { chrome = !chrome }
     LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex }.collect { vm.onPageChanged(it) }
+        snapshotFlow { listState.firstVisibleItemIndex }.collect { vm.settlePage(it, backgroundPage) }
     }
     var firstPageDrawn by remember(bookId) { mutableStateOf(false) }
     ReportDrawnWhen { firstPageDrawn }
@@ -311,6 +353,11 @@ private fun Strip(
                         spreadSide = SpreadSide.NONE, onBaseReady = { if (index == startPage) firstPageDrawn = true },
                         decodeNow = true, zoomSteps = null,
                         onLoaded = { aspects[index] = it.width.toFloat() / it.height },
+                        onCropDecided = { crop ->
+                            val a = crop?.let { it.width.toFloat() / it.height }
+                            if (a != null) aspects[index] = a
+                        },
+                        onBackgroundColour = { pageBackgrounds[index] = it },
                     )
                 }
             }
@@ -574,6 +621,10 @@ private fun PageSlot(
     zoomSteps: Flow<Float>?,
     /** The page's header is read: its dimensions are known. Only valid (non-empty) pages. */
     onLoaded: (PageImage) -> Unit = {},
+    /** Fires once when the page's border crop is decided (or null if uncropped / crop disabled). */
+    onCropDecided: ((CropRect?) -> Unit)? = null,
+    /** Fires once per load with this page's sampled edge colour (§4, §5.2, milestone 5). */
+    onBackgroundColour: (Color) -> Unit = {},
 ) {
     var image by remember(index) { mutableStateOf<PageImage?>(null) }
     var attempts by remember(index) { mutableIntStateOf(0) }
@@ -587,15 +638,47 @@ private fun PageSlot(
         Trace.endAsyncSection("absx.pageImage p=$index", index)
         loading = false
     }
-
-    // A decode with no dimensions is unreadable, never rendered.
     val img = image?.takeIf { it.width > 0 && it.height > 0 }
-    // The fit follows the shape of what is actually on screen, which is only known once the page's
-    // header is read: a spread and a single page are different situations with different answers.
     val screen = LocalConfiguration.current
     val fit = fitMode ?: img?.let {
         prefs.fitFor(FitContext.of(screen.screenWidthDp, screen.screenHeightDp, it.width, it.height))
     } ?: prefs.fitMode
+    PageSlotContent(
+        img = img, loading = loading, fit = fit, bookId = bookId, index = index,
+        vm = vm, rightToLeft = rightToLeft, pagerVertical = pagerVertical,
+        onPagerLockChanged = onPagerLockChanged, onEdgeSwipe = onEdgeSwipe, onTapZone = onTapZone,
+        spreadSide = spreadSide, onBaseReady = onBaseReady, zoomSteps = zoomSteps,
+        onCropDecided = onCropDecided, onBackgroundColour = onBackgroundColour,
+        onInvalidate = { vm.invalidatePage(index); attempts++ },
+    )
+}
+
+/**
+ * The three-way content switch for one reader page — decoded surface, loading spinner, or
+ * unreadable-page state with retry. Extracted from [PageSlot] so that function stays within
+ * detekt's 60-line LongMethod limit (the PageCanvas call alone was ~15 of those lines). No
+ * behavioural change.
+ */
+@Composable
+private fun PageSlotContent(
+    img: PageImage?,
+    loading: Boolean,
+    fit: FitMode,
+    bookId: String,
+    index: Int,
+    vm: ReaderViewModel,
+    rightToLeft: Boolean,
+    pagerVertical: Boolean,
+    onPagerLockChanged: (Boolean) -> Unit,
+    onEdgeSwipe: (Boolean) -> Unit,
+    onTapZone: (TapZone) -> Unit,
+    spreadSide: SpreadSide,
+    onBaseReady: () -> Unit,
+    zoomSteps: Flow<Float>?,
+    onCropDecided: ((CropRect?) -> Unit)?,
+    onBackgroundColour: (Color) -> Unit,
+    onInvalidate: () -> Unit,
+) {
     when {
         img != null -> PageCanvas(
             page = img,
@@ -612,6 +695,8 @@ private fun PageSlot(
             onBaseReady = onBaseReady,
             baseLayer = { w, h -> vm.baseLayer(index, img, w, h) },
             zoomSteps = zoomSteps,
+            onCropDecided = onCropDecided,
+            onBackgroundColour = onBackgroundColour,
         )
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
@@ -632,10 +717,7 @@ private fun PageSlot(
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(stringResource(R.string.reader_page_unreadable), color = Color.White)
-                Button(onClick = {
-                    vm.invalidatePage(index)
-                    attempts++
-                }) {
+                Button(onClick = onInvalidate) {
                     Text(stringResource(R.string.reader_retry))
                 }
             }

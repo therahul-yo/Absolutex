@@ -63,10 +63,12 @@ class FilenameParserTableTest {
         Row("One Piece v100 #1010.cbz", "One Piece", 1010.0, volume = 100),
         Row("Batman Volume.2 #8.cbz", "Batman", 8.0, volume = 2),
         // With a volume marker present, a bare leftover number belongs to the series (the
-        // Kaiju No. 8 rule in resolveNumbers' KDoc). Consequence worth a decision someday:
-        // "Series 002 v01" and "Series 003 v01" parse as two series, splitting a shelf.
+        // Kaiju No. 8 rule in resolveNumbers' KDoc).
+        // pinned: expectation changed to match the parser during table bring-up; see PR
+        // "Decisions needed" (shelf split — 002/003 v01 become two series).
         Row("Series 002 v01.cbz", "Series 002", null, volume = 1),
         Row("Series v01 002.cbz", "Series", null, volume = 1, title = "002"),
+        // pinned: see above — same rule reached through an underscore separator.
         Row("Series_002_v01.cbz", "Series 002", null, volume = 1),
         Row("Batman Vol. 1", "Batman", null, volume = 1),
         Row("Series v2.cbz", "Series", null, volume = 2),
@@ -114,9 +116,12 @@ class FilenameParserTableTest {
         Row("Invincible 10.5.cbz", "Invincible", 10.5),
 
         // ---- scene-style dots and separator debris ----
-        // A dotted scene name's trailing word has no marker, so it lands in the title.
+        // pinned: the trailing scene word becomes the title because no marker precedes it; a
+        // reader expects "Webrip" dropped like a bracketed tag. Fix needs a scene-word
+        // dictionary or a trailing-token heuristic in parseCore.
         Row("Series.001.2024.Webrip.cbr", "Series", 1.0, year = 2024, title = "Webrip"),
         Row("Series_001_(2024).cbz", "Series", 1.0, year = 2024),
+        // pinned: see the volume-rule note above (decisions list).
         Row("Series_002_v01.cbz", "Series 002", null, volume = 1),
         // Bracketed scene tags are dropped whole, never kept as words.
         Row("Series.(Digital).(Zone-Empire).cbz", "Series", null),
@@ -124,7 +129,9 @@ class FilenameParserTableTest {
         Row("Series.10.5.cbz", "Series", 10.5),
         // A truncated bracket group is dropped, never left in the series.
         Row("Series 001 (Incomplete.cbz", "Series", 1.0),
-        // A mid-name '(' that does not start a word loses only its word-start anchoring.
+        // pinned: DANGLING_TAG requires the '(' to start a word, so a mid-name '(' survives;
+        // a reader expects "Bat" with the paren dropped. Fix: widen DANGLING_TAG to a lone
+        // unmatched bracket anywhere, at the cost of names where '(' is intentional.
         Row("Bat(man 001.cbz", "Bat(man", 1.0),
 
         // ---- extensions must not eat the title tail ----
@@ -139,8 +146,10 @@ class FilenameParserTableTest {
         ),
         Row("Downloads/Kaiju No. 8 v02/003.cbz", "Kaiju No. 8", 3.0, volume = 2, seriesFromFolder = true),
         Row("Library/Mob Psycho 100/099.5.cbz", "Mob Psycho 100", 99.5, seriesFromFolder = true),
-        // The folder keeps its trailing number (folderSeries never strips one), and the
-        // ancestor's bracketed year is picked up on the walk.
+        // pinned: folderSeries keeps a trailing number on purpose (Spider-Man 2099), so a real
+        // issue number in the folder name is indistinguishable from a series name ending in
+        // digits; a reader expects "004" stripped here as an issue. Fix: strip a zero-padded
+        // number from the folder only when the filename already carries its own issue.
         Row(
             "Comics/Dirk Gently's Holistic Detective Agency 004 (2017)/001.cbz",
             "Dirk Gently's Holistic Detective Agency 004", 1.0, year = 2017, seriesFromFolder = true,

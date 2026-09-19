@@ -1,5 +1,6 @@
 package com.absolutex.core.data
 
+import android.net.Uri
 import com.absolutex.core.scan.LibraryChange
 import com.absolutex.core.scan.DocumentTree
 import com.absolutex.core.scan.LibraryScanner
@@ -42,9 +43,17 @@ class LibraryRepository internal constructor(
 
     fun observeLibrary(): Flow<List<LibraryBook>> = dao.observeAll()
 
-    /** A blank query is not a search for nothing — it is the whole library (§5.1). */
-    suspend fun search(query: String): List<LibraryBook> =
-        if (query.isBlank()) dao.allOnce() else dao.search(query.trim())
+    /**
+     * A blank query is not a search for nothing — it is the whole library (§5.1).
+     *
+     * A SAF book's [LibraryBook.path] is a percent-encoded document Uri, so a typed query with a
+     * space or any other reserved character never matches it as-is. [Uri.encode] is the same
+     * encoding Android used to build that Uri, so the encoded query matches the encoded path.
+     */
+    suspend fun search(query: String): List<LibraryBook> {
+        val trimmed = query.trim()
+        return if (trimmed.isEmpty()) dao.allOnce() else dao.search(trimmed, Uri.encode(trimmed))
+    }
 
     /**
      * Scans [root] and reconciles the database with what is on disk.
@@ -156,9 +165,14 @@ class LibraryRepository internal constructor(
 
     private fun ScannedBook.toEntity(scanId: Long) = LibraryBook(
         path = path,
-        // Identity for cross-location deduplication (§5.1): the same file seen twice through
-        // two configured roots. Name and size, because hashing contents is unaffordable.
-        contentKey = BookIdentity.of(File(path).name, sizeBytes),
+        // Identity for cross-location deduplication (§5.1) and for joining reading progress,
+        // which the reader keys the same way (see Context.identityOf): name and size, because
+        // hashing contents is unaffordable. displayName, not File(path).name — path is a
+        // content:// document Uri for a SAF-scanned book, and its last segment is a
+        // percent-encoded document id, not the filename. No migration needed: contentKey already
+        // exists, and a location rescans whenever the library opens, so every row gets the
+        // corrected key on its next scan.
+        contentKey = BookIdentity.of(displayName, sizeBytes),
         series = parsed.series,
         title = parsed.title,
         issue = parsed.issue?.value,

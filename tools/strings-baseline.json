@@ -1,0 +1,35 @@
+{
+  "_comment": "Known hardcoded user-visible strings, pinned so the gate fails only on NEW ones. Keyed by path+kind+text, never by line number. Shrinking this file is the point: every entry is either a milestone-2 externalisation or wants a '// i18n-ignore: <reason>' comment in the source. Regenerate with tools/check-strings.py --update-baseline.",
+  "known": [
+    {
+      "path": "core/gpu/src/main/kotlin/com/absolutex/core/gpu/ColourPanel.kt",
+      "kind": "content-description",
+      "text": "$name, $valueText",
+      "count": 1
+    },
+    {
+      "path": "feature/library/src/main/kotlin/com/absolutex/feature/library/LibraryBars.kt",
+      "kind": "text",
+      "text": "⋮",
+      "count": 1
+    },
+    {
+      "path": "feature/library/src/main/kotlin/com/absolutex/feature/library/LibraryBars.kt",
+      "kind": "text",
+      "text": "✕",
+      "count": 2
+    },
+    {
+      "path": "feature/library/src/main/kotlin/com/absolutex/feature/library/LibraryBars.kt",
+      "kind": "text-interpolated",
+      "text": "${stringResource(R.string.library_layout)}: ${layout.label()}",
+      "count": 1
+    },
+    {
+      "path": "feature/reader/src/main/kotlin/com/absolutex/feature/reader/ThumbnailStrip.kt",
+      "kind": "text-interpolated",
+      "text": "${index + 1}",
+      "count": 1
+    }
+  ]
+}
