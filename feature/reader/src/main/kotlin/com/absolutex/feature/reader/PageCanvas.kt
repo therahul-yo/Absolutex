@@ -231,31 +231,32 @@ fun PageCanvas(
     // prefs ?: benchmark would silently measure the neutral default while the extras
     // stay ignored, so the order below matters.
     val context = LocalContext.current
-    val benchmarkColour = remember(pageIndex) {
-        val appInfo = context.applicationInfo
-        if (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE == 0) {
-            null
-        } else {
+    // One gate for every benchmark hook below: per-hook gating is how two of the three were
+    // missed the first time (#46 review). Release builds read no intent extra at all.
+    val debugHooks = remember(pageIndex) {
+        context.applicationInfo.flags and
+            android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+    }
+    val benchmarkColour = if (!debugHooks) {
+        null
+    } else {
+        remember(pageIndex) {
             (context as? Activity)?.intent?.getStringExtra(ColourParams.EXTRA_COLOUR)
                 ?.let(ColourParams::decode)
         }
     }
-    // Upscaling rides a second extra, so each codec stays total on its own. Same
-    // FLAG_DEBUGGABLE gate as colour: the hook must be inert in release builds.
-    val benchmarkUpscaler = remember(pageIndex) {
-        val appInfo = context.applicationInfo
-        if (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE == 0) {
-            null
-        } else {
+    // Upscaling rides a second extra, so each codec stays total on its own.
+    val benchmarkUpscaler = if (!debugHooks) {
+        null
+    } else {
+        remember(pageIndex) {
             (context as? Activity)?.intent?.getStringExtra(Upscaler.EXTRA_UPSCALER)
                 ?.let(Upscaler::decodeExtra)
         }
     }
-    // Crop rides a third: "0" disables it for the off-benchmark. Same gate.
-    val benchmarkCropOff = remember(pageIndex) {
-        val appInfo = context.applicationInfo
-        (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) &&
-            (context as? Activity)?.intent?.getStringExtra(CropMath.EXTRA_CROP) == "0"
+    // Crop rides a third: "0" disables it for the off-benchmark.
+    val benchmarkCropOff = debugHooks && remember(pageIndex) {
+        (context as? Activity)?.intent?.getStringExtra(CropMath.EXTRA_CROP) == "0"
     }
     val cropActive = cropEnabled && !benchmarkCropOff
 
