@@ -7,6 +7,7 @@ import com.absolutex.remote.core.DATE_HEADER
 import com.absolutex.remote.core.HttpBytesResponse
 import com.absolutex.remote.core.HttpCall
 import com.absolutex.remote.core.HttpResponse
+import com.absolutex.remote.core.HttpStreamResponse
 import com.absolutex.remote.core.HttpUrlConnectionCall
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -152,12 +153,34 @@ class SyncWiringTest {
             return HttpResponse(response.statusCode(), response.body(), response.serverDate())
         }
 
-        override fun requestBytes(method: String, url: String, headers: Map<String, String>): HttpBytesResponse {
+        override fun requestBytes(
+            method: String,
+            url: String,
+            headers: Map<String, String>,
+            maxBytes: Long,
+        ): HttpBytesResponse {
             val builder = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
             headers.forEach { (name, value) -> builder.header(name, value) }
             builder.method(method, java.net.http.HttpRequest.BodyPublishers.noBody())
             val response = client.send(builder.build(), java.net.http.HttpResponse.BodyHandlers.ofByteArray())
             return HttpBytesResponse(response.statusCode(), response.body())
+        }
+
+        override fun requestStream(
+            method: String,
+            url: String,
+            headers: Map<String, String>,
+        ): HttpStreamResponse {
+            val builder = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
+            headers.forEach { (name, value) -> builder.header(name, value) }
+            builder.method(method, java.net.http.HttpRequest.BodyPublishers.noBody())
+            val response = client.send(builder.build(), java.net.http.HttpResponse.BodyHandlers.ofInputStream())
+            return HttpStreamResponse(
+                response.statusCode(),
+                response.body(),
+                response.headers().map(),
+                response.serverDate(),
+            )
         }
     }
 

@@ -7,6 +7,7 @@ import com.absolutex.core.data.ReadingProgress
 import com.absolutex.remote.core.HttpBytesResponse
 import com.absolutex.remote.core.HttpCall
 import com.absolutex.remote.core.HttpResponse
+import com.absolutex.remote.core.HttpStreamResponse
 import com.absolutex.remote.sync.ConnectionResult
 import com.absolutex.remote.sync.KavitaConnectionProbe
 import com.absolutex.remote.sync.KomgaConnectionProbe
@@ -115,8 +116,20 @@ class ServerViewModelTest {
             }
         }
 
-        override fun requestBytes(method: String, url: String, headers: Map<String, String>): HttpBytesResponse =
-            HttpBytesResponse(404, ByteArray(0))
+        override fun requestBytes(
+            method: String,
+            url: String,
+            headers: Map<String, String>,
+            maxBytes: Long,
+        ): HttpBytesResponse = HttpBytesResponse(404, ByteArray(0))
+
+        // This fake serves the sync flows, which never stream; 404 with an empty body keeps
+        // that explicit rather than leaving a method that cannot be called.
+        override fun requestStream(
+            method: String,
+            url: String,
+            headers: Map<String, String>,
+        ): HttpStreamResponse = HttpStreamResponse(404, java.io.InputStream.nullInputStream())
     }
 
     private fun dataStore(name: String) = PreferenceDataStoreFactory.create(
