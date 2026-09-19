@@ -26,11 +26,29 @@ android {
             excludes += "org/bouncycastle/x509/CertPathReviewerMessages*.properties"
         }
     }
+    buildFeatures { compose = true }
+    // Release signing config (§5.1): keystore from env/properties, never committed.
+    signingConfigs {
+        create("release") {
+            val storeFilePath = System.getenv("KEYSTORE_FILE") ?: findProperty("RELEASE_STORE_FILE")?.let { (it as String?)?.let { p -> file(p) } }?.absolutePath
+            val storePass = System.getenv("KEYSTORE_PASSWORD") ?: (findProperty("RELEASE_STORE_PASSWORD") as String?)
+            val alias = System.getenv("KEY_ALIAS") ?: (findProperty("RELEASE_KEY_ALIAS") as String?)
+            val keyPass = System.getenv("KEY_PASSWORD") ?: (findProperty("RELEASE_KEY_PASSWORD") as String?)
+            if (storeFilePath != null && storePass != null && alias != null && keyPass != null) {
+                storeFile = file(storeFilePath)
+                storePassword = storePass
+                keyAlias = alias
+                keyPassword = keyPass
+            }
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = true       // R8 full mode is the AGP default
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            val release = signingConfigs.getByName("release")
+            if (release.storeFile != null) signingConfig = release
         }
         create("benchmark") {
             initWith(getByName("release"))
@@ -45,7 +63,6 @@ android {
             // UiAutomator by package and text only, so shrinking cannot break the harness.
         }
     }
-    buildFeatures { compose = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
