@@ -3,9 +3,75 @@
 | Script | What it does |
 |---|---|
 | `make-corpus.py` | Generates the §8 hostile test corpus. Below. |
+| `check-strings.py` | Fails on **new** hardcoded user-visible strings in the UI modules. Pure stdlib, no Gradle, no SDK. Below. |
 | `check-apk-size.py` | Breaks the release APK down by category and fails on a size regression. Run by CI; see `.github/workflows/README.md`. |
 | `check-startup-budget.py` | Enforces the §3 300 ms P90 cold-start budget against Macrobenchmark JSON. Macrobenchmark has no assertion API, so the gate lives here. |
 | `run-benchmark.sh` | Drives the Macrobenchmarks through `am instrument`, keeping the app installed so the staged corpus survives between runs. |
+
+## `check-strings.py` — no new hardcoded strings (i18n milestone 1)
+
+A string that never reaches `strings.xml` cannot be translated, and it is invisible in
+review: `Text("Retry")` and `Text(stringResource(R.string.reader_retry))` look alike when
+you are skimming a diff. The pseudo-locale render test catches these too, but it needs the
+SDK and an emulator. This needs neither, which is why it belongs in the hygiene job.
+
+```sh
+python3 tools/check-strings.py              # the gate: fails on anything not baselined
+python3 tools/check-strings.py --check      # self-test the detector; reads no sources
+python3 tools/check-strings.py --list       # every finding, baselined or not
+python3 tools/check-strings.py --update-baseline
+```
+
+### What it looks at
+
+`src/main` of the modules that draw UI — `feature/*`, `core/ui`, `core/gpu` — at these call
+sites: `Text(...)` (positional or `text =`), `contentDescription` / `stateDescription`,
+`Toast.makeText`, `showSnackbar`, and the `NotificationCompat` setters.
+
+Interpolated text is reported separately as `text-interpolated`, because it is a different
+bug: `Text("${stringResource(R.string.library_layout)}: ${layout.label()}")` *is*
+externalised, but gluing translated fragments with a hardcoded `: ` assumes English word
+order and punctuation. The fix is a positional format string, not a resource lookup.
+
+The other 13 modules are deliberately out of scope. An over-broad sweep of all 20 returned
+276 candidates, of which 269 were SQL in `@Query`, log tags, `@Suppress` names or exception
+messages. Scanning them is noise.
+
+### Suppression
+
+```kotlin
+// i18n-ignore: decorative glyph; the label is on the parent's semantics block
+) { Text("✕") }
+```
+
+On the line or the line above. **The reason is required** — a bare `// i18n-ignore` is
+itself a finding. A reviewer should see the justification in the diff rather than having to
+know that a table of exempt code points exists somewhere.
+
+### The baseline
+
+The milestone is to reject *new* literals, so known ones are pinned in
+`strings-baseline.json` and reviewed like any other diff. Entries are keyed by **path, kind
+and the string itself, with an occurrence count — never by line number**. Two reasons:
+
+- a line-numbered baseline goes stale on every unrelated edit above it, and a gate that
+  cries wolf is disabled within a week;
+- the count is load-bearing. `LibraryBars.kt` holds two identical `Text("✕")` calls; keyed
+  without a count they collapse to one entry and a third copy passes unnoticed.
+
+Shrinking that file is the point — every entry is either a milestone-2 externalisation or
+wants an `// i18n-ignore:` comment. Fixing one leaves a stale entry, which is reported as a
+note, never a failure: the gate must not punish the work it exists to encourage.
+
+### Known gaps
+
+- **Only direct call sites.** A helper that *returns* English — `formatSize()` yielding
+  `"4.2 MB"`, `Metadata.displayName` appending `"Vol. "` — is invisible here, because the
+  literal is nowhere near a `Text(`. Both are known and queued; a detector for them would
+  have to follow values across functions, and would false-positive on every log message.
+- **No XML scanning.** `android:text` on a layout would be missed. The app has no layout
+  XML today (`android:label` in the manifest already points at `@string/app_name`), so this
+  buys nothing yet.
 
 ## `make-corpus.py` — the hostile test corpus (spec §8)
 
