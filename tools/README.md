@@ -4,6 +4,7 @@
 |---|---|
 | `make-corpus.py` | Generates the §8 hostile test corpus. Below. |
 | `check-strings.py` | Fails on **new** hardcoded user-visible strings in the UI modules. Pure stdlib, no Gradle, no SDK. Below. |
+| `check-translations.py` | Fails on a *present* translation that disagrees with English — placeholders, plural forms, stale keys. Pure stdlib. Below. |
 | `check-apk-size.py` | Breaks the release APK down by category and fails on a size regression. Run by CI; see `.github/workflows/README.md`. |
 | `check-startup-budget.py` | Enforces the §3 300 ms P90 cold-start budget against Macrobenchmark JSON. Macrobenchmark has no assertion API, so the gate lives here. |
 | `run-benchmark.sh` | Drives the Macrobenchmarks through `am instrument`, keeping the app installed so the staged corpus survives between runs. |
@@ -72,6 +73,59 @@ note, never a failure: the gate must not punish the work it exists to encourage.
 - **No XML scanning.** `android:text` on a layout would be missed. The app has no layout
   XML today (`android:label` in the manifest already points at `@string/app_name`), so this
   buys nothing yet.
+
+## `check-translations.py` — translations that are present and wrong (i18n milestone 5)
+
+A bad translation does not look like a bug in review. `"Page %1$d of %2$d"` coming back as
+`"Seite %1$d"` reads fine in a diff and throws `MissingFormatArgumentException` on a device; a
+Polish plural missing `few` silently renders the `other` form for 2, 3 and 4. Neither is visible
+to anyone who does not read the language, so the gate lands before the translations do —
+exactly as `check-strings.py` landed before externalisation.
+
+```sh
+python3 tools/check-translations.py            # the gate
+python3 tools/check-translations.py --check    # self-test over fixtures
+python3 tools/check-translations.py --list     # every locale found and what was compared
+python3 tools/check-translations.py --refresh-cldr   # re-pin the plural data (network)
+```
+
+### What fails, and what deliberately does not
+
+**A missing string is not a failure.** Android falls back to English per resource, which is the
+designed behaviour and the normal state of a translation in progress. Which locales are complete
+enough to ship is the review-status list's job, not this gate's.
+
+Three ways a *present* translation is wrong:
+
+| Kind | Caught |
+|---|---|
+| `placeholder` | Positions, conversion types or count disagree with English. Reordering is fine — that is what positional arguments are for. `%%` is a percent sign, not an argument. |
+| `plural` | A `<plurals>` lacks a form its language requires. |
+| `stale-key` / `not-translatable` | The key does not exist in English (renamed or removed), or English marks it `translatable="false"`. |
+
+English's own plurals are checked too, as `english-reference`. If `other` were missing there,
+every locale's argument comparison would be quietly meaningless rather than failing.
+
+### Where the plural forms come from
+
+`cldr-plural-forms.json`, derived from CLDR's supplemental data — **not typed out here**. The
+sets genuinely differ: English needs `one`/`other`, Polish `one`/`few`/`many`/`other`, Japanese
+only `other`, Arabic all six. The file records the npm package, CLDR version, URL and SHA-256 it
+came from, and `--refresh-cldr` regenerates it from that same pinned source, so the provenance is
+executable rather than a comment. Hand-maintaining the table is how a language quietly gets the
+wrong rules: French gained a `many` category in recent CLDR and nobody would have noticed.
+
+Lookup walks from the most specific tag to the bare language, because CLDR keys are languages
+and sometimes language-plus-region: `values-pt-rBR` resolves through `pt-BR` to `pt`, and
+`values-zh-rCN` to `zh`. Qualifiers that are not languages — `values-night`, `values-sw600dp` —
+are skipped rather than guessed at.
+
+### Known gaps
+
+- **`<string-array>` is not compared.** Nothing in the app uses one yet; an array whose element
+  count differs between locales is a real bug and would need its own rule.
+- **Nothing checks whether a translation is any good.** This proves structure, never meaning.
+  That is what the milestone 5 review status is for, and no gate substitutes for it.
 
 ## `make-corpus.py` — the hostile test corpus (spec §8)
 
