@@ -40,6 +40,16 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
     kotlin { jvmToolchain(21) }
+    packaging {
+        resources {
+            // smbj (via :feature:remote, for RemoteBookOpener) pulls in bcprov-jdk18on whole.
+            // Neither smbj's SMB2/3 signing/encryption nor anything else here touches the
+            // Picnic post-quantum signature scheme, but its NIST round-3 parameter tables ship
+            // as raw resources R8 cannot shrink (they are data, not code) — 1.2 MiB of the 1.5
+            // MiB this dependency added to the APK. Excluding them changes nothing reachable.
+            excludes += "org/bouncycastle/pqc/legacy/picnic/*.bin.properties"
+        }
+    }
 }
 dependencies {
     implementation(project(":core:model"))
@@ -55,6 +65,10 @@ dependencies {
     // Sync wiring (milestone 5): installs SyncModule into the app graph. Inert until the
     // trigger call sites fire — no work starts from the dependency alone.
     implementation(project(":remote:sync"))
+    // Installs RemoteModule (binds RemoteBookOpener) into the app's Hilt graph: ReaderViewModel
+    // now takes one by constructor injection. Inert beyond that binding — no remote UI is
+    // navigated to yet, so its screens compile but nothing calls them.
+    implementation(project(":feature:remote"))
     implementation(project(":feature:widget")) // manifest merge for the widget receiver
 
     implementation(platform(libs.compose.bom))
