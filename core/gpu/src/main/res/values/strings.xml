@@ -12,4 +12,11 @@
     <string name="gpu_gamma_g">Green gamma</string>
     <string name="gpu_gamma_b">Blue gamma</string>
     <string name="gpu_reset">Reset</string>
+
+    <!-- TalkBack label for one colour-grade slider: %1$s is the control name ("Brightness"),
+         %2$s its current value. A resource rather than "$name, $value" in code because the
+         join is localisable: the separator is not "," everywhere (Arabic uses U+060C, CJK
+         U+3001), and in locales whose decimal mark is a comma "Brightness, 0,50" is
+         ambiguous — those should use a colon or an em dash instead. -->
+    <string name="gpu_grade_row_desc">%1$s, %2$s</string>
 </resources>
