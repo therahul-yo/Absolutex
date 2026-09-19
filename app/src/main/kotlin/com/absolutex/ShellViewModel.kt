@@ -8,6 +8,7 @@ import com.absolutex.core.data.ContentResolverTree
 import com.absolutex.core.data.LibraryBook
 import com.absolutex.core.data.LibraryRepository
 import com.absolutex.core.data.NextBook
+import com.absolutex.core.data.runCatchingCancellable
 import com.absolutex.core.data.settings.SettingsWriter
 import com.absolutex.core.scan.TreeEntry
 import android.net.Uri
@@ -81,7 +82,11 @@ class ShellViewModel @Inject constructor(
     private suspend fun scan(treeUri: Uri) {
         val name = DocumentsContract.getTreeDocumentId(treeUri).substringAfterLast('/')
         val root = TreeEntry(uri = treeUri.toString(), name = name, isDirectory = true)
-        val result = runCatching { library.scanTree(root, tree) }
+        // scanTree is a suspend collect, so a plain runCatching here would swallow a delivered
+        // CancellationException: a cancelled scan would log "scan failed" and return normally,
+        // leaving the caller's job completed instead of cancelled. runCatchingCancellable
+        // rethrows cancellation before it can be captured (see its KDoc and test in :core:data).
+        val result = runCatchingCancellable { library.scanTree(root, tree) }
             .onFailure { Log.w(TAG, "scan failed", it) }
             .getOrNull() ?: return
         Log.i(TAG, "scanned a location: ${result.found} books, ${result.removed} gone")

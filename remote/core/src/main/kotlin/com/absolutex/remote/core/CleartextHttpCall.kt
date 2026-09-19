@@ -1,4 +1,4 @@
-package com.absolutex.remote.sync
+package com.absolutex.remote.core
 
 import java.io.IOException
 import java.net.URI
@@ -44,12 +44,17 @@ class CleartextHttpCall(
         return response
     }
 
-    override fun requestBytes(method: String, url: String, headers: Map<String, String>): HttpBytesResponse {
+    override fun requestBytes(
+        method: String,
+        url: String,
+        headers: Map<String, String>,
+        maxBytes: Long,
+    ): HttpBytesResponse {
         checkScheme(url)
         var currentMethod = method
         var currentUrl = url
         var currentHeaders = headers
-        var response = delegate.requestBytes(currentMethod, currentUrl, currentHeaders)
+        var response = delegate.requestBytes(currentMethod, currentUrl, currentHeaders, maxBytes)
         var next = followTarget(currentUrl, response.code, response.headers)
         var hops = 0
         while (next != null && hops < MAX_REDIRECTS) {
@@ -61,10 +66,58 @@ class CleartextHttpCall(
                 currentHeaders = currentHeaders - AUTHORIZATION - API_KEY_HEADER
             }
             currentUrl = next
-            response = delegate.requestBytes(currentMethod, currentUrl, currentHeaders)
+            response = delegate.requestBytes(currentMethod, currentUrl, currentHeaders, maxBytes)
             next = followTarget(currentUrl, response.code, response.headers)
         }
         return response
+    }
+
+    /**
+     * The streamed path gets the same policy as the other two — the scheme check on every
+     * hop and auth headers stripped when the host changes. Forwarding it is not plumbing:
+     * without this override a ranged read could follow an https -> http redirect and put a
+     * bearer token on the wire in the clear, which is the exact hole this class exists to
+     * close.
+     *
+     * Unlike the buffered paths, each abandoned hop must be closed: a streamed response
+     * holds its connection until someone closes it, so a redirect chain would otherwise
+     * leak one socket per hop.
+     */
+    override fun requestStream(method: String, url: String, headers: Map<String, String>): HttpStreamResponse {
+        checkScheme(url)
+        var currentMethod = method
+        var currentUrl = url
+        var currentHeaders = headers
+        var response = delegate.requestStream(currentMethod, currentUrl, currentHeaders)
+        var hops = 0
+        while (hops < MAX_REDIRECTS) {
+            val next = redirectTargetOrClose(currentUrl, response) ?: return response
+            hops++
+            if (response.code in GET_CONVERTING_CODES && currentMethod != GET_METHOD) {
+                currentMethod = GET_METHOD
+            }
+            if (URI(next).host != URI(currentUrl).host) {
+                currentHeaders = currentHeaders - AUTHORIZATION - API_KEY_HEADER
+            }
+            currentUrl = next
+            response.close()
+            response = delegate.requestStream(currentMethod, currentUrl, currentHeaders)
+        }
+        return response
+    }
+
+    /**
+     * The redirect target, or null when this response is not a redirect. A refused target
+     * (a scheme the policy rejects) closes the response before propagating — the caller
+     * never receives it, so nothing else can.
+     */
+    private fun redirectTargetOrClose(currentUrl: String, response: HttpStreamResponse): String? {
+        try {
+            return followTarget(currentUrl, response.code, response.headers)
+        } catch (refused: IOException) {
+            response.close()
+            throw refused
+        }
     }
 
     private fun checkScheme(url: String) {

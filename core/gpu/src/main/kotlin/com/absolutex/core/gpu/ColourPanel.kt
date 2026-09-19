@@ -205,11 +205,13 @@ private fun GradeRow(
     var pending by remember(value) { mutableFloatStateOf(value) }
     val name = stringResource(label)
     val valueText = "%.2f".format(pending)
+    // Read here, not inside the semantics lambda: that lambda is not composable.
+    val description = stringResource(R.string.gpu_grade_row_desc, name, valueText)
     Row(
         modifier = modifier
             .fillMaxWidth()
             .semantics(mergeDescendants = true) {
-                contentDescription = "$name, $valueText"
+                contentDescription = description
             },
         verticalAlignment = Alignment.CenterVertically,
     ) {

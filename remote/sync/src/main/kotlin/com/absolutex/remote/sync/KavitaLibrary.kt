@@ -1,5 +1,6 @@
 package com.absolutex.remote.sync
 
+import com.absolutex.remote.core.HTTP_OK
 import java.io.IOException
 
 /**
