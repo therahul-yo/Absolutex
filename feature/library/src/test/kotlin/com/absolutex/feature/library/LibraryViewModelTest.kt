@@ -1,5 +1,6 @@
 package com.absolutex.feature.library
 
+import com.absolutex.core.scan.LibraryChange
 import com.absolutex.core.scan.SortKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
