@@ -27,6 +27,9 @@ import com.absolutex.core.decode.TileCache
 import com.absolutex.model.BookIdentity
 import com.absolutex.model.Toc
 import com.absolutex.model.TocEntry
+import com.absolutex.remote.core.REMOTE_URI_SCHEME
+import com.absolutex.remote.core.RemoteBookOpener
+import com.absolutex.remote.core.RemoteOpenResult
 import com.absolutex.source.ComicSource
 import com.absolutex.source.pdf.PdfDocument
 import java.io.Closeable
@@ -80,14 +83,15 @@ class ReaderViewModel internal constructor(
     rendering: RenderingPrefsSource,
     private val appPrefs: AppPrefsSource,
     private val bookOpener: BookOpener,
+    private val remoteBookOpener: RemoteBookOpener,
 ) : ViewModel() {
 
     /**
-     * The constructor Hilt uses; only the six Hilt-known params above are real dependencies.
+     * The constructor Hilt uses; only the seven Hilt-known params above are real dependencies.
      * Needs its own internal constructor rather than a Kotlin default argument for [bookOpener]
      * because Dagger cannot see Kotlin defaults on an `@Inject` constructor (see
      * LibraryRepository for the same pattern and the same reason). Tests use the internal
-     * constructor to supply a fake [BookOpener].
+     * constructor to supply a fake [BookOpener] and [RemoteBookOpener].
      */
     @Inject constructor(
         @ApplicationContext context: Context,
@@ -96,7 +100,10 @@ class ReaderViewModel internal constructor(
         prefs: ReaderPrefsSource,
         rendering: RenderingPrefsSource,
         appPrefs: AppPrefsSource,
-    ) : this(context, progressDao, totalRamBytes, prefs, rendering, appPrefs, ContextBookOpener(context))
+        remoteBookOpener: RemoteBookOpener,
+    ) : this(
+        context, progressDao, totalRamBytes, prefs, rendering, appPrefs, ContextBookOpener(context), remoteBookOpener,
+    )
 
     /**
      * Reading flow and fit mode, live. Eager so the value is usually in hand before the first page:
@@ -218,33 +225,33 @@ class ReaderViewModel internal constructor(
         bases.clear()
         _ui.value = ReaderUiState(loading = true)
         openJob = viewModelScope.launch {
-            // Apply the user's cache-size setting before the book opens, and keep applying it:
-            // the collector below re-resizes when the setting changes mid-book. The floor is
-            // the user-facing one (AppPrefs.MIN_CACHE_MIB — deliberately ~two flagship pages,
-            // see its KDoc), NOT MemoryBudget.FLOOR_BYTES, which bounds the RAM-derived
-            // default, not a value the user picked. Ceiling stays MemoryBudget's.
-            tileCache.resize(userCacheBytes(appPrefs.currentAppPrefs().cacheSizeMiB))
-            // Keep the budget live for mid-book changes (see cacheSizeJob's KDoc).
+            // Apply the user's cache-size setting before the book opens, and keep applying it
+            // for the rest of this scope (see cacheSizeJob's own KDoc for why a mid-book change
+            // still has to land).
             cacheSizeJob?.cancel()
-            cacheSizeJob = launch {
-                appPrefs.appPrefs
-                    .map { it.cacheSizeMiB }
-                    .distinctUntilChanged()
-                    .collect { mib -> tileCache.resize(userCacheBytes(mib)) }
-            }
+            cacheSizeJob = applyCacheSizePref(appPrefs, tileCache)
 
             val opened = try {
-                // NonCancellable: bookOpener.open() (openBook()/identityOf() in production — see
-                // ContextBookOpener) is a blocking call with no suspension point of its own, so
-                // cancelling this job cannot interrupt it — it always runs to completion once
-                // started. Without NonCancellable, a cancel landing while it was already finishing
-                // still made this resume with a CancellationException, discarding the
-                // successfully-opened handle instead of returning it — leaking its fd (and, for a
-                // PDF, its native handle) because it was then never reachable by the generation
-                // check below, which is what already closes a result superseded by a newer,
-                // non-cancelling call to open().
-                // TODO(lead): route absolutex-remote:// Uris to RemoteBookOpener; OpenBook stays local.
-                withContext(NonCancellable) { bookOpener.open(uri) }
+                if (uri.scheme == REMOTE_URI_SCHEME) {
+                    // No NonCancellable here: RemoteBookOpener.open is a real suspend fun, and
+                    // per its own KDoc ("the reader calls it from its open coroutine, same as
+                    // every other open path") a cancel is its own implementation's job to
+                    // survive without leaking whatever it opened — see RemoteModule in
+                    // :feature:remote for how the real binding does that. The reader only has
+                    // to trust the suspend contract, the same way it trusts BookOpener's.
+                    openRemote(remoteBookOpener, uri)
+                } else {
+                    // NonCancellable: bookOpener.open() (openBook()/identityOf() in production —
+                    // see ContextBookOpener) is a blocking call with no suspension point of its
+                    // own, so cancelling this job cannot interrupt it — it always runs to
+                    // completion once started. Without NonCancellable, a cancel landing while it
+                    // was already finishing still made this resume with a CancellationException,
+                    // discarding the successfully-opened handle instead of returning it — leaking
+                    // its fd (and, for a PDF, its native handle) because it was then never
+                    // reachable by the generation check below, which is what already closes a
+                    // result superseded by a newer, non-cancelling call to open().
+                    withContext(NonCancellable) { bookOpener.open(uri) }
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
@@ -514,6 +521,49 @@ private fun userCacheBytes(mib: Int): Long =
     )
 
 private const val BYTES_PER_MIB = 1024L * 1024
+
+/**
+ * Applies the user's [appPrefs] cache-size setting to [tileCache] once, then launches (and
+ * returns) a collector that keeps applying it for the rest of [this] scope's life, so a
+ * mid-book change to the setting still resizes the live cache.
+ *
+ * Top-level, not a member of [ReaderViewModel]: the class is already at detekt's function-count
+ * ceiling, and this needs nothing from it but its two parameters.
+ */
+private suspend fun CoroutineScope.applyCacheSizePref(appPrefs: AppPrefsSource, tileCache: TileCache): Job {
+    // The floor is the user-facing one (AppPrefs.MIN_CACHE_MIB — deliberately ~two flagship
+    // pages, see its KDoc), NOT MemoryBudget.FLOOR_BYTES, which bounds the RAM-derived default,
+    // not a value the user picked. Ceiling stays MemoryBudget's — see userCacheBytes.
+    tileCache.resize(userCacheBytes(appPrefs.currentAppPrefs().cacheSizeMiB))
+    return launch {
+        appPrefs.appPrefs
+            .map { it.cacheSizeMiB }
+            .distinctUntilChanged()
+            .collect { mib -> tileCache.resize(userCacheBytes(mib)) }
+    }
+}
+
+/**
+ * Opens an `absolutex-remote://` [uri] through [opener] and reshapes the result to the same
+ * (source, identity) pair [BookOpener.open] returns, so everything after the branch in
+ * [ReaderViewModel.open] — generation check, close-the-superseded-source, identity, count —
+ * needs no idea which path it came from. [RemoteOpenResult.Ready.identity] is already
+ * `BookIdentity.of(displayName, sizeBytes)` ([CoreComicSource.open] builds it): sizeBytes is the
+ * transport's own [RangeTransport.sizeBytes][com.absolutex.remote.core.RangeTransport], read
+ * once to seek the ZIP central directory, so identity costs no extra round trip.
+ *
+ * A format streaming can't serve ([RemoteOpenResult.DownloadRequired]) becomes an IOException,
+ * same generic error path as a transport failure — its reason names a container format, never a
+ * host or path, so it is as safe to log as any other detail.
+ *
+ * Top-level, not a member of [ReaderViewModel]: the class is already at detekt's function-count
+ * ceiling, and this needs nothing from it but [opener] and [uri].
+ */
+private suspend fun openRemote(opener: RemoteBookOpener, uri: Uri): Pair<Closeable, String> =
+    when (val result = opener.open(uri.toString())) {
+        is RemoteOpenResult.Ready -> result.source to result.identity
+        is RemoteOpenResult.DownloadRequired -> throw IOException(result.reason)
+    }
 
 /**
  * The open book's contents: a PDF's own outline, or the folders an archive's pages sit in. A
