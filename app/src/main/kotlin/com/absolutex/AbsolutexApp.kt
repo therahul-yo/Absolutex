@@ -48,7 +48,8 @@ class AbsolutexApp : Application() {
         scope.launch {
             // runCatchingCancellable, not runCatching: the migration fails closed with an
             // IOException on a torn legacy document (kept for retry), which must not stop
-            // onAppStart(); a cancellation or an Error must still propagate.
+            // onAppStart(); a cancellation must still propagate. Errors are still captured
+            // and logged here — whether OOM should escape is docs/decode-oom-policy.md's call.
             runCatchingCancellable { migrateLegacySyncServers(this@AbsolutexApp) }
                 .onFailure { android.util.Log.e("AbsolutexApp", "legacy sync migration failed", it) }
             sync.onAppStart()
