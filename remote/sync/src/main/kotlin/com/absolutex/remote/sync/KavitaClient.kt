@@ -1,5 +1,12 @@
 package com.absolutex.remote.sync
 
+import com.absolutex.remote.core.AUTHORIZATION
+import com.absolutex.remote.core.HTTP_OK
+import com.absolutex.remote.core.HTTP_UNAUTHORIZED
+import com.absolutex.remote.core.HttpCall
+import com.absolutex.remote.core.HttpResponse
+import com.absolutex.remote.core.HttpStatusException
+import com.absolutex.remote.core.JSON_HEADERS
 import java.io.IOException
 import org.json.JSONArray
 import org.json.JSONObject

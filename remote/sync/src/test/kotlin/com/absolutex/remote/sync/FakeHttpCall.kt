@@ -1,5 +1,8 @@
 package com.absolutex.remote.sync
 
+import com.absolutex.remote.core.HttpBytesResponse
+import com.absolutex.remote.core.HttpCall
+import com.absolutex.remote.core.HttpResponse
 import java.io.IOException
 
 /** Scripted HttpCall: enqueue responses, then assert on the recorded requests. */

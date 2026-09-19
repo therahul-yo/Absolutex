@@ -1,5 +1,8 @@
 package com.absolutex.remote.sync
 
+import com.absolutex.remote.core.HttpCall
+import com.absolutex.remote.core.HttpResponse
+import com.absolutex.remote.core.withCleartextPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail

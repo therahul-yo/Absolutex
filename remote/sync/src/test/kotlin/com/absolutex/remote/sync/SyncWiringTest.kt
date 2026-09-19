@@ -3,6 +3,11 @@ package com.absolutex.remote.sync
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import com.absolutex.core.data.ProgressDao
 import com.absolutex.core.data.ReadingProgress
+import com.absolutex.remote.core.DATE_HEADER
+import com.absolutex.remote.core.HttpBytesResponse
+import com.absolutex.remote.core.HttpCall
+import com.absolutex.remote.core.HttpResponse
+import com.absolutex.remote.core.HttpUrlConnectionCall
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job

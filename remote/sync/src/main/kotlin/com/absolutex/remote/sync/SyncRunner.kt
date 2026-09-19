@@ -2,6 +2,10 @@ package com.absolutex.remote.sync
 
 import com.absolutex.core.data.ProgressDao
 import com.absolutex.core.data.ReadingProgress
+import com.absolutex.remote.core.HTTP_FORBIDDEN
+import com.absolutex.remote.core.HTTP_NOT_FOUND
+import com.absolutex.remote.core.HTTP_UNAUTHORIZED
+import com.absolutex.remote.core.HttpStatusException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
