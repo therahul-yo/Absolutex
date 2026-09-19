@@ -16,8 +16,8 @@ package com.absolutex.core.decode
 object MemoryBudget {
 
     private const val FRACTION_OF_TOTAL_RAM = 0.15
-    private const val FLOOR_BYTES = 256L * 1024 * 1024
-    private const val CEILING_BYTES = 4L * 1024 * 1024 * 1024
+    const val FLOOR_BYTES = 256L * 1024 * 1024
+    const val CEILING_BYTES = 4L * 1024 * 1024 * 1024
 
     /** @param totalRamBytes from ActivityManager.MemoryInfo.totalMem */
     fun defaultCacheBytes(totalRamBytes: Long): Long =

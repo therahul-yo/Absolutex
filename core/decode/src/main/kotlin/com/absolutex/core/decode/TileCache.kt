@@ -51,6 +51,16 @@ class TileCache(maxBytes: Long) {
     fun sizeBytes(): Int = synchronized(lru) { lru.size() }
     fun maxBytes(): Int = synchronized(lru) { lru.maxSize() }
 
+    /**
+     * Resize the cache to [bytes], clamped to LruCache's Int range. A shrink trims the LRU
+     * down to the new budget; a grow lets more tiles reside. Safe to call mid-read.
+     */
+    fun resize(bytes: Long): Int {
+        val clamped = bytes.coerceIn(1L, Int.MAX_VALUE.toLong()).toInt()
+        synchronized(lru) { lru.resize(clamped) }
+        return clamped
+    }
+
     /** Shrinks the budget under memory pressure (see ReaderViewModel.onTrimMemory). */
     fun trimToSize(size: Int) = lru.trimToSize(size)
 
