@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  An adaptive-icon layer is scaled to fill the whole 108dp canvas whatever its own viewport
+  says, so a 66dp viewport does not inset the art — it just renames the coordinates. Only the
+  central 66dp of the 108dp canvas is guaranteed visible; launcher masks (circle, squircle,
+  teardrop) crop the rest. The path below therefore lives in a 108 viewport and stays inside
+  a radius of 33 around the centre (54,54): top vertex 20 out, base corners 31.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,34L76,76L32,76z" />
+</vector>
