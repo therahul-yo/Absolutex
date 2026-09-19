@@ -24,7 +24,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.ui.AbsolutexTheme
 import com.absolutex.feature.library.LibraryRoute
+import com.absolutex.feature.remote.remoteDestination
 import com.absolutex.feature.settings.settingsDestination
+import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -99,6 +101,20 @@ private fun readerRoute(uri: Uri) = "reader/${Uri.encode(uri.toString())}"
 /** A library row's path: a document Uri as it stands, a device path as a file Uri. */
 private fun bookUri(path: String): Uri =
     if (path.startsWith("content://")) Uri.parse(path) else Uri.fromFile(File(path))
+
+/**
+ * Remote servers list + add/edit form (§5.5). No entry point here yet: the settings row
+ * navigating to the list route is Agent03's screen to add (see the TODO on
+ * remoteDestination) — the route is live as soon as it does.
+ */
+private fun NavGraphBuilder.remoteDestinations(nav: NavHostController) {
+    remoteDestination(
+        onOpenForm = { id ->
+            nav.navigate(if (id == null) "remote/form" else "remote/form?serverId=$id")
+        },
+        onFormDone = { nav.popBackStack() },
+    )
+}
 
 /**
  * §5.2 auto-advance: looks up the next book off the main thread and, if there is one, replaces
@@ -205,6 +221,7 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
             if (uri != null) ReaderDestination(uri, readerVm, vm, nav)
         }
         settingsDestination()
+        remoteDestinations(nav)
     }
     // After the NavHost: effects run in composition order, so the graph is set by the time this
     // one does. Resuming lands on top of the library, so back returns to it.
