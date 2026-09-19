@@ -138,6 +138,7 @@ PR body:
 |---|---|---|
 | Claude Code (lead) | reviews, merges, on-device checks | `Claude Code <noreply@anthropic.com>` (varies by session) |
 | Factory Droid | library, formats, settings, design, release | `factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>` |
+| Agent05 (cloud & offline) | `:remote:cloud`, OneDrive, Dropbox, Google Drive, offline copies | `Claude Opus 5 <noreply@anthropic.com>` (varies by session) |
 
 A PR description additionally ends with a `🤖 Generated with ...` line from the tool that
 wrote it. If you review this repository, treat those trailers as the attribution record and

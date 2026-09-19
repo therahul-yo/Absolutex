@@ -1,4 +1,4 @@
-package com.absolutex.remote.sync
+package com.absolutex.remote.core
 
 import java.io.IOException
 import java.net.URI

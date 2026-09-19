@@ -1,5 +1,7 @@
 package com.absolutex.remote.sync
 
+import com.absolutex.remote.core.DATE_HEADER
+import com.absolutex.remote.core.HttpUrlConnectionCall
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import org.junit.After

@@ -4,10 +4,10 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.lifecycle.SavedStateHandle
 import com.absolutex.core.data.ProgressDao
 import com.absolutex.core.data.ReadingProgress
+import com.absolutex.remote.core.HttpBytesResponse
+import com.absolutex.remote.core.HttpCall
+import com.absolutex.remote.core.HttpResponse
 import com.absolutex.remote.sync.ConnectionResult
-import com.absolutex.remote.sync.HttpCall
-import com.absolutex.remote.sync.HttpResponse
-import com.absolutex.remote.sync.HttpBytesResponse
 import com.absolutex.remote.sync.KavitaConnectionProbe
 import com.absolutex.remote.sync.KomgaConnectionProbe
 import com.absolutex.remote.sync.KomgaServer

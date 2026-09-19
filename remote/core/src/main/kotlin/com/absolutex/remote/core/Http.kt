@@ -1,4 +1,4 @@
-package com.absolutex.remote.sync
+package com.absolutex.remote.core
 
 import java.io.IOException
 import java.net.URI
@@ -7,21 +7,25 @@ import java.net.URI
 const val CONNECT_TIMEOUT_MS = 10_000
 const val READ_TIMEOUT_MS = 30_000
 
-internal const val HTTP_OK = 200
-internal const val HTTP_PARTIAL = 206
-internal const val HTTP_NO_CONTENT = 204
+// HTTP vocabulary shared across modules. These were `internal` while HttpCall lived in
+// :remote:sync and every caller was a sibling file; the move puts the callers in another
+// module, so the ones crossing that boundary are public now. HTTP_BAD_REQUEST stays
+// internal — only this file reads it.
+const val HTTP_OK = 200
+const val HTTP_PARTIAL = 206
+const val HTTP_NO_CONTENT = 204
 internal const val HTTP_BAD_REQUEST = 400
-internal const val HTTP_UNAUTHORIZED = 401
-internal const val HTTP_FORBIDDEN = 403
-internal const val HTTP_NOT_FOUND = 404
+const val HTTP_UNAUTHORIZED = 401
+const val HTTP_FORBIDDEN = 403
+const val HTTP_NOT_FOUND = 404
 
-internal const val AUTHORIZATION = "Authorization"
-internal const val API_KEY_HEADER = "X-API-Key"
-internal const val RANGE = "Range"
+const val AUTHORIZATION = "Authorization"
+const val API_KEY_HEADER = "X-API-Key"
+const val RANGE = "Range"
 
-internal val JSON_HEADERS: Map<String, String> = mapOf("Content-Type" to "application/json")
+val JSON_HEADERS: Map<String, String> = mapOf("Content-Type" to "application/json")
 
-internal const val DATE_HEADER = "Date"
+const val DATE_HEADER = "Date"
 
 /**
  * A failed HTTP exchange with its status attached. An [IOException] so every existing

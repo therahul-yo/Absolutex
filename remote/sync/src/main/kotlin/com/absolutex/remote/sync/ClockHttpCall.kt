@@ -1,5 +1,9 @@
 package com.absolutex.remote.sync
 
+import com.absolutex.remote.core.HttpBytesResponse
+import com.absolutex.remote.core.HttpCall
+import com.absolutex.remote.core.HttpResponse
+
 /**
  * [HttpCall] decorator feeding every observed server `Date` into one server's clock slot.
  * Constructed per server per run (see KomgaSync/KavitaSync): the listener already knows its

@@ -1,5 +1,6 @@
 package com.absolutex.remote.sync
 
+import com.absolutex.remote.core.HttpResponse
 import java.time.Instant
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
