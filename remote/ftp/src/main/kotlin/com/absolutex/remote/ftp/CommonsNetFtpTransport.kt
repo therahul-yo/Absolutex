@@ -66,8 +66,8 @@ class CommonsNetFtpTransport(
             // MLST first, LIST fallback: some servers implement only one of the two listings.
             val direct = runCatching { live.mlistFile(path) }.getOrNull()
             val listed = direct ?: runCatching { live.listFiles(path).firstOrNull() }.getOrNull()
-            val size = listed?.size ?: throw statFailure(path, live.replyCode)
-            if (size < MIN_SIZE) fail("negative size for FTP path: $path")
+            val size = listed?.size ?: throw ftpStatFailure(path, live.replyCode)
+            if (size < MIN_SIZE) ftpFail("negative size for FTP path: $path")
             size
         }
     }
@@ -90,7 +90,7 @@ class CommonsNetFtpTransport(
             // output lose to that distinction; revisit if a real server mis-parses.
             val files = live.listFiles(path)
             if (files.isEmpty() && !FTPReply.isPositiveCompletion(live.replyCode)) {
-                throw listFailure(path, live.replyCode)
+                throw ftpListFailure(path, live.replyCode)
             }
             files.map { file ->
                 FtpEntry(file.name.substringAfterLast('/'), file.isDirectory, file.size)
@@ -130,8 +130,8 @@ class CommonsNetFtpTransport(
 
     private fun transfer(live: FTPClient, path: String, offset: Long, length: Int): ByteArray {
         live.setRestartOffset(offset)
-        val stream = live.retrieveFileStream(path) ?: throw retrFailure(path, offset, live.replyCode)
-        val out = readFully(stream, length, path, offset)
+        val stream = live.retrieveFileStream(path) ?: throw ftpRetrFailure(path, offset, live.replyCode)
+        val out = ftpReadFully(stream, length, path, offset)
         // We deliberately close the data stream once our range is in hand, without draining the
         // rest of the file. A real server reports that early close as 426/450/451 (sometimes 226
         // if it was fast enough), not as a plain positive completion, so completePendingCommand()
@@ -141,69 +141,9 @@ class CommonsNetFtpTransport(
         val completed = live.completePendingCommand()
         val replyCode = live.replyCode
         if (!completed && replyCode !in EARLY_CLOSE_REPLY_CODES) {
-            throw transferFailure(path, offset, replyCode)
+            throw ftpTransferFailure(path, offset, replyCode)
         }
         return out
-    }
-
-    private fun readFully(stream: InputStream, length: Int, path: String, offset: Long): ByteArray {
-        val out = ByteArray(length)
-        var done = 0
-        // Partial socket reads are normal; loop until the range is exact or the stream ends.
-        // An ended stream is EOF mid-transfer: transient, safe to resume from REST.
-        while (done < length) {
-            val count = stream.read(out, done, length - done)
-            if (count < 0) throw TransientTransportException("short FTP read: $path at ${offset + done} ($done of $length)")
-            done += count
-        }
-        return out
-    }
-
-    /**
-     * A refused RETR classified by reply: 5xx is the server's final answer (550 is the
-     * missing file), anything else is a data-connection blip worth one retry.
-     */
-    private fun retrFailure(path: String, offset: Long, replyCode: Int): IOException {
-        if (replyCode == FTPReply.FILE_UNAVAILABLE) {
-            return FileNotFoundException("FTP path not found: $path at $offset (reply $replyCode)")
-        }
-        val message = "FTP RETR refused: $path at $offset (reply $replyCode)"
-        return if (replyCode / REPLY_CLASS_DIVISOR == PERMANENT_REPLY_CLASS) {
-            TransportPermanentException(message)
-        } else {
-            TransientTransportException(message)
-        }
-    }
-
-    private fun transferFailure(path: String, offset: Long, replyCode: Int): IOException {
-        val message = "FTP transfer did not complete: $path at $offset (reply $replyCode)"
-        return if (replyCode / REPLY_CLASS_DIVISOR == PERMANENT_REPLY_CLASS) {
-            TransportPermanentException(message)
-        } else {
-            TransientTransportException(message)
-        }
-    }
-
-    /**
-     * Stat and list failures keep their historical messages (the connection probes
-     * match on them) but arrive typed: 5xx is definitive, anything else transient.
-     */
-    private fun statFailure(path: String, replyCode: Int): IOException {
-        val message = "cannot stat FTP path: $path (reply $replyCode)"
-        return if (replyCode / REPLY_CLASS_DIVISOR == PERMANENT_REPLY_CLASS) {
-            TransportPermanentException(message)
-        } else {
-            TransientTransportException(message)
-        }
-    }
-
-    private fun listFailure(path: String, replyCode: Int): IOException {
-        val message = "cannot list FTP path: $path (reply $replyCode)"
-        return if (replyCode / REPLY_CLASS_DIVISOR == PERMANENT_REPLY_CLASS) {
-            FileNotFoundException(message)
-        } else {
-            TransientTransportException(message)
-        }
     }
 
     private fun connected(): FTPClient {
@@ -277,7 +217,6 @@ class CommonsNetFtpTransport(
         }
     }
 
-    private fun fail(message: String): Nothing = throw IOException(message)
 
     companion object {
         const val CONNECT_TIMEOUT_MS = 10_000
@@ -289,10 +228,6 @@ class CommonsNetFtpTransport(
         private const val PROTECTION_BUFFER_ZERO = 0L
         private const val DATA_CHANNEL_PRIVATE = "P"
         private const val CLEARED_CHAR = '\u0000'
-
-        /** Reply-class arithmetic: 4xx is "try again", 5xx is the final answer. */
-        private const val REPLY_CLASS_DIVISOR = 100
-        private const val PERMANENT_REPLY_CLASS = 5
 
         // Replies a server sends for a range read that stops before EOF: the data stream
         // closed with bytes still unsent. CLOSING_DATA_CONNECTION (226) is already a positive
@@ -310,3 +245,78 @@ class CommonsNetFtpTransport(
             if (useTls) FTPSClient(false) else FTPClient()
     }
 }
+
+/** Reply-class arithmetic: 4xx is "try again", 5xx is the final answer. */
+private const val REPLY_CLASS_DIVISOR = 100
+private const val PERMANENT_REPLY_CLASS = 5
+
+/**
+ * Failure mappers, file-private rather than class members: the transport is at its
+ * function budget, and these are pure over their arguments (reply codes and paths),
+ * so they live here where unit tests can also pin the reply→type table directly.
+ */
+internal fun ftpReadFully(stream: InputStream, length: Int, path: String, offset: Long): ByteArray {
+    val out = ByteArray(length)
+    var done = 0
+    // Partial socket reads are normal; loop until the range is exact or the stream ends.
+    // An ended stream is EOF mid-transfer: transient, safe to resume from REST.
+    while (done < length) {
+        val count = stream.read(out, done, length - done)
+        if (count < 0) {
+            throw TransientTransportException(
+                "short FTP read: $path at ${offset + done} ($done of $length)",
+            )
+        }
+        done += count
+    }
+    return out
+}
+
+/**
+ * A refused RETR classified by reply: 5xx is the server's final answer (550 is the
+ * missing file), anything else is a data-connection blip worth one retry.
+ */
+internal fun ftpRetrFailure(path: String, offset: Long, replyCode: Int): IOException {
+    if (replyCode == FTPReply.FILE_UNAVAILABLE) {
+        return FileNotFoundException("FTP path not found: $path at $offset (reply $replyCode)")
+    }
+    val message = "FTP RETR refused: $path at $offset (reply $replyCode)"
+    return if (replyCode / REPLY_CLASS_DIVISOR == PERMANENT_REPLY_CLASS) {
+        TransportPermanentException(message)
+    } else {
+        TransientTransportException(message)
+    }
+}
+
+internal fun ftpTransferFailure(path: String, offset: Long, replyCode: Int): IOException {
+    val message = "FTP transfer did not complete: $path at $offset (reply $replyCode)"
+    return if (replyCode / REPLY_CLASS_DIVISOR == PERMANENT_REPLY_CLASS) {
+        TransportPermanentException(message)
+    } else {
+        TransientTransportException(message)
+    }
+}
+
+/**
+ * Stat and list failures keep their historical messages (the connection probes
+ * match on them) but arrive typed: 5xx is definitive, anything else transient.
+ */
+internal fun ftpStatFailure(path: String, replyCode: Int): IOException {
+    val message = "cannot stat FTP path: $path (reply $replyCode)"
+    return if (replyCode / REPLY_CLASS_DIVISOR == PERMANENT_REPLY_CLASS) {
+        TransportPermanentException(message)
+    } else {
+        TransientTransportException(message)
+    }
+}
+
+internal fun ftpListFailure(path: String, replyCode: Int): IOException {
+    val message = "cannot list FTP path: $path (reply $replyCode)"
+    return if (replyCode / REPLY_CLASS_DIVISOR == PERMANENT_REPLY_CLASS) {
+        FileNotFoundException(message)
+    } else {
+        TransientTransportException(message)
+    }
+}
+
+internal fun ftpFail(message: String): Nothing = throw IOException(message)

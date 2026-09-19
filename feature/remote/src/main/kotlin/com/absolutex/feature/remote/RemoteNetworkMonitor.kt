@@ -53,11 +53,16 @@ class RemoteNetworkMonitor(context: Context) : Closeable {
     init {
         // Fail inert, not loud: without the manifest permission every book open would
         // otherwise crash at Hilt init. Anything besides the permission refusal is a
-        // platform bug and propagates.
+        // platform bug and propagates; the refusal itself is logged, not swallowed.
         callbackRegistered = try {
             connectivity.registerDefaultNetworkCallback(callback)
             true
-        } catch (e: SecurityException) {
+        } catch (expected: SecurityException) {
+            android.util.Log.w(
+                "RemoteNetworkMonitor",
+                "ACCESS_NETWORK_STATE missing; network monitoring inert",
+                expected,
+            )
             false
         }
     }

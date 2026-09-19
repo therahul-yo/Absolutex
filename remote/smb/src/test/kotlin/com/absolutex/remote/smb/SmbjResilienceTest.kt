@@ -36,6 +36,21 @@ class SmbjResilienceTest {
     private fun smbApi(status: Long): SMBApiException =
         SMBApiException(status, SMB2MessageCommandCode.SMB2_SESSION_SETUP, null)
 
+    /**
+     * Asserts [block] throws [T] and returns it. One helper instead of ten
+     * try/throw-AssertionError/catch blocks: the throw budget stays intact no matter
+     * how many failure shapes a test pins.
+     */
+    private inline fun <reified T : Throwable> failsWith(block: () -> Unit): T {
+        try {
+            block()
+        } catch (e: Throwable) {
+            if (e is T) return e
+            throw AssertionError("expected ${T::class.simpleName}, got $e")
+        }
+        throw AssertionError("expected ${T::class.simpleName}, nothing thrown")
+    }
+
     private class ScriptedHandle(private val bytes: ByteArray) : RemoteFileHandle {
         override val length: Long get() = bytes.size.toLong()
 
@@ -153,18 +168,12 @@ class SmbjResilienceTest {
             }
         }
         val live = SmbjTransport(location, credentials(), "nas", authConnector)
-        try {
+        assertEquals("nas", failsWith<CredentialExpiredException> {
             live.readAt("books/b.cbz", 0, 8)
-            throw AssertionError("expected CredentialExpiredException")
-        } catch (expected: CredentialExpiredException) {
-            assertEquals("nas", expected.serverId)
-        }
-        try {
+        }.serverId)
+        assertEquals("nas", failsWith<CredentialExpiredException> {
             live.readAt("books/b.cbz", 0, 8)
-            throw AssertionError("expected CredentialExpiredException on reconnect")
-        } catch (expected: CredentialExpiredException) {
-            assertEquals("nas", expected.serverId)
-        }
+        }.serverId)
         assertEquals(2, connects.get())
     }
 
@@ -236,13 +245,18 @@ class SmbjResilienceTest {
             override val length: Long get() = bytes.size.toLong()
             override fun read(buffer: ByteArray, fileOffset: Long, bufferOffset: Int, length: Int): Int {
                 calls++
-                if (calls == 1) {
-                    bytes.copyInto(buffer, bufferOffset, 0, 4)
-                    return 4
+                val take = when (calls) {
+                    1 -> {
+                        bytes.copyInto(buffer, bufferOffset, 0, 4)
+                        4
+                    }
+                    2 -> -1
+                    else -> {
+                        val rest = minOf(length, bytes.size - fileOffset.toInt())
+                        bytes.copyInto(buffer, bufferOffset, fileOffset.toInt(), fileOffset.toInt() + rest)
+                        rest
+                    }
                 }
-                if (calls == 2) return -1
-                val take = minOf(length, bytes.size - fileOffset.toInt())
-                bytes.copyInto(buffer, bufferOffset, fileOffset.toInt(), fileOffset.toInt() + take)
                 return take
             }
             override fun close() = Unit
@@ -281,12 +295,10 @@ class SmbjResilienceTest {
             throw smbApi(0xC0000034L)
         })
         val connects = AtomicInteger(0)
-        try {
+        val failure = failsWith<FileNotFoundException> {
             transport(connection, connects).readAt("books/b.cbz", 0, 8)
-            throw AssertionError("expected FileNotFoundException")
-        } catch (expected: FileNotFoundException) {
-            assertEquals(1, expected.suppressed.size)
         }
+        assertEquals(1, failure.suppressed.size)
         assertEquals(2, connects.get())
     }
 

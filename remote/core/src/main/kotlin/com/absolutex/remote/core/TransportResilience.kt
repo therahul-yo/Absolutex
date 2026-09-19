@@ -130,15 +130,17 @@ private inline fun <reified T : Throwable> hasCause(error: Throwable): Boolean {
 private fun hasTransientCause(error: IOException): Boolean {
     var cause: Throwable? = error
     while (cause != null) {
-        if (cause is SocketTimeoutException || cause is SocketException ||
-            cause is UnknownHostException || cause is EOFException
-        ) {
-            return true
-        }
+        if (isTimeoutOrReset(cause) || isDnsOrEof(cause)) return true
         cause = cause.cause
     }
     return false
 }
+
+private fun isTimeoutOrReset(cause: Throwable): Boolean =
+    cause is SocketTimeoutException || cause is SocketException
+
+private fun isDnsOrEof(cause: Throwable): Boolean =
+    cause is UnknownHostException || cause is EOFException
 
 /**
  * Markers that veto a retry wherever they appear in the cause chain. Checked before the

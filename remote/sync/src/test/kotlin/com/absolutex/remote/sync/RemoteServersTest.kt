@@ -1,6 +1,8 @@
 package com.absolutex.remote.sync
 
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +20,8 @@ import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.io.IOException
 
@@ -193,5 +197,46 @@ class RemoteServersTest {
         val (reopened, job) = open(f)
         assertEquals(listOf("good"), reopened.current().map { it.id })
         job.cancelAndJoin()
+    }
+
+    @Test fun `unknown kinds ride through save and remove untouched`() = runTest {
+        // Forward-compat: a newer build's ONEDRIVE record must survive an older build
+        // writing the document back. Torn records (no kind) and known-kind-but-broken
+        // ones are corruption, not the future, and still drop.
+        val f = file()
+        val job = Job()
+        val store = PreferenceDataStoreFactory.create(
+            scope = CoroutineScope(Dispatchers.IO + job),
+            produceFile = { f },
+        )
+        val servers = RemoteServers(store)
+        servers.save(SmbServer(id = "smb", host = "nas", share = "media", path = "comics", username = "a"))
+        val drive = JSONObject()
+            .put("id", "drive").put("kind", "ONEDRIVE").put("refreshToken", "abc")
+        store.edit { prefs ->
+            val array = JSONArray(prefs[RemoteServers.SERVERS_KEY]!!)
+            array.put(drive)
+            array.put(JSONObject().put("id", "torn"))
+            array.put(JSONObject().put("id", "broken").put("kind", "SMB"))
+            prefs[RemoteServers.SERVERS_KEY] = array.toString()
+        }
+        assertEquals(listOf("smb"), servers.current().map { it.id })
+        servers.save(FtpServer(id = "ftp", host = "nas", path = "/pub", username = "b", useTls = true))
+        servers.remove("smb")
+        assertEquals(listOf("ftp"), servers.current().map { it.id })
+        val kept = rawRecords(store).first { it.getString("id") == "drive" }
+        assertEquals(drive.toString(), kept.toString())
+        // An id collision replaces the unknown record instead of duplicating it.
+        servers.save(SmbServer(id = "drive", host = "nas", share = "media", path = "x", username = "a"))
+        assertEquals(listOf("ftp", "drive"), servers.current().map { it.id })
+        assertTrue(rawRecords(store).none { it.getString("kind") == "ONEDRIVE" })
+        job.cancelAndJoin()
+    }
+
+    private suspend fun rawRecords(
+        store: DataStore<Preferences>,
+    ): List<JSONObject> {
+        val array = JSONArray(store.data.first()[RemoteServers.SERVERS_KEY]!!)
+        return List(array.length(), array::getJSONObject)
     }
 }

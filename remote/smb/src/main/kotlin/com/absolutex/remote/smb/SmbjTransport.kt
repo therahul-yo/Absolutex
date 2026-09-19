@@ -121,7 +121,9 @@ class SmbjTransport(
             installEstablished(connector.connect(password))
             synchronized(guard) { staleCredentials = false }
         } catch (e: IOException) {
-            val typed = mapConnectFailure(e)
+            val typed = mapConnectFailure(e, location.host, credentialAlias) {
+                synchronized(guard) { staleCredentials }
+            }
             synchronized(guard) {
                 if (authFailure == null) {
                     authFailure = typed
@@ -135,50 +137,6 @@ class SmbjTransport(
             }
             task.complete()
         }
-    }
-
-    /**
-     * Types a logon failure once, at the only site with setup-vs-read context. A
-     * refused session setup is an auth failure (bad password, unknown user); when a
-     * previous session died the same way it is rotation instead. Anything without an
-     * SMB status passes through untouched, so non-protocol failures keep their shape
-     * and the auth latch keeps its message.
-     */
-    private fun mapConnectFailure(e: IOException): IOException {
-        val status = firstSmbStatus(e)
-        if (status == NtStatus.STATUS_LOGON_FAILURE) {
-            val stale = synchronized(guard) { staleCredentials }
-            return if (stale) {
-                CredentialExpiredException("smb credentials rejected for ${location.host}", e, credentialAlias)
-            } else {
-                TransportAuthException("smb authentication failed for ${location.host}", e)
-            }
-        }
-        if (status == NtStatus.STATUS_ACCESS_DENIED) {
-            return TransportAuthException("smb authentication failed for ${location.host}", e)
-        }
-        if (hasCause<SMB2GuestSigningRequiredException>(e) || hasCause<SSLException>(e)) {
-            return TransportPermanentException("smb security refused for ${location.host}", e)
-        }
-        return e
-    }
-
-    private fun firstSmbStatus(e: Throwable): NtStatus? {
-        var cause: Throwable? = e
-        while (cause != null) {
-            if (cause is SMBApiException) return cause.status
-            cause = cause.cause
-        }
-        return null
-    }
-
-    private inline fun <reified T : Throwable> hasCause(error: Throwable): Boolean {
-        var cause: Throwable? = error
-        while (cause != null) {
-            if (cause is T) return true
-            cause = cause.cause
-        }
-        return false
     }
 
     /**
@@ -249,7 +207,9 @@ class SmbjTransport(
 
     override fun sizeBytes(remotePath: String): Long {
         return reconnecting { share ->
-            readLength(share, remotePath)
+            smbReadLength(share, remotePath, credentialAlias) {
+                synchronized(guard) { staleCredentials = true }
+            }
         }
     }
 
@@ -257,7 +217,11 @@ class SmbjTransport(
         require(offset >= 0) { "negative offset: $offset" }
         require(length >= 0) { "negative length: $length" }
         if (length == 0) return ByteArray(0)
-        return reconnecting { share -> readOnce(share, remotePath, offset, length) }
+        return reconnecting { share ->
+            smbReadOnce(share, remotePath, offset, length, credentialAlias) {
+                synchronized(guard) { staleCredentials = true }
+            }
+        }
     }
 
     /**
@@ -289,86 +253,29 @@ class SmbjTransport(
             try {
                 return op(connectedShare())
             } catch (second: IOException) {
-                if (!isTransient(second)) {
-                    second.addSuppressed(first)
-                    throw second
-                }
-                throw TransientExhaustedException(
-                    "smb transport failed after $RECONNECT_ATTEMPTS attempts",
-                    second,
-                ).also { exhausted -> exhausted.addSuppressed(first) }
+                throw mappedReconnectFailure(second, first)
             }
-        }
-    }
-
-    // SMBJ's failure surface is unchecked by design: Share.receive rethrows a dead socket as
-    // SMBRuntimeException and an invalidated session or server-closed file as SMBApiException,
-    // both RuntimeException. The seam promises IOException, and the retry above only sees
-    // IOException — so the unchecked surface is wrapped here, where the SMBJ calls happen.
-    @Suppress("TooGenericExceptionCaught")
-    private fun readLength(share: SmbConnection, remotePath: String): Long {
-        try {
-            share.openFile(remotePath).use { return it.length }
-        } catch (e: IOException) {
-            throw e
-        } catch (e: RuntimeException) {
-            throw mapSmbReadFailure("smb stat failed", remotePath, e)
-        }
-    }
-
-    @Suppress("TooGenericExceptionCaught")
-    private fun readOnce(share: SmbConnection, remotePath: String, offset: Long, length: Int): ByteArray {
-        try {
-            // Fresh handle per call, so concurrent readers never share a file offset.
-            share.openFile(remotePath).use { file ->
-                val out = ByteArray(length)
-                var done = 0
-                // File.read may return fewer bytes than asked — one call is not the range.
-                // A short stream is EOF mid-transfer: transient, safe to resume.
-                while (done < length) {
-                    val got = file.read(out, offset + done, done, length - done)
-                    if (got <= 0) throw TransientTransportException("short read at $offset ($done of $length bytes)")
-                    done += got
-                }
-                return out
-            }
-        } catch (e: Exception) {
-            // Genuine IOExceptions pass through unwrapped, so the suppressed chains stay
-            // clean; an interrupt keeps its exact old shape (never transient, never
-            // retried); anything else is the unchecked surface above, mapped for retry.
-            if (e is InterruptedException) {
-                Thread.currentThread().interrupt()
-                throw IOException("smb read failed", e)
-            }
-            throw e as? IOException ?: mapSmbReadFailure("smb read failed", remotePath, e)
         }
     }
 
     /**
-     * Types an unchecked SMBJ failure at the only site that sees the NT status. A
-     * mid-session logon failure is rotation (the session was good, the password
-     * changed); missing objects are missing files; denied handles are permissions —
-     * none retry. Everything else is a dead socket or session and earns the retry.
+     * Types the second failure with the first suppressed onto it: a definitive second
+     * failure propagates itself (the file simply vanished), otherwise exhaustion.
+     * Separate function because the retry loop already spends the throw budget.
      */
-    private fun mapSmbReadFailure(message: String, remotePath: String, e: Throwable): IOException {
-        when (firstSmbStatus(e)) {
-            NtStatus.STATUS_LOGON_FAILURE -> {
-                synchronized(guard) { staleCredentials = true }
-                return CredentialExpiredException("smb credentials rejected for $remotePath", e, credentialAlias)
-            }
-            NtStatus.STATUS_OBJECT_NAME_NOT_FOUND,
-            NtStatus.STATUS_OBJECT_PATH_NOT_FOUND,
-            NtStatus.STATUS_NO_SUCH_FILE,
-            NtStatus.STATUS_BAD_NETWORK_NAME,
-            NtStatus.STATUS_NOT_FOUND,
-            -> return FileNotFoundException("smb object not found: $remotePath").apply { initCause(e) }
-            NtStatus.STATUS_ACCESS_DENIED ->
-                return TransportPermanentException("smb access denied: $remotePath", e)
-            else -> Unit
+    private fun mappedReconnectFailure(second: IOException, first: IOException): IOException {
+        if (!isTransient(second)) {
+            second.addSuppressed(first)
+            throw second
         }
-        return TransientTransportException(message, e)
+        throw TransientExhaustedException(
+            "smb transport failed after $RECONNECT_ATTEMPTS attempts",
+            second,
+        ).also { exhausted -> exhausted.addSuppressed(first) }
     }
 
+    // SMBJ's failure surface is unchecked by design: Share.receive rethrows a dead socket as
+    // SMBRuntimeException and an invalidated session or server-closed file as SMBApiException,
     override fun close() {
         // Swap under the lock, close outside it — same teardown rule as dropForReconnect:
         // another thread's blocked teardown never stalls this call, and this call never
