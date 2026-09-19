@@ -200,7 +200,8 @@ class HttpRangeTransport(
         HTTP_OK -> IOException(
             "server ignored Range and answered 200 with the whole file — this endpoint cannot stream",
         )
-        HTTP_UNAUTHORIZED, HTTP_FORBIDDEN -> ReauthRequiredException("sign-in required: the server rejected this account")
+        HTTP_UNAUTHORIZED, HTTP_FORBIDDEN ->
+            ReauthRequiredException("sign-in required: the server rejected this account")
         HTTP_RANGE_NOT_SATISFIABLE -> IOException("range not satisfiable: $range")
         else -> HttpStatusException(code, "ranged read failed with $code")
     }

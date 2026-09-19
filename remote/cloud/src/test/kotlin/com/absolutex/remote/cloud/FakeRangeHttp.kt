@@ -65,13 +65,18 @@ internal class FakeRangeHttp(
         headersSeen += headers
         val range = headers[RANGE].orEmpty()
         rangesSeen += range
-        if (unauthorized) return bodiless(HTTP_UNAUTHORIZED)
-        if (rateLimitsRemaining > 0) {
-            rateLimitsRemaining--
-            val head = retryAfterHeader?.let { mapOf("Retry-After" to listOf(it)) } ?: emptyMap()
-            return HttpStreamResponse(HTTP_TOO_MANY_REQUESTS, InputStream.nullInputStream(), head)
+        return when {
+            unauthorized -> bodiless(HTTP_UNAUTHORIZED)
+            rateLimitsRemaining > 0 -> rateLimited()
+            mode == Mode.IGNORES_RANGE -> wholeFile()
+            else -> partial(range)
         }
-        return if (mode == Mode.IGNORES_RANGE) wholeFile() else partial(range)
+    }
+
+    private fun rateLimited(): HttpStreamResponse {
+        rateLimitsRemaining--
+        val head = retryAfterHeader?.let { mapOf("Retry-After" to listOf(it)) } ?: emptyMap()
+        return HttpStreamResponse(HTTP_TOO_MANY_REQUESTS, InputStream.nullInputStream(), head)
     }
 
     /** 200 plus the entire file — the fallback Microsoft documents for Graph. */
