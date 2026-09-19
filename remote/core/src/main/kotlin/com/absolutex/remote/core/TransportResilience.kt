@@ -84,9 +84,13 @@ fun isTransient(error: IOException): Boolean {
     // before the definitive check below: a read timeout is the canonical transient
     // failure, while a bare InterruptedIOException is cancellation.
     if (error is SocketTimeoutException) return true
+    // The transport's explicit verdict wins over every message marker: a
+    // TransientTransportException carrying the word "closed" in its message is still
+    // the dead socket the transport saw, not a definitive answer. (Bare message-only
+    // errors still go through the marker lists below.)
+    if (error is TransientTransportException) return true
     if (isDefinitiveType(error)) return false
     if (mentionsDefinitive(error)) return false
-    if (error is TransientTransportException) return true
     // Transports wrap: SMBJ surfaces dead sockets as unchecked failures the transport
     // re-wraps in IOException, so a typed transient cause anywhere in the chain counts
     // even when the outer error is a plain IOException.

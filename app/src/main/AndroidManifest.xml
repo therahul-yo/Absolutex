@@ -5,6 +5,11 @@
          (SyncServer.allowCleartext); the per-host network security config is milestone 3's. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Remote files (milestone 5): RemoteNetworkMonitor registers the default-network
+         callback so a Wi-Fi→cellular/VPN change drops stale SMB/FTP sessions instead of
+         burning the full socket timeout. Normal (non-runtime) permission; without it the
+         monitor degrades to inert watching. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Pre-release: no Drive backup history of reading state. Revisit with a
          dataExtractionRules allowlist before 1.0 if backup is wanted. -->
     <application
