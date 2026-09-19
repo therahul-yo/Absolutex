@@ -1,6 +1,15 @@
 package com.absolutex.remote.ftp
 
+import com.absolutex.remote.core.CredentialExpiredException
+import com.absolutex.remote.core.RetryPolicy
+import com.absolutex.remote.core.TransportAuthException
+import com.absolutex.remote.core.TransportInvalidator
+import com.absolutex.remote.core.TransportPermanentException
+import com.absolutex.remote.core.TransientExhaustedException
+import com.absolutex.remote.core.TransientTransportException
+import com.absolutex.remote.core.isTransient
 import java.io.Closeable
+import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.InputStream
 import org.apache.commons.net.ftp.FTP
@@ -24,67 +33,104 @@ import org.apache.commons.net.ftp.FTPSClient
  * @param password supplies a fresh password copy per login; the transport zeroes it after use,
  * so providers must hand out a copy (as [InMemoryFtpCredentialStore.load] does), not a live
  * reference. The transient login String cannot be zeroed — its lifetime is one login call.
+ *
+ * Phase F resilience: bounded retry with backoff around reads, stats and listings, transient
+ * failures only ([isTransient]) — each retry drops the desynced control connection and
+ * reconnects, re-issuing REST+RETR for the same range (reconnect-and-resume at range
+ * granularity). A refused login never retries: the first refusal is [TransportAuthException],
+ * and a refusal after a successful login on this transport is [CredentialExpiredException]
+ * (the password changed on the NAS mid-session — sign in again). Definitive replies (5xx)
+ * map to permanent errors, never the loop. Everything runs under the one lock, backoff
+ * included: the reconnect state machine lives under it, and the added latency is bounded
+ * (~600ms worst case) rather than the 30s socket timeout a stale connection would burn.
  */
 class CommonsNetFtpTransport(
     private val location: FtpLocation,
     private val password: () -> CharArray,
     private val clientFactory: () -> FTPClient = { defaultClient(location.useTls) },
-) : FtpTransport, Closeable {
+) : FtpTransport, Closeable, TransportInvalidator {
 
     private val lock = Any()
     private var client: FTPClient? = null
 
+    /**
+     * True once any login on this transport succeeded. A later refusal cannot be a typo
+     * the user just made — it is rotation — so it surfaces as expiry, not auth failure.
+     * Read and written only under [lock].
+     */
+    private var everAuthenticated = false
+    private val retryPolicy: RetryPolicy = RetryPolicy()
+
     override fun sizeBytes(path: String): Long = synchronized(lock) {
-        val live = connected()
-        // MLST first, LIST fallback: some servers implement only one of the two listings.
-        val direct = runCatching { live.mlistFile(path) }.getOrNull()
-        val listed = direct ?: runCatching { live.listFiles(path).firstOrNull() }.getOrNull()
-        val size = listed?.size ?: fail("cannot stat FTP path: $path")
-        if (size < MIN_SIZE) fail("negative size for FTP path: $path")
-        size
+        retrying("stat") { live ->
+            // MLST first, LIST fallback: some servers implement only one of the two listings.
+            val direct = runCatching { live.mlistFile(path) }.getOrNull()
+            val listed = direct ?: runCatching { live.listFiles(path).firstOrNull() }.getOrNull()
+            val size = listed?.size ?: throw statFailure(path, live.replyCode)
+            if (size < MIN_SIZE) fail("negative size for FTP path: $path")
+            size
+        }
     }
 
     override fun readAt(path: String, offset: Long, length: Int): ByteArray = synchronized(lock) {
         require(offset >= MIN_OFFSET) { "negative FTP offset: $offset" }
         require(length >= MIN_LENGTH) { "negative FTP length: $length" }
         if (length == EMPTY_LENGTH) return@synchronized ByteArray(EMPTY_LENGTH)
-        try {
-            transfer(path, offset, length)
-        } catch (expected: IOException) {
-            // A failed transfer leaves the control connection desynced; drop it so the next
-            // call reconnects instead of speaking mid-transfer to a confused server.
-            drop()
-            throw expected
-        }
+        return@synchronized retrying("read") { live -> transfer(live, path, offset, length) }
     }
 
     /** Logs out and disconnects. Safe to call more than once. */
     override fun close() = synchronized(lock) { drop() }
 
     override fun listDir(path: String): List<FtpEntry> = synchronized(lock) {
-        try {
-            val live = connected()
+        retrying("list") { live ->
             // LIST, not MLSD: probed against the in-process server, MLSD answers a missing
             // path with 226 and an empty listing — indistinguishable from an empty folder —
             // while LIST answers 450, which is detectable below. Encoding edge cases in LIST
             // output lose to that distinction; revisit if a real server mis-parses.
             val files = live.listFiles(path)
             if (files.isEmpty() && !FTPReply.isPositiveCompletion(live.replyCode)) {
-                fail("cannot list FTP path: $path (reply ${live.replyCode})")
+                throw listFailure(path, live.replyCode)
             }
-            return@synchronized files.map { file ->
+            files.map { file ->
                 FtpEntry(file.name.substringAfterLast('/'), file.isDirectory, file.size)
             }
-        } catch (e: IOException) {
-            drop()
-            throw e
         }
     }
 
-    private fun transfer(path: String, offset: Long, length: Int): ByteArray {
-        val live = connected()
+    /**
+     * One bounded retry loop for every op above. Failures drop the control connection
+     * (a failed transfer leaves it desynced; the next attempt reconnects instead of
+     * speaking mid-transfer to a confused server); only transient failures earn
+     * another attempt, and exhaustion surfaces as [TransientExhaustedException] with
+     * the last failure as cause and earlier attempts suppressed in order.
+     */
+    private fun <T> retrying(opName: String, op: (FTPClient) -> T): T {
+        val prior = ArrayList<IOException>(retryPolicy.maxAttempts)
+        var attempt = 0
+        while (true) {
+            attempt++
+            try {
+                return op(connected())
+            } catch (e: IOException) {
+                drop()
+                if (!isTransient(e)) {
+                    prior.forEach(e::addSuppressed)
+                    throw e
+                }
+                if (attempt >= retryPolicy.maxAttempts) {
+                    throw TransientExhaustedException("ftp $opName failed after $attempt attempts", e)
+                        .also { exhausted -> prior.forEach(exhausted::addSuppressed) }
+                }
+                prior += e
+                retryPolicy.sleepBeforeRetry(attempt)
+            }
+        }
+    }
+
+    private fun transfer(live: FTPClient, path: String, offset: Long, length: Int): ByteArray {
         live.setRestartOffset(offset)
-        val stream = live.retrieveFileStream(path) ?: fail("FTP RETR refused: $path at $offset")
+        val stream = live.retrieveFileStream(path) ?: throw retrFailure(path, offset, live.replyCode)
         val out = readFully(stream, length, path, offset)
         // We deliberately close the data stream once our range is in hand, without draining the
         // rest of the file. A real server reports that early close as 426/450/451 (sometimes 226
@@ -95,7 +141,7 @@ class CommonsNetFtpTransport(
         val completed = live.completePendingCommand()
         val replyCode = live.replyCode
         if (!completed && replyCode !in EARLY_CLOSE_REPLY_CODES) {
-            fail("FTP transfer did not complete: $path at $offset (reply $replyCode)")
+            throw transferFailure(path, offset, replyCode)
         }
         return out
     }
@@ -104,12 +150,60 @@ class CommonsNetFtpTransport(
         val out = ByteArray(length)
         var done = 0
         // Partial socket reads are normal; loop until the range is exact or the stream ends.
+        // An ended stream is EOF mid-transfer: transient, safe to resume from REST.
         while (done < length) {
             val count = stream.read(out, done, length - done)
-            if (count < 0) fail("short FTP read: $path at ${offset + done} ($done of $length)")
+            if (count < 0) throw TransientTransportException("short FTP read: $path at ${offset + done} ($done of $length)")
             done += count
         }
         return out
+    }
+
+    /**
+     * A refused RETR classified by reply: 5xx is the server's final answer (550 is the
+     * missing file), anything else is a data-connection blip worth one retry.
+     */
+    private fun retrFailure(path: String, offset: Long, replyCode: Int): IOException {
+        if (replyCode == FTPReply.FILE_UNAVAILABLE) {
+            return FileNotFoundException("FTP path not found: $path at $offset (reply $replyCode)")
+        }
+        val message = "FTP RETR refused: $path at $offset (reply $replyCode)"
+        return if (replyCode / REPLY_CLASS_DIVISOR == PERMANENT_REPLY_CLASS) {
+            TransportPermanentException(message)
+        } else {
+            TransientTransportException(message)
+        }
+    }
+
+    private fun transferFailure(path: String, offset: Long, replyCode: Int): IOException {
+        val message = "FTP transfer did not complete: $path at $offset (reply $replyCode)"
+        return if (replyCode / REPLY_CLASS_DIVISOR == PERMANENT_REPLY_CLASS) {
+            TransportPermanentException(message)
+        } else {
+            TransientTransportException(message)
+        }
+    }
+
+    /**
+     * Stat and list failures keep their historical messages (the connection probes
+     * match on them) but arrive typed: 5xx is definitive, anything else transient.
+     */
+    private fun statFailure(path: String, replyCode: Int): IOException {
+        val message = "cannot stat FTP path: $path (reply $replyCode)"
+        return if (replyCode / REPLY_CLASS_DIVISOR == PERMANENT_REPLY_CLASS) {
+            TransportPermanentException(message)
+        } else {
+            TransientTransportException(message)
+        }
+    }
+
+    private fun listFailure(path: String, replyCode: Int): IOException {
+        val message = "cannot list FTP path: $path (reply $replyCode)"
+        return if (replyCode / REPLY_CLASS_DIVISOR == PERMANENT_REPLY_CLASS) {
+            FileNotFoundException(message)
+        } else {
+            TransientTransportException(message)
+        }
     }
 
     private fun connected(): FTPClient {
@@ -127,7 +221,14 @@ class CommonsNetFtpTransport(
         fresh.connect(location.host, location.port)
         val secret = password()
         try {
-            if (!fresh.login(location.username, String(secret))) fail("FTP login refused: ${location.uri}")
+            if (!fresh.login(location.username, String(secret))) {
+                // A refused login must not cache the rejected connection — and a refusal
+                // after a success is rotation, not a typo. Disconnect best-effort: the
+                // server just refused us, so logout would only add a round trip.
+                runCatching { fresh.disconnect() }
+                throw loginFailure()
+            }
+            everAuthenticated = true
         } finally {
             secret.fill(CLEARED_CHAR)
         }
@@ -143,11 +244,35 @@ class CommonsNetFtpTransport(
         return fresh
     }
 
+    private fun loginFailure(): IOException {
+        // The probe matches on the "FTP login refused" prefix (AuthFailed), so both
+        // variants keep it: the type, not the message, tells rotation apart.
+        return if (everAuthenticated) {
+            CredentialExpiredException("FTP login refused: credentials rejected for ${location.uri}")
+        } else {
+            TransportAuthException("FTP login refused: ${location.uri}")
+        }
+    }
+
     private fun drop() {
         val stale = client
         client = null
         if (stale != null) {
             runCatching { stale.logout() }
+            runCatching { stale.disconnect() }
+        }
+    }
+
+    /**
+     * Network-change hook ([TransportInvalidator]): drops the control connection
+     * without the logout round trip (the path may already be gone) so the next call
+     * reconnects instead of waiting out the socket timeout. Never throws.
+     */
+    override fun invalidate() {
+        val stale = synchronized(lock) {
+            client.also { client = null }
+        }
+        if (stale != null) {
             runCatching { stale.disconnect() }
         }
     }
@@ -164,6 +289,10 @@ class CommonsNetFtpTransport(
         private const val PROTECTION_BUFFER_ZERO = 0L
         private const val DATA_CHANNEL_PRIVATE = "P"
         private const val CLEARED_CHAR = '\u0000'
+
+        /** Reply-class arithmetic: 4xx is "try again", 5xx is the final answer. */
+        private const val REPLY_CLASS_DIVISOR = 100
+        private const val PERMANENT_REPLY_CLASS = 5
 
         // Replies a server sends for a range read that stops before EOF: the data stream
         // closed with bytes still unsent. CLOSING_DATA_CONNECTION (226) is already a positive

@@ -1,14 +1,27 @@
 package com.absolutex.remote.smb
 
+import com.absolutex.remote.core.CredentialExpiredException
+import com.absolutex.remote.core.RetryPolicy
+import com.absolutex.remote.core.TransportAuthException
+import com.absolutex.remote.core.TransportInvalidator
+import com.absolutex.remote.core.TransportPermanentException
+import com.absolutex.remote.core.TransientExhaustedException
+import com.absolutex.remote.core.TransientTransportException
+import com.absolutex.remote.core.isTransient
 import com.hierynomus.msdtyp.AccessMask
+import com.hierynomus.mserref.NtStatus
 import com.hierynomus.mssmb2.SMB2CreateDisposition
 import com.hierynomus.mssmb2.SMB2ShareAccess
+import com.hierynomus.mssmb2.SMBApiException
 import com.hierynomus.smbj.SMBClient
 import com.hierynomus.smbj.auth.AuthenticationContext
+import com.hierynomus.smbj.session.SMB2GuestSigningRequiredException
 import com.hierynomus.smbj.share.DiskShare
+import java.io.FileNotFoundException
 import java.io.IOException
 import java.security.GeneralSecurityException
 import java.util.EnumSet
+import javax.net.ssl.SSLException
 
 /**
  * SMBJ-backed [SmbTransport]. SMB3 only by default (3.0 through 3.1.1): SMB 2.1 has no
@@ -29,19 +42,43 @@ import java.util.EnumSet
  *
  * Blocking by design (SMBJ is a blocking API) — callers must stay off the main thread,
  * same as local archive extraction on DecodeDispatchers.extract.
+ *
+ * Phase F resilience, underneath the policies above (locks, latch and single-flight
+ * are unchanged):
+ *
+ * - Bounded retry with backoff around reads and stats, transient failures only
+ *   ([isTransient]): a dead share drops, waits once, and reconnects — the
+ *   reconnect-once ceiling is preserved as a bound of two attempts. Auth refusal,
+ *   credential rotation and definitive failures (missing file, denied, malformed)
+ *   never enter the loop: retrying a refused password locks NAS accounts.
+ * - Failures are typed ([TransportAuthException], [CredentialExpiredException],
+ *   [TransportPermanentException], [TransientExhaustedException]) so the reader can
+ *   rely on them by type; exhaustion carries the last failure as cause with the
+ *   first suppressed, preserving the old second-carries-first evidence shape.
+ * - [invalidate] drops a network-changed session without latching, so a Wi-Fi roam
+ *   reconnects on the next read instead of waiting out the socket timeout.
  */
 class SmbjTransport(
     private val location: SmbLocation,
     private val credentials: SmbCredentialStore,
     private val credentialAlias: String,
     private val connector: SmbConnector = SmbjConnector(location),
-) : SmbTransport {
+    private val retryPolicy: RetryPolicy = RetryPolicy(maxAttempts = RECONNECT_ATTEMPTS),
+) : SmbTransport, TransportInvalidator {
 
     private val guard = Any()
     private var connection: SmbConnection? = null
     private var authFailure: IOException? = null
     private var closed = false
     private var establishTask: EstablishTask? = null
+
+    /**
+     * Set when an established session is refused with logon-failure: the password
+     * changed on the NAS mid-session. The next connect failing the same way then
+     * surfaces as rotation (sign in again) rather than a first-time bad password —
+     * cleared on any successful logon, so a corrected password heals the transport.
+     */
+    private var staleCredentials = false
 
     private fun connectedShare(): SmbConnection {
         while (true) {
@@ -82,13 +119,15 @@ class SmbjTransport(
         try {
             password = storedPassword()
             installEstablished(connector.connect(password))
+            synchronized(guard) { staleCredentials = false }
         } catch (e: IOException) {
+            val typed = mapConnectFailure(e)
             synchronized(guard) {
                 if (authFailure == null) {
-                    authFailure = e
+                    authFailure = typed
                 }
             }
-            throw e
+            throw typed
         } finally {
             password?.fill(Char.MIN_VALUE)
             synchronized(guard) {
@@ -96,6 +135,50 @@ class SmbjTransport(
             }
             task.complete()
         }
+    }
+
+    /**
+     * Types a logon failure once, at the only site with setup-vs-read context. A
+     * refused session setup is an auth failure (bad password, unknown user); when a
+     * previous session died the same way it is rotation instead. Anything without an
+     * SMB status passes through untouched, so non-protocol failures keep their shape
+     * and the auth latch keeps its message.
+     */
+    private fun mapConnectFailure(e: IOException): IOException {
+        val status = firstSmbStatus(e)
+        if (status == NtStatus.STATUS_LOGON_FAILURE) {
+            val stale = synchronized(guard) { staleCredentials }
+            return if (stale) {
+                CredentialExpiredException("smb credentials rejected for ${location.host}", e, credentialAlias)
+            } else {
+                TransportAuthException("smb authentication failed for ${location.host}", e)
+            }
+        }
+        if (status == NtStatus.STATUS_ACCESS_DENIED) {
+            return TransportAuthException("smb authentication failed for ${location.host}", e)
+        }
+        if (hasCause<SMB2GuestSigningRequiredException>(e) || hasCause<SSLException>(e)) {
+            return TransportPermanentException("smb security refused for ${location.host}", e)
+        }
+        return e
+    }
+
+    private fun firstSmbStatus(e: Throwable): NtStatus? {
+        var cause: Throwable? = e
+        while (cause != null) {
+            if (cause is SMBApiException) return cause.status
+            cause = cause.cause
+        }
+        return null
+    }
+
+    private inline fun <reified T : Throwable> hasCause(error: Throwable): Boolean {
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is T) return true
+            cause = cause.cause
+        }
+        return false
     }
 
     /**
@@ -178,23 +261,42 @@ class SmbjTransport(
     }
 
     /**
-     * One revalidation: the failure may be a dead share, in which case the retry reconnects;
-     * if it was the logon, the retry rethrows the remembered error instead of logging on
-     * again. The second failure always propagates, carrying the first as suppressed context —
-     * no loops, no storms, no lost evidence. An establish failure is not retried at all:
-     * there is no share to drop and the retry could only re-hit the latch.
+     * One revalidation with backoff — then the failure propagates, typed. The failure
+     * may be a dead share, in which case the retry reconnects; auth, rotation and
+     * definitive failures never reach the retry (see the class KDoc). The second
+     * failure carries the first as suppressed context when it propagates as-is, or
+     * the exhaustion error carries the first with the second as cause — no loops, no
+     * storms, no lost evidence. An establish failure is not retried at all: there is
+     * no share to drop and the retry could only re-hit the latch.
      */
     private inline fun <T> reconnecting(op: (SmbConnection) -> T): T {
         val share = connectedShare()
         try {
             return op(share)
         } catch (first: IOException) {
+            if (!isTransient(first)) {
+                // Rotation killed the session even though nothing will retry it: drop
+                // it so the next read reconnects (and re-reports) instead of reading
+                // from a dead session. Anything else leaves a healthy share alone.
+                if (first is CredentialExpiredException) dropForReconnect(share)
+                throw first
+            }
             dropForReconnect(share)
+            // Backoff before the single reconnect: a rebooting NAS answers instantly
+            // with reset/refused, and hammering it buys nothing. Interruptible, so a
+            // book closed mid-backoff stops here instead of sleeping through it.
+            retryPolicy.sleepBeforeRetry(FIRST_RETRY)
             try {
                 return op(connectedShare())
             } catch (second: IOException) {
-                second.addSuppressed(first)
-                throw second
+                if (!isTransient(second)) {
+                    second.addSuppressed(first)
+                    throw second
+                }
+                throw TransientExhaustedException(
+                    "smb transport failed after $RECONNECT_ATTEMPTS attempts",
+                    second,
+                ).also { exhausted -> exhausted.addSuppressed(first) }
             }
         }
     }
@@ -210,7 +312,7 @@ class SmbjTransport(
         } catch (e: IOException) {
             throw e
         } catch (e: RuntimeException) {
-            throw IOException("smb stat failed", e)
+            throw mapSmbReadFailure("smb stat failed", remotePath, e)
         }
     }
 
@@ -222,21 +324,49 @@ class SmbjTransport(
                 val out = ByteArray(length)
                 var done = 0
                 // File.read may return fewer bytes than asked — one call is not the range.
+                // A short stream is EOF mid-transfer: transient, safe to resume.
                 while (done < length) {
                     val got = file.read(out, offset + done, done, length - done)
-                    if (got <= 0) throw IOException("short read at $offset ($done of $length bytes)")
+                    if (got <= 0) throw TransientTransportException("short read at $offset ($done of $length bytes)")
                     done += got
                 }
                 return out
             }
         } catch (e: Exception) {
             // Genuine IOExceptions pass through unwrapped, so the suppressed chains stay
-            // clean; anything else is the unchecked surface above, wrapped for the retry.
+            // clean; an interrupt keeps its exact old shape (never transient, never
+            // retried); anything else is the unchecked surface above, mapped for retry.
             if (e is InterruptedException) {
                 Thread.currentThread().interrupt()
+                throw IOException("smb read failed", e)
             }
-            throw e as? IOException ?: IOException("smb read failed", e)
+            throw e as? IOException ?: mapSmbReadFailure("smb read failed", remotePath, e)
         }
+    }
+
+    /**
+     * Types an unchecked SMBJ failure at the only site that sees the NT status. A
+     * mid-session logon failure is rotation (the session was good, the password
+     * changed); missing objects are missing files; denied handles are permissions —
+     * none retry. Everything else is a dead socket or session and earns the retry.
+     */
+    private fun mapSmbReadFailure(message: String, remotePath: String, e: Throwable): IOException {
+        when (firstSmbStatus(e)) {
+            NtStatus.STATUS_LOGON_FAILURE -> {
+                synchronized(guard) { staleCredentials = true }
+                return CredentialExpiredException("smb credentials rejected for $remotePath", e, credentialAlias)
+            }
+            NtStatus.STATUS_OBJECT_NAME_NOT_FOUND,
+            NtStatus.STATUS_OBJECT_PATH_NOT_FOUND,
+            NtStatus.STATUS_NO_SUCH_FILE,
+            NtStatus.STATUS_BAD_NETWORK_NAME,
+            NtStatus.STATUS_NOT_FOUND,
+            -> return FileNotFoundException("smb object not found: $remotePath").apply { initCause(e) }
+            NtStatus.STATUS_ACCESS_DENIED ->
+                return TransportPermanentException("smb access denied: $remotePath", e)
+            else -> Unit
+        }
+        return TransientTransportException(message, e)
     }
 
     override fun close() {
@@ -252,8 +382,29 @@ class SmbjTransport(
         }
     }
 
+    /**
+     * Network-change hook ([TransportInvalidator]): drops the live session without
+     * touching the auth latch, so the next read reconnects with the same credentials
+     * instead of waiting out the socket timeout. Never throws; the close runs outside
+     * the guard like every other teardown here.
+     */
+    override fun invalidate() {
+        val stale = synchronized(guard) {
+            connection.also { connection = null }
+        }
+        if (stale != null) {
+            runCatching { stale.close() }
+        }
+    }
+
     companion object {
         internal const val AUTH_LATCH_MESSAGE = "smb authentication failed"
+
+        /** Reconnect-once ceiling, preserved: one initial try plus one reconnect. */
+        private const val RECONNECT_ATTEMPTS = 2
+
+        /** 1-based failed attempt scheduled before the single reconnect. */
+        private const val FIRST_RETRY = 1
     }
 
     /**

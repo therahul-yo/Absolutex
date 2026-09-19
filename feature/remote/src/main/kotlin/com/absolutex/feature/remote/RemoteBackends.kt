@@ -1,6 +1,7 @@
 package com.absolutex.feature.remote
 
 import com.absolutex.remote.core.RangeTransport
+import com.absolutex.remote.core.TransportInvalidator
 import com.absolutex.remote.ftp.CommonsNetFtpTransport
 import com.absolutex.remote.ftp.FtpLocation
 import com.absolutex.remote.ftp.bind
@@ -70,14 +71,19 @@ class FtpBookBackend @Inject constructor(
 /**
  * Dispatches an opened book to the backend owning its server id. Sync (Komga/Kavita)
  * servers hold no files; resolving one is a stale-link caller bug, not IO.
+ *
+ * Every returned transport is watched by [RemoteNetworkMonitor] until the book closes:
+ * the [WatchedTransport] wrapper below binds the watch handle's lifetime to the book
+ * session the opener owns, so the monitor never retains a closed book.
  */
 class RemoteBackendResolver @Inject constructor(
     private val servers: com.absolutex.remote.sync.RemoteServers,
     private val smb: SmbBookBackend,
     private val ftp: FtpBookBackend,
+    private val networkMonitor: RemoteNetworkMonitor,
 ) {
     suspend fun transportFor(serverId: String, path: String): RangeTransport {
-        return when (val server = servers.current().firstOrNull { it.id == serverId }) {
+        val raw = when (val server = servers.current().firstOrNull { it.id == serverId }) {
             is SmbServer -> smb.transportFor(server, path)
             is FtpServer -> ftp.transportFor(server, path)
             is KomgaServer,
@@ -85,6 +91,27 @@ class RemoteBackendResolver @Inject constructor(
             -> throw IOException("sync servers hold no files: $serverId")
             null -> throw IOException("unknown remote server: $serverId")
         }
+        val invalidator = raw as? TransportInvalidator ?: return raw
+        return WatchedTransport(raw, networkMonitor.watch(invalidator))
+    }
+}
+
+/**
+ * A book's transport plus its network-change watch handle: closing the book unwatches
+ * first, then closes the session. The watch close never fails the book close — the
+ * transport close is what releases the session.
+ */
+private class WatchedTransport(
+    private val delegate: RangeTransport,
+    private val watch: AutoCloseable,
+) : RangeTransport {
+    override fun sizeBytes(): Long = delegate.sizeBytes()
+
+    override fun readAt(offset: Long, length: Int): ByteArray = delegate.readAt(offset, length)
+
+    override fun close() {
+        runCatching { watch.close() }
+        delegate.close()
     }
 }
 

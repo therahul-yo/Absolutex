@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.absolutex.remote.core.CredentialExpiredException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -73,7 +74,14 @@ sealed interface RemoteServer {
     val kind: RemoteKind
 }
 
-/** One SMB share plus the path inside it to read from. */
+/**
+ * One SMB share plus the path inside it to read from.
+ *
+ * Credential rotation (the NAS password changes mid-session) surfaces from the
+ * transports as [CredentialExpiredException] — never retried, never wrapped — and the
+ * fix is re-authentication, not a retry button. The servers screen owns that prompt;
+ * see [credentialExpiredServerId] for the typed seam.
+ */
 data class SmbServer(
     override val id: String,
     val host: String,
@@ -93,6 +101,10 @@ data class SmbServer(
 /**
  * One FTP/FTPS drop. Plain FTP sends credentials in the clear — prefer [useTls] (FTPS)
  * whenever the server offers it.
+ *
+ * Same rotation contract as [SmbServer]: mid-session refusal is
+ * [CredentialExpiredException], and re-authentication is the servers screen's job
+ * ([credentialExpiredServerId]).
  */
 data class FtpServer(
     override val id: String,
@@ -241,6 +253,25 @@ private fun parseKavita(obj: JSONObject, id: String): KavitaServer? {
         usesApiKey = obj.optBoolean("usesApiKey"),
     )
 }
+
+/**
+ * Re-auth seam for credential rotation (Phase F transport hardening).
+ *
+ * Returns the server id carried by a [CredentialExpiredException], or null for any
+ * other failure. The transports know the credential alias (which the backends set to
+ * the server id); FTP logins do not carry it, so callers there fall back to the
+ * server id they resolved the transport for — either way the value returned here is
+ * the record the user must sign in to again.
+ *
+ * TODO(agent3): the servers screen must catch this at the reader's error path and
+ * offer sign-in-again for the returned id (open the server form with its stored
+ * record, prompt for the new secret, save to the credential store). Do not build a
+ * retry button for it, and do not route it to the generic unreachable error: retrying
+ * a rotated password is indistinguishable from guessing, and repeated guesses lock
+ * NAS accounts.
+ */
+fun credentialExpiredServerId(error: IOException): String? =
+    (error as? CredentialExpiredException)?.serverId
 
 /**
  * Persisted server list for every remote kind (DataStore, one JSON document). No UI in this

@@ -167,7 +167,9 @@ class CommonsNetFtpTransportTest {
         }
         val got = live.readAt("/b.cbz", 0, 10)
         assertArrayEquals(payload.copyOfRange(0, 10), got)
-        assertEquals(2, client.connects)
+        // Bounded retry first: the short read is transient, so the failing call burns
+        // its three-attempt budget (three connects) before the next call reconnects.
+        assertEquals(4, client.connects)
     }
 
     @Test fun `sizeBytes reports the listed size`() {

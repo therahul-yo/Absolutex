@@ -47,9 +47,15 @@ interface RemoteFileHandle : AutoCloseable {
 /**
  * Binds this path-based transport to one file for the shared streaming stack: the same
  * [SeekableReader] serves SMB and FTP once each path has an adapter.
+ *
+ * The bound file also forwards [TransportInvalidator] when the delegate implements it
+ * (SmbjTransport does), so network-change monitoring reaches the live session through
+ * the file handle the book owns. Transports without invalidation simply no-op.
  */
-fun SmbTransport.bind(remotePath: String): com.absolutex.remote.core.RangeTransport =
-    object : com.absolutex.remote.core.RangeTransport {
+fun SmbTransport.bind(remotePath: String): com.absolutex.remote.core.RangeTransport {
+    val invalidator = this as? com.absolutex.remote.core.TransportInvalidator
+    return object : com.absolutex.remote.core.RangeTransport,
+        com.absolutex.remote.core.TransportInvalidator {
         override fun sizeBytes(): Long = this@bind.sizeBytes(remotePath)
 
         override fun readAt(offset: Long, length: Int): ByteArray =
@@ -57,4 +63,9 @@ fun SmbTransport.bind(remotePath: String): com.absolutex.remote.core.RangeTransp
 
         // Forwarded: the opener closes the bound file, and the session must die with it.
         override fun close() = this@bind.close()
+
+        override fun invalidate() {
+            invalidator?.invalidate()
+        }
     }
+}
