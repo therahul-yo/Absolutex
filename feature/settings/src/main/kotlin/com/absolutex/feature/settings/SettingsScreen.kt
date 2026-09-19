@@ -126,6 +126,8 @@ fun SettingsContent(
 
             GroupHeader(R.string.settings_group_about)
             AboutRow()
+            Spacer(Modifier.height(4.dp))
+            OpenSourceLicencesRow()
             Spacer(Modifier.height(16.dp))
         }
     }
