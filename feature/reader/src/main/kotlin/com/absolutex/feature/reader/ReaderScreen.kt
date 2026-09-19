@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.Flow
 import com.absolutex.core.data.settings.ReaderPrefs
 import com.absolutex.core.gpu.CropRect
+import com.absolutex.core.gpu.ColourParams
+import com.absolutex.core.gpu.Upscaler
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.isShiftPressed
@@ -83,6 +85,11 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import com.absolutex.core.decode.PageImage
 import com.absolutex.model.FitContext
 import com.absolutex.model.FitMode
@@ -679,13 +686,23 @@ private fun PageSlotContent(
     onBackgroundColour: (Color) -> Unit,
     onInvalidate: () -> Unit,
 ) {
-    // Draw-observed colour state for §4. Hoisted so the draw lambda reads `.value` each frame
-    // and a slider drag repaints at 120 Hz without recomposing PageCanvas.
-    val renderingPrefs by vm.renderingPrefs.collectAsStateWithLifecycle()
-    val colourState = remember { mutableStateOf(renderingPrefs.colour) }
-    LaunchedEffect(Unit) {
-        vm.renderingPrefs.collect { colourState.value = it.colour }
+    // Draw-observed colour state for §4. The colour is NEVER read in composition: one
+    // lifecycle-aware collector writes it into draw-observed state, so a slider drag
+    // repaints at 120 Hz without recomposing PageCanvas (or any sibling slot).
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val colourState = remember { mutableStateOf(ColourParams.NEUTRAL) }
+    LaunchedEffect(vm) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            vm.renderingPrefs.collect { colourState.value = it.colour }
+        }
     }
+    // Upscaler recomposes only on a real switch: distinctUntilChanged keeps a colour
+    // change (a new RenderingPrefs instance) from recomposing the slot through this read.
+    // The operators run inside remember, not composition (FlowOperatorInvokedInComposition).
+    val upscalerFlow = remember(vm) {
+        vm.renderingPrefs.map { it.upscaler }.distinctUntilChanged()
+    }
+    val upscaler by upscalerFlow.collectAsStateWithLifecycle(initialValue = Upscaler.PLATFORM)
     when {
         img != null -> PageCanvas(
             page = img,
@@ -705,7 +722,7 @@ private fun PageSlotContent(
             onCropDecided = onCropDecided,
             onBackgroundColour = onBackgroundColour,
             colour = colourState,
-            upscaler = renderingPrefs.upscaler,
+            upscaler = upscaler,
         )
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()

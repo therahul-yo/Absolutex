@@ -38,6 +38,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -76,11 +78,9 @@ class ReaderViewModel internal constructor(
     @TotalRamBytes private val totalRamBytes: Long,
     prefs: ReaderPrefsSource,
     rendering: RenderingPrefsSource,
-    appPrefs: AppPrefsSource,
+    private val appPrefs: AppPrefsSource,
     private val bookOpener: BookOpener,
 ) : ViewModel() {
-
-    private val appPrefsSource = appPrefs
 
     /**
      * The constructor Hilt uses; only the six Hilt-known params above are real dependencies.
@@ -122,6 +122,15 @@ class ReaderViewModel internal constructor(
     val failedPages: StateFlow<Set<Int>> = _failedPages.asStateFlow()
 
     val tileCache = TileCache(MemoryBudget.defaultCacheBytes(totalRamBytes))
+
+    /**
+     * Applies cache-size changes mid-book. The open() coroutine applies the setting once at
+     * open; this collector keeps it live: a user who raises the cache while a book is open
+     * gets the bigger budget without reopening. Resize clamps and trims on shrink, so a
+     * mid-read downsize evicts correctly. distinctUntilChanged: resize is idempotent but
+     * not free, and every app-pref write re-emits the whole AppPrefs object.
+     */
+    private var cacheSizeJob: Job? = null
 
     /** The open book: a [ComicSource] whose pages are encoded images, or a [PdfDocument]. */
     private var source: Closeable? = null
@@ -177,6 +186,8 @@ class ReaderViewModel internal constructor(
 
         /** A fast fling settles dozens of pages; only the landing page should hit disk. */
         const val PROGRESS_DEBOUNCE_MS = 300L
+
+        private const val BYTES_PER_MIB = 1024L * 1024
     }
 
     // Throwable on purpose: any failure to open a book must reach the user as one generic
@@ -207,12 +218,20 @@ class ReaderViewModel internal constructor(
         bases.clear()
         _ui.value = ReaderUiState(loading = true)
         openJob = viewModelScope.launch {
-            // Apply the user's cache-size setting before the book opens. currentAppPrefs() is a
-            // suspend DataStore read on the IO dispatcher — never the main thread, never a frame
-            // budget line. Clamped to LruCache's Int range by tileCache.resize().
-            val cacheBytes = appPrefsSource.currentAppPrefs().cacheSizeMiB.toLong() * 1024 * 1024
-            val clamped = cacheBytes.coerceIn(MemoryBudget.FLOOR_BYTES, MemoryBudget.CEILING_BYTES)
-            tileCache.resize(clamped)
+            // Apply the user's cache-size setting before the book opens, and keep applying it:
+            // the collector below re-resizes when the setting changes mid-book. The floor is
+            // the user-facing one (AppPrefs.MIN_CACHE_MIB — deliberately ~two flagship pages,
+            // see its KDoc), NOT MemoryBudget.FLOOR_BYTES, which bounds the RAM-derived
+            // default, not a value the user picked. Ceiling stays MemoryBudget's.
+            tileCache.resize(userCacheBytes(appPrefs.currentAppPrefs().cacheSizeMiB))
+            // Keep the budget live for mid-book changes (see cacheSizeJob's KDoc).
+            cacheSizeJob?.cancel()
+            cacheSizeJob = launch {
+                appPrefs.appPrefs
+                    .map { it.cacheSizeMiB }
+                    .distinctUntilChanged()
+                    .collect { mib -> tileCache.resize(userCacheBytes(mib)) }
+            }
 
             val opened = try {
                 // NonCancellable: bookOpener.open() (openBook()/identityOf() in production — see
@@ -408,6 +427,7 @@ class ReaderViewModel internal constructor(
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { progressDao.upsert(progress) }
         }
         openJob?.cancel()
+        cacheSizeJob?.cancel()
         _toc.value = emptyList()
         pageImages.values.forEach { runCatching { it.close() } }
         pageImages.clear()
@@ -480,6 +500,20 @@ class ReaderViewModel internal constructor(
         }
     }
 }
+
+/**
+ * The user's cache-size choice in bytes, clamped to the user-facing bounds: the floor is
+ * [AppPrefs.MIN_CACHE_MIB] (deliberately ~two flagship pages, see its KDoc), NOT
+ * [MemoryBudget.FLOOR_BYTES], which bounds the RAM-derived default rather than a value
+ * the user picked. The ceiling stays MemoryBudget's.
+ */
+private fun userCacheBytes(mib: Int): Long =
+    (mib.toLong() * BYTES_PER_MIB).coerceIn(
+        AppPrefs.MIN_CACHE_MIB.toLong() * BYTES_PER_MIB,
+        MemoryBudget.CEILING_BYTES,
+    )
+
+private const val BYTES_PER_MIB = 1024L * 1024
 
 /**
  * The open book's contents: a PDF's own outline, or the folders an archive's pages sit in. A

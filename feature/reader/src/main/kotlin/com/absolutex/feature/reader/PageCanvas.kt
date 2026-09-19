@@ -240,14 +240,22 @@ fun PageCanvas(
                 ?.let(ColourParams::decode)
         }
     }
-    // Upscaling rides a second extra, so each codec stays total on its own.
+    // Upscaling rides a second extra, so each codec stays total on its own. Same
+    // FLAG_DEBUGGABLE gate as colour: the hook must be inert in release builds.
     val benchmarkUpscaler = remember(pageIndex) {
-        (context as? Activity)?.intent?.getStringExtra(Upscaler.EXTRA_UPSCALER)
-            ?.let(Upscaler::decodeExtra)
+        val appInfo = context.applicationInfo
+        if (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE == 0) {
+            null
+        } else {
+            (context as? Activity)?.intent?.getStringExtra(Upscaler.EXTRA_UPSCALER)
+                ?.let(Upscaler::decodeExtra)
+        }
     }
-    // Crop rides a third: "0" disables it for the off-benchmark.
+    // Crop rides a third: "0" disables it for the off-benchmark. Same gate.
     val benchmarkCropOff = remember(pageIndex) {
-        (context as? Activity)?.intent?.getStringExtra(CropMath.EXTRA_CROP) == "0"
+        val appInfo = context.applicationInfo
+        (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) &&
+            (context as? Activity)?.intent?.getStringExtra(CropMath.EXTRA_CROP) == "0"
     }
     val cropActive = cropEnabled && !benchmarkCropOff
 
