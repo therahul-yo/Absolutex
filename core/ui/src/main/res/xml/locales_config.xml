@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The locales offered by the system's per-app language picker (Settings > Apps > Absolutex >
+  Language). minSdk 33 means this is the platform's own mechanism — no AppCompat shim.
+
+  This file mirrors SUPPORTED_LOCALES in LanguageOptions.kt and LanguageOptionsTest fails if
+  they drift. Add a row only when values-<tag>/ exists and that locale's review status is
+  recorded: a row without a translation offers a language that then renders in English, which
+  reads as a broken app rather than a missing translation.
+
+  Planned for milestone 5, not yet shipped and so deliberately not listed: ar, de, el, es, fr,
+  he, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh-Hans.
+
+  Referenced from :app's manifest as android:localeConfig="@xml/locales_config"; it resolves
+  from here through resource merging, so that stays a one-line change in that module.
+-->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+</locale-config>
