@@ -3,6 +3,7 @@ package com.absolutex
 import android.app.Activity
 import android.app.Application
 import android.os.Bundle
+import com.absolutex.core.data.runCatchingCancellable
 import com.absolutex.remote.sync.SyncController
 import com.absolutex.remote.sync.migrateLegacySyncServers
 import dagger.hilt.android.HiltAndroidApp
@@ -45,7 +46,10 @@ class AbsolutexApp : Application() {
     override fun onCreate() {
         super.onCreate()
         scope.launch {
-            runCatching { migrateLegacySyncServers(this@AbsolutexApp) }
+            // runCatchingCancellable, not runCatching: the migration fails closed with an
+            // IOException on a torn legacy document (kept for retry), which must not stop
+            // onAppStart(); a cancellation or an Error must still propagate.
+            runCatchingCancellable { migrateLegacySyncServers(this@AbsolutexApp) }
                 .onFailure { android.util.Log.e("AbsolutexApp", "legacy sync migration failed", it) }
             sync.onAppStart()
         }
