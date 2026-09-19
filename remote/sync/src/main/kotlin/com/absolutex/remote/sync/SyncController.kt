@@ -1,6 +1,7 @@
 package com.absolutex.remote.sync
 
 import com.absolutex.core.data.ProgressDao
+import com.absolutex.remote.core.HttpCall
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

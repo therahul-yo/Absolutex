@@ -18,6 +18,11 @@ android {
 dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:data"))
+    // api, not implementation: HttpCall is in this module's public API — SyncModule provides
+    // it and the clients take it as a constructor parameter — so every consumer compiling
+    // against :remote:sync needs it on their compile classpath. :app in particular never
+    // names HttpCall itself, but Hilt generates its component there against that binding.
+    api(project(":remote:core"))
     implementation(libs.datastore.preferences)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)

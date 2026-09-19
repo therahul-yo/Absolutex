@@ -1,6 +1,9 @@
 package com.absolutex.remote.sync
 
 import com.absolutex.core.data.ProgressDao
+import com.absolutex.remote.core.HttpCall
+import com.absolutex.remote.core.HttpStatusException
+import com.absolutex.remote.core.withCleartextPolicy
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 

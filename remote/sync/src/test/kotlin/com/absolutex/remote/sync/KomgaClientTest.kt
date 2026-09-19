@@ -1,5 +1,7 @@
 package com.absolutex.remote.sync
 
+import com.absolutex.remote.core.HttpBytesResponse
+import com.absolutex.remote.core.HttpResponse
 import java.time.Instant
 import java.util.Base64
 import org.json.JSONObject

@@ -1,5 +1,6 @@
 package com.absolutex.remote.sync
 
+import com.absolutex.remote.core.HttpUrlConnectionCall
 import kotlinx.coroutines.test.runTest
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer

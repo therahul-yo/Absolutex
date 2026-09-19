@@ -5,13 +5,18 @@ import androidx.test.core.app.ApplicationProvider
 import com.absolutex.core.data.ProgressDao
 import com.absolutex.core.data.ReadingProgress
 import com.absolutex.core.data.settings.InMemorySettings
+import com.absolutex.core.gpu.ColourParams
+import com.absolutex.core.gpu.Upscaler
 import com.absolutex.model.Page
 import com.absolutex.source.ComicSource
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -54,6 +59,7 @@ class ReaderViewModelTest {
             totalRamBytes = TOTAL_RAM_BYTES,
             prefs = settings,
             rendering = settings,
+            appPrefs = settings,
             bookOpener = opener,
         )
     }
@@ -109,6 +115,73 @@ class ReaderViewModelTest {
 
         val openedA = opener.opened.single { it.name == "a" }
         assertTrue("the superseded book's handle must be closed, not leaked", openedA.closed)
+    }
+
+    @Test
+    fun `a 64 MiB cache preference yields a 64 MiB cache, not the RAM-derived floor`() = test {
+        // The user-facing floor is AppPrefs.MIN_CACHE_MIB (64), deliberately below
+        // MemoryBudget.FLOOR_BYTES (256): the latter bounds the RAM-derived default,
+        // not a value the user picked (review finding 2 on #46).
+        val settings = InMemorySettings()
+        settings.updateApp { it.copy(cacheSizeMiB = 64) }
+        val vm = ReaderViewModel(
+            context = ApplicationProvider.getApplicationContext(),
+            progressDao = FakeProgressDao(),
+            totalRamBytes = TOTAL_RAM_BYTES,
+            prefs = settings,
+            rendering = settings,
+            appPrefs = settings,
+            bookOpener = FakeBookOpener(),
+        )
+        vm.open(uri("a"))
+        advanceUntilIdle()
+        assertEquals(64L * 1024 * 1024, vm.tileCache.maxBytes().toLong())
+    }
+
+    @Test
+    fun `a cache-size change mid-book resizes the live cache`() = test {
+        val settings = InMemorySettings()
+        val vm = ReaderViewModel(
+            context = ApplicationProvider.getApplicationContext(),
+            progressDao = FakeProgressDao(),
+            totalRamBytes = TOTAL_RAM_BYTES,
+            prefs = settings,
+            rendering = settings,
+            appPrefs = settings,
+            bookOpener = FakeBookOpener(),
+        )
+        vm.open(uri("a"))
+        advanceUntilIdle()
+        val before = vm.tileCache.maxBytes()
+        settings.updateApp { it.copy(cacheSizeMiB = 1024) }
+        advanceUntilIdle()
+        assertEquals(1024L * 1024 * 1024, vm.tileCache.maxBytes().toLong())
+        assertTrue("resize must actually change the budget", before != vm.tileCache.maxBytes())
+    }
+
+    @Test
+    fun `upscaler state does not change identity when only colour changes`() = test {
+        // RenderingPrefs is one data class: a colour edit re-emits a new instance. The
+        // upscaler read must be distinctUntilChanged, or every colour change recomposes
+        // the page slot through it (review finding 1 on #46). Asserted on the flow shape
+        // the composable collects, without a recomposition-counting harness.
+        val settings = InMemorySettings()
+        val emissions = mutableListOf<Upscaler>()
+        val job = launch {
+            settings.renderingPrefs
+                .map { it.upscaler }
+                .distinctUntilChanged()
+                .collect { emissions += it }
+        }
+        advanceUntilIdle() // let the collector start and receive the initial PLATFORM
+        settings.updateRendering { it.copy(colour = ColourParams(brightness = 0.5f)) }
+        settings.updateRendering { it.copy(colour = ColourParams(brightness = -0.5f)) }
+        settings.updateRendering { it.copy(colour = ColourParams(contrast = 2f)) }
+        settings.updateRendering { it.copy(upscaler = Upscaler.LANCZOS) }
+        advanceUntilIdle()
+        job.cancel()
+        // Three colour changes emitted one upscaler value; only the real switch added one.
+        assertEquals(listOf(Upscaler.PLATFORM, Upscaler.LANCZOS), emissions)
     }
 
     private companion object {
