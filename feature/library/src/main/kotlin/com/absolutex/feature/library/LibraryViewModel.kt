@@ -2,7 +2,12 @@ package com.absolutex.feature.library
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.absolutex.core.scan.LibraryChange
+import com.absolutex.core.scan.LibraryWatcher
 import com.absolutex.core.scan.SortKey
+import com.absolutex.core.data.LibraryRepository
+import com.absolutex.core.data.runCatchingCancellable
+import com.absolutex.core.data.settings.AppPrefsSource
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -12,6 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 import javax.inject.Inject
 
 /**
@@ -28,6 +34,8 @@ import javax.inject.Inject
 @HiltViewModel
 internal class LibraryViewModel @Inject constructor(
     private val feed: LibraryFeed,
+    private val repository: LibraryRepository,
+    private val prefs: AppPrefsSource,
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(LibraryUiState.Initial.copy(capabilities = feed.capabilities))
@@ -37,7 +45,55 @@ internal class LibraryViewModel @Inject constructor(
     private var everything: List<LibraryBookUi> = emptyList()
     private var searchJob: Job? = null
 
+    /** Cancels the previous search before launching a new one (§5.1). */
+    private var searchJob: Job? = null
+
     init {
+        // Live library updates (§5.1): filesystem events coalesced by the watcher feed Room,
+        // which re-emits through [LibraryFeed.observeBooks] without a manual rescan.
+        // The collector lives in [viewModelScope] and dies with the screen; a single rescan
+        // job prevents a burst from queuing rescan behind rescan.
+        // The watcher observer: coalesced events feed the repository, which updates Room;
+        // the feed's observeBooks picks up Room changes automatically. A single rescan job
+        // prevents a burst from queuing rescan behind rescan (§5.1 live updates).
+        // SAF tree Uris (content://...) have no filesystem path and cannot be watched by a
+        // File-based watcher. Only file-system locations reach the watcher; SAF trees refresh
+        // through rescan-on-demand rather than live events (§5.1 live updates).
+        viewModelScope.launch {
+            prefs.appPrefs.map { it.locations }.distinctUntilChanged().collectLatest { locations ->
+                val fileRoots = locations.filterNot { it.startsWith("content:") || it.startsWith("android:") }
+                    .mapNotNull { path ->
+                        runCatchingCancellable { File(path) }
+                            .getOrNull()?.takeIf { it.exists() && it.isDirectory }
+                    }
+                fileRoots.forEach { root ->
+                    launch {
+                        LibraryWatcher(roots = listOf(root), debounceMs = LibraryWatcher.DEBOUNCE_MS)
+                            .watch().collect { change ->
+                                val eventPath = (change as? LibraryChange.Added)?.path
+                                    ?: (change as? LibraryChange.Modified)?.path
+                                    ?: (change as? LibraryChange.FolderPromoted)?.path
+                                    ?: (change as? LibraryChange.Removed)?.path
+                                    ?: ""
+                                val eventFile = if (eventPath.isNotEmpty()) {
+                                    runCatchingCancellable { File(eventPath) }.getOrNull()
+                                } else null
+                                val locationRoot = eventFile?.let { file ->
+                                    fileRoots.firstOrNull { r -> file.path.startsWith(r.path) }
+                                        ?: fileRoots.firstOrNull()
+                                }
+                                runCatchingCancellable {
+                                    repository.applyChange(change, locationRoot)
+                                }.onFailure { error ->
+                                    if (error is Exception && error !is kotlinx.coroutines.CancellationException) {
+                                        // Degrades quietly; cancellation propagates through structured concurrency.
+                                    }
+                                }
+                            }
+                    }
+                }
+            }
+        }
         viewModelScope.launch {
             feed.observeBooks()
                 .catch { _ui.update { it.copy(loading = false, error = LibraryNotice.LoadFailed) } }
@@ -105,7 +161,7 @@ internal class LibraryViewModel @Inject constructor(
         val targets = _ui.value.selected
         if (targets.isEmpty()) return
         viewModelScope.launch {
-            val notice = runCatching {
+            val notice = runCatchingCancellable {
                 when (action) {
                     BatchAction.MARK_READ -> feed.setRead(targets, read = true)
                     BatchAction.MARK_UNREAD -> feed.setRead(targets, read = false)
@@ -146,7 +202,7 @@ internal class LibraryViewModel @Inject constructor(
                 return@launch
             }
             if (debounce) delay(SEARCH_DEBOUNCE_MS)
-            runCatching { feed.search(query) }.fold(
+            runCatchingCancellable { feed.search(query) }.fold(
                 onSuccess = { books ->
                     _ui.update { it.copy(allBooks = books, loading = false, error = null).recomputed() }
                 },
