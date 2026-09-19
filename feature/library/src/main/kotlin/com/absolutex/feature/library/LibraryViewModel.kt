@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.absolutex.core.scan.LibraryChange
 import com.absolutex.core.scan.LibraryWatcher
+import android.util.Log
 import com.absolutex.core.scan.SortKey
 import com.absolutex.core.data.LibraryRepository
 import com.absolutex.core.data.runCatchingCancellable
@@ -14,7 +15,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
@@ -31,11 +32,16 @@ import javax.inject.Inject
  * It is the only place that calls [recomputed], which is what keeps a checkbox tap from
  * re-filtering and re-sorting the library.
  */
+private const val TAG = "LibraryViewModel"
+
 @HiltViewModel
 internal class LibraryViewModel @Inject constructor(
     private val feed: LibraryFeed,
     private val repository: LibraryRepository,
     private val prefs: AppPrefsSource,
+    private val watcherFactory: (File) -> kotlinx.coroutines.flow.Flow<LibraryChange> = { root ->
+        LibraryWatcher(roots = listOf(root), debounceMs = LibraryWatcher.DEBOUNCE_MS).watch()
+    },
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(LibraryUiState.Initial.copy(capabilities = feed.capabilities))
@@ -43,9 +49,6 @@ internal class LibraryViewModel @Inject constructor(
 
     /** The unfiltered library, kept so clearing the query does not need a round trip. */
     private var everything: List<LibraryBookUi> = emptyList()
-    private var searchJob: Job? = null
-
-    /** Cancels the previous search before launching a new one (§5.1). */
     private var searchJob: Job? = null
 
     init {
@@ -68,28 +71,16 @@ internal class LibraryViewModel @Inject constructor(
                     }
                 fileRoots.forEach { root ->
                     launch {
-                        LibraryWatcher(roots = listOf(root), debounceMs = LibraryWatcher.DEBOUNCE_MS)
-                            .watch().collect { change ->
-                                val eventPath = (change as? LibraryChange.Added)?.path
-                                    ?: (change as? LibraryChange.Modified)?.path
-                                    ?: (change as? LibraryChange.FolderPromoted)?.path
-                                    ?: (change as? LibraryChange.Removed)?.path
-                                    ?: ""
-                                val eventFile = if (eventPath.isNotEmpty()) {
-                                    runCatchingCancellable { File(eventPath) }.getOrNull()
-                                } else null
-                                val locationRoot = eventFile?.let { file ->
-                                    fileRoots.firstOrNull { r -> file.path.startsWith(r.path) }
-                                        ?: fileRoots.firstOrNull()
-                                }
-                                runCatchingCancellable {
-                                    repository.applyChange(change, locationRoot)
-                                }.onFailure { error ->
-                                    if (error is Exception && error !is kotlinx.coroutines.CancellationException) {
-                                        // Degrades quietly; cancellation propagates through structured concurrency.
-                                    }
+                        watcherFactory(root).collect { change ->
+                            runCatchingCancellable {
+                                repository.applyChange(change, root)
+                            }.onFailure { error ->
+                                if (error is Exception
+                                    && error !is kotlinx.coroutines.CancellationException) {
+                                    Log.w(TAG, "live update failed for $root", error)
                                 }
                             }
+                        }
                     }
                 }
             }
