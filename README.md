@@ -140,6 +140,7 @@ PR body:
 | Factory Droid | library, formats, settings, design, release | `factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>` |
 | Claude Code (Agent05) | cloud sources, offline copies | `Claude Opus 5 <noreply@anthropic.com>` (varies by session) |
 | Claude Code (Agent06) | internationalisation, accessibility, reading insights | `Claude Opus 5 <noreply@anthropic.com>` (varies by session) |
+| Claude Code (Agent07) | review, small fixes | `Agent07 <noreply@anthropic.com>` |
 
 A PR description additionally ends with a `🤖 Generated with ...` line from the tool that
 wrote it. If you review this repository, treat those trailers as the attribution record and
