@@ -2,6 +2,8 @@ package com.absolutex.remote.sync
 
 import android.content.Context
 import androidx.datastore.preferences.preferencesDataStore
+import com.absolutex.remote.core.HttpCall
+import com.absolutex.remote.core.HttpUrlConnectionCall
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn

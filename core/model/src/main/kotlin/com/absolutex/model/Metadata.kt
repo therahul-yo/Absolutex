@@ -80,12 +80,7 @@ data class ParsedName(
                 }
                 if (issue != null) {
                     if (isNotEmpty()) append(' ')
-                    // Render the scanner's own spelling minus its padding: "001" shows as "#1",
-                    // but "10.5" and "1A" keep the form that distinguishes them.
-                    // Strip padding zeros ("001" -> "1") without eating the leading zero of a
-                    // fraction: trimming "0.5" alone leaves ".5".
-                    val shown = issue.raw.trimStart('0').ifEmpty { "0" }
-                    append('#').append(if (shown.startsWith('.')) "0$shown" else shown)
+                    append('#').append(issue.shownSpelling())
                 }
                 if (title != null && title != series) {
                     if (isNotEmpty()) append(" - ")
@@ -93,6 +88,69 @@ data class ParsedName(
                 }
             }.ifBlank { originalFilename }
         }
+
+    /**
+     * [displayName] taken apart, so a UI layer can join the pieces with a localised format
+     * string instead of the English glue this module is stuck with.
+     *
+     * `:core:model` is plain Kotlin/JVM and holds no resources, so it cannot translate "Vol. ",
+     * the "#" before an issue, or the " - " before a title — nor the spaces, which CJK does not
+     * use between a series and its number. Those belong to whichever surface is rendering.
+     *
+     * [displayName] itself is unchanged and stays the label for logs and anything keyed on it.
+     * The two cannot disagree about the filename fallback because this asks [displayName] which
+     * case it is in rather than re-deriving the rule.
+     */
+    val displayParts: DisplayParts
+        get() {
+            // Numbers alone do not identify a book, and a composition that comes out blank is
+            // no better; displayName answers both with the filename, and that is the signal.
+            if (displayName == originalFilename) {
+                return DisplayParts(null, null, null, null, originalFilename)
+            }
+            return DisplayParts(
+                series = series,
+                volume = volume,
+                issue = issue?.shownSpelling(),
+                title = title?.takeIf { it != series },
+                originalFilename = originalFilename,
+            )
+        }
+}
+
+/**
+ * Render the scanner's own spelling minus its padding: "001" shows as "1", while "10.5" and
+ * "1A" keep the form that distinguishes them. The leading zero of a fraction survives, because
+ * trimming "0.5" alone would leave ".5".
+ */
+private fun IssueNumber.shownSpelling(): String {
+    val trimmed = raw.trimStart('0').ifEmpty { "0" }
+    return if (trimmed.startsWith('.')) "0$trimmed" else trimmed
+}
+
+/**
+ * The pieces of a book's label, with none of the English that joins them.
+ *
+ * Every field is already in its rendered form — [issue] carries no "#", [title] is null when it
+ * merely repeats [series] — so a caller formats by substitution alone and never has to re-apply
+ * a rule from this module.
+ */
+data class DisplayParts(
+    val series: String? = null,
+    val volume: Int? = null,
+    /** The issue's rendered spelling without its "#": "1", "10.5", "1A". */
+    val issue: String? = null,
+    /** Null when the parsed title only repeats [series]. */
+    val title: String? = null,
+    /** The name on disk, and the entire label when [isFilenameOnly]. */
+    val originalFilename: String = "",
+) {
+    /**
+     * Nothing parsed identifies this book, so [originalFilename] is the whole label and there
+     * is no format string to apply.
+     */
+    val isFilenameOnly: Boolean
+        get() = series == null && volume == null && issue == null && title == null
 }
 
 /**

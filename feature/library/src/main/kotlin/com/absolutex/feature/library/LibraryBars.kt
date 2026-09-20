@@ -27,6 +27,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import com.absolutex.core.scan.SortKey
+import com.absolutex.core.ui.A11y
 
 @Composable
 internal fun LibrarySearchField(
@@ -47,7 +48,7 @@ internal fun LibrarySearchField(
                 TextButton(
                     onClick = { onQueryChange("") },
                     modifier = Modifier
-                        .heightIn(min = Space.MinTouchTarget)
+                        .heightIn(min = A11y.MinTouchTarget)
                         .semantics { contentDescription = clearLabel },
                 ) { Text("✕") }
             }
@@ -68,7 +69,7 @@ internal fun SortControl(sort: SortSpec, onSortChange: (SortKey) -> Unit, modifi
     Row(modifier = modifier) {
         TextButton(
             onClick = { open = true },
-            modifier = Modifier.heightIn(min = Space.MinTouchTarget),
+            modifier = Modifier.heightIn(min = A11y.MinTouchTarget),
         ) { Text(label) }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             SortKey.entries.forEach { key ->
@@ -101,7 +102,7 @@ internal fun LayoutControl(
     Row(modifier = modifier) {
         TextButton(
             onClick = { open = true },
-            modifier = Modifier.heightIn(min = Space.MinTouchTarget),
+            modifier = Modifier.heightIn(min = A11y.MinTouchTarget),
         ) { Text("${stringResource(R.string.library_layout)}: ${layout.label()}") }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             BrowseLayout.entries.forEach { option ->
@@ -137,13 +138,13 @@ internal fun GridColumnControl(
         TextButton(
             onClick = { onColumns(landscape, columns - 1) },
             enabled = columns > GridSpec.MIN_COLUMNS,
-            modifier = Modifier.heightIn(min = Space.MinTouchTarget),
+            modifier = Modifier.heightIn(min = A11y.MinTouchTarget),
         ) { Text(stringResource(R.string.library_grid_fewer)) }
         Text(stringResource(R.string.library_grid_columns, columns))
         TextButton(
             onClick = { onColumns(landscape, columns + 1) },
             enabled = columns < GridSpec.MAX_COLUMNS,
-            modifier = Modifier.heightIn(min = Space.MinTouchTarget),
+            modifier = Modifier.heightIn(min = A11y.MinTouchTarget),
         ) { Text(stringResource(R.string.library_grid_more)) }
     }
 }
@@ -188,7 +189,7 @@ internal fun SelectionBar(
             TextButton(
                 onClick = actions.onSelectAll,
                 modifier = Modifier
-                    .heightIn(min = Space.MinTouchTarget)
+                    .heightIn(min = A11y.MinTouchTarget)
                     .semantics { contentDescription = selectAllLabel },
             ) {
                 Text(stringResource(R.string.library_selection_select_all_short))
@@ -200,7 +201,7 @@ internal fun SelectionBar(
             TextButton(
                 onClick = actions.onClearSelection,
                 modifier = Modifier
-                    .heightIn(min = Space.MinTouchTarget)
+                    .heightIn(min = A11y.MinTouchTarget)
                     .semantics { contentDescription = clearLabel },
             ) { Text("✕") }
         }
@@ -216,7 +217,7 @@ private fun SelectionActions(state: LibraryUiState, actions: LibraryActions) {
             onClick = { open = true },
             // §7: the glyph is decoration; this is what TalkBack announces.
             modifier = Modifier
-                .heightIn(min = Space.MinTouchTarget)
+                .heightIn(min = A11y.MinTouchTarget)
                 .semantics { contentDescription = label },
         ) { Text("⋮") }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {

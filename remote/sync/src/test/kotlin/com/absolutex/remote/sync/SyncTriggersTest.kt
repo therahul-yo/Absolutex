@@ -3,12 +3,16 @@ package com.absolutex.remote.sync
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import com.absolutex.core.data.ProgressDao
 import com.absolutex.core.data.ReadingProgress
+import com.absolutex.remote.core.HttpCall
+import com.absolutex.remote.core.HttpResponse
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -22,6 +26,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Controller triggers over a scripted transport: background push, late-pull offers, and the
@@ -206,5 +211,58 @@ class SyncTriggersTest {
         val adopted = dao.get(bookA)!!
         assertEquals(5, adopted.pageIndex)
         assertEquals(Instant.parse(stamp).toEpochMilli(), adopted.updatedAt)
+    }
+
+    @Test fun `concurrent full passes never overlap on the wire`() = runTest {
+        // The run mutex serialises drain+pull passes: two manual syncs race the same
+        // three-call pull, and the fake holds each call 200 ms so any overlap would
+        // show as two in flight. Without the mutex this fails with peak == 2.
+        val fake = FakeHttpCall()
+        val peakHttp = PeakHttp(fake)
+        jobs = mutableListOf()
+        val dao = FakeProgressDao()
+        val stores = RemoteServers(dataStore("servers.preferences_pb"))
+        stores.save(KomgaServer(id = "srv", baseUrl = "http://srv:8080", allowCleartext = true, username = "u"))
+        val secrets = SyncSecrets(InMemoryCredentialStore())
+        secrets.savePassword("srv", "pw".toCharArray())
+        val queue = SyncQueue(dataStore("queue.preferences_pb"))
+        val controller = SyncController(dao, stores, secrets, queue, peakHttp, ServerClock())
+        dao.upsert(local(bookA, 9, 1_800_000_000_000L))
+        repeat(2) {
+            enqueueBook(fake, "b1", "Batman 001.cbz", 2000, 5, "2026-09-02T12:00:00Z")
+        }
+        val first = launch { controller.onManualSync() }
+        peakHttp.entered.await()
+        val second = launch { controller.onManualSync() }
+        first.join()
+        second.join()
+        assertEquals(6, fake.requests.size)
+        assertEquals(1, peakHttp.peak.get())
+    }
+
+    private class PeakHttp(private val fake: FakeHttpCall) : HttpCall by fake {
+        val live = AtomicInteger(0)
+        val peak = AtomicInteger(0)
+        val entered = CompletableDeferred<Unit>()
+
+        override fun request(
+            method: String,
+            url: String,
+            headers: Map<String, String>,
+            body: String?,
+        ): HttpResponse {
+            val now = live.incrementAndGet()
+            peak.accumulateAndGet(now) { a, b -> maxOf(a, b) }
+            entered.complete(Unit)
+            try {
+                // Each call holds the wire long enough that a concurrent pass would
+                // overlap it: 200 ms dwarfs launch+drain jitter (~ms). Real sleep, not
+                // virtual — this fake runs on Dispatchers.IO, outside the test scheduler.
+                Thread.sleep(200)
+                return fake.request(method, url, headers, body)
+            } finally {
+                live.decrementAndGet()
+            }
+        }
     }
 }

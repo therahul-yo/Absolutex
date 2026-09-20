@@ -179,4 +179,17 @@ fun AboutRow(modifier: Modifier = Modifier) {
     )
 }
 
+/** Open-source licences screen (§5.1 release blocker): positive attribution statements required. */
+@Composable
+fun OpenSourceLicencesRow(modifier: Modifier = Modifier) {
+    // Positive attribution for libjpeg-turbo (IJG) and FreeType (FTL) — both triggered by
+    // binary-only distribution (§5.1). The text is read from the vendored licences file.
+    val attribution = stringResource(R.string.licences_attribution)
+    ListItem(
+        headlineContent = { Text(stringResource(R.string.licences_title)) },
+        supportingContent = { Text(attribution) },
+        modifier = modifier,
+    )
+}
+
 

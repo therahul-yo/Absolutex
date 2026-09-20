@@ -27,19 +27,17 @@ fun browseRoute(serverId: String, path: String? = null): String {
 }
 
 /**
- * Remote servers destination for the app-level NavHost.
+ * Remote servers destination for the app-level NavHost. Wired in MainActivity next to
+ * `settingsDestination()`; the settings row that navigates to [REMOTE_LIST_ROUTE] is
+ * Agent03's screen to add:
  *
- * TODO(agent3): attach from the app graph with `remoteDestination()` inside the NavHost
- * builder in MainActivity, next to `settingsDestination()`. Pass `onOpenForm = { id ->
- * nav.navigate(if (id == null) "remote/form" else "remote/form?serverId=$id") }` and
- * `onFormDone = { nav.popBackStack() }`; back navigation otherwise stays the host's
- * concern. Also add `implementation(project(":feature:remote"))` to app/build.gradle.kts —
- * that dependency is what ships the transports, so report the APK delta and re-arm the
- * baseline with the user when you do. Do not edit MainActivity or the NavHost from this lane.
+ * TODO(agent3): add a "Remote servers" row to the settings screen navigating to
+ * `REMOTE_LIST_ROUTE` ("remote"). The list and form destinations below own everything
+ * past that navigation; back stays the host's concern.
  *
  * Browse opens a book by navigating the host to `"reader/" + Uri.encode(remoteUri)` —
- * Agent01 owns that `absolutex-remote://` routing in the reader, so pass an `onOpenBook`
- * that does exactly that navigate and nothing else.
+ * that `absolutex-remote://` routing in the reader is lead/reader-remote-routing, so
+ * pass an `onOpenBook` that does exactly that navigate and nothing else.
  */
 fun NavGraphBuilder.remoteDestination(
     onOpenForm: (String?) -> Unit = {},
