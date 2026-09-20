@@ -41,18 +41,28 @@ class PrefetchEngineTest {
 
         suspend fun decode(page: Int): DecodeOutcome {
             started += page
-            if (page in oomPages) return DecodeOutcome.OutOfMemory
-            if (page in unreadablePages) return DecodeOutcome.Unreadable
-            if (autoComplete) return DecodeOutcome.Decoded(FAKE_IMAGE)
+            val early: DecodeOutcome? = when {
+                page in oomPages -> DecodeOutcome.OutOfMemory
+                page in unreadablePages -> DecodeOutcome.Unreadable
+                autoComplete -> DecodeOutcome.Decoded(FAKE_IMAGE)
+                else -> null
+            }
+            if (early != null) return early
+            return parkAndDecode(page)
+        }
+
+        /**
+         * Parks on the page's gate, then reports Decoded. The non-cancellable variant
+         * models the real decoder: a blocking native call does not observe the job's
+         * cancellation until it returns, so withContext(NonCancellable) keeps the gate
+         * await running to completion even under cancel().
+         */
+        private suspend fun parkAndDecode(page: Int): DecodeOutcome {
+            val gate = gates.getOrPut(page) { CompletableDeferred() }
             if (page in nonCancellablePages) {
-                // Models the real decoder: a blocking native call does not observe the
-                // job's cancellation until it returns. withContext(NonCancellable) keeps
-                // the gate await running to completion even under cancel().
-                val gate = gates.getOrPut(page) { CompletableDeferred() }
                 withContext(kotlinx.coroutines.NonCancellable) { gate.await() }
                 return DecodeOutcome.Decoded(FAKE_IMAGE)
             }
-            val gate = gates.getOrPut(page) { CompletableDeferred() }
             try {
                 gate.await()
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -144,9 +154,11 @@ class PrefetchEngineTest {
             h.tileBytes.set((page * 1_000L).coerceAtMost(200_000))
             h.engine.onSettled(page, 200, PageLayout.SINGLE, depth = 5)
             advanceUntilIdle()
+            val tiles = h.tileBytes.get()
+            val resident = h.engine.residentBytes
             assertTrue(
-                "budget blown at page $page: tiles=${h.tileBytes.get()} resident=${h.engine.residentBytes} budget=${h.budget.get()}",
-                h.tileBytes.get() + h.engine.residentBytes <= h.budget.get(),
+                "budget blown at page $page: tiles=$tiles resident=$resident budget=${h.budget.get()}",
+                tiles + resident <= h.budget.get(),
             )
         }
     }

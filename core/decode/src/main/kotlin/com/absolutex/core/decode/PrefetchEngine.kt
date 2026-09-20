@@ -85,7 +85,8 @@ class PrefetchEngine(
     /** A settle: update direction, cancel behind-work, restore the budget, plan ahead. */
     fun onSettled(page: Int, pageCount: Int, layout: PageLayout, depth: Int) {
         if (page == settled) return
-        direction = if (settled < 0) 0 else (page - settled).sign().takeIf { it != 0 } ?: direction
+        val step = (page - settled).let { kotlin.math.sign(it.toFloat()).toInt() }
+        direction = if (settled < 0) 0 else step.takeIf { it != 0 } ?: direction
         settled = page
         batchStopped = false // a new settle is a new batch: pressure may have passed
         cancelBehind()
@@ -221,9 +222,4 @@ class PrefetchEngine(
         synchronized(resident) { resident.clear() }
     }
 
-    private fun Int.sign(): Int = when {
-        this > 0 -> 1
-        this < 0 -> -1
-        else -> 0
-    }
 }

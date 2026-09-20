@@ -1,6 +1,8 @@
 package com.absolutex.core.decode
 
 import java.io.IOException
+import java.util.logging.Level
+import java.util.logging.Logger
 
 /**
  * Classifies one decode attempt into a [DecodeOutcome], catching narrowly at the boundary
@@ -31,10 +33,20 @@ object DecodeClassifier {
             else -> DecodeOutcome.Decoded(image)
         }
     } catch (e: OutOfMemoryError) {
+        // The cause is the resource event itself; the message can carry heap detail worth
+        // having in the log when diagnosing pressure, so log rather than drop it.
+        LOG.log(Level.WARNING, "decode allocation failed", e)
         DecodeOutcome.OutOfMemory
     } catch (e: IOException) {
+        // Corrupt or truncated input; the page-level failure path owns the user-facing
+        // string, the log keeps the cause.
+        LOG.log(Level.INFO, "decode unreadable", e)
         DecodeOutcome.Unreadable
     } catch (e: IllegalArgumentException) {
+        // The decoder rejecting the format; same page-level path as above.
+        LOG.log(Level.INFO, "decode rejected input", e)
         DecodeOutcome.Unreadable
     }
+
+    private val LOG = Logger.getLogger(DecodeClassifier::class.java.name)
 }
