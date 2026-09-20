@@ -1,5 +1,6 @@
 package com.absolutex.core.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Entity
 import androidx.room.Index
@@ -38,6 +39,9 @@ data class LibraryBook(
     val addedAt: Long,
     /** Bumped by each scan; rows from an older scan are gone from disk. See [deleteStaleIn]. */
     val seenAtScan: Long,
+    /** §5.1 favourites shelf: user-toggled flag with SQLite default so existing rows survive. */
+    @ColumnInfo(defaultValue = "0")
+    val isFavorite: Boolean = false,
 )
 
 /** Just the columns the upsert has to preserve across a rescan. */

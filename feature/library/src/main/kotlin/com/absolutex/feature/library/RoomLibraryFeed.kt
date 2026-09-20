@@ -35,9 +35,11 @@ internal class RoomLibraryFeed @Inject constructor(
 ) : LibraryFeed {
 
     override val capabilities = LibraryCapabilities(
-        // Nothing stores a favourite: no column, no table, no preference. See setFavorite.
-        canFavorite = false,
+        // Favourites column exists (§5.1): user-toggled flag survives scans.
+        canFavorite = true,
         canMarkRead = true,
+        canDelete = false,
+    )
         // No repository delete exists, and inventing one that removes a user's files from disk
         // is not a call this lane should make. See delete.
         canDelete = false,
@@ -67,8 +69,19 @@ internal class RoomLibraryFeed @Inject constructor(
             .map { it.toUi(progress, prefs.useOriginalFilename) }
     }
 
-    override suspend fun setFavorite(paths: Set<String>, favorite: Boolean): LibraryNotice =
-        LibraryNotice.BatchUnsupported(UnsupportedReason.FAVOURITES_STORE_MISSING)
+    override suspend fun setFavorite(paths: Set<String>, favorite: Boolean): LibraryNotice {
+        val byPath = repository.observeLibrary().first().associateBy { it.path }
+        val books = paths.mapNotNull { byPath[it] }
+        if (books.isEmpty()) return LibraryNotice.BatchApplied(count = 0, skipped = paths.size)
+        // Update Room rows directly: the column carries DEFAULT 0 (§5.1 favourites).
+        books.forEach { book ->
+            repository.upsertFavorite(book.path, favorite)
+        }
+        return LibraryNotice.BatchApplied(
+            count = books.size,
+            skipped = paths.size - books.size,
+        )
+    }
 
     /**
      * Marks a selection read, or clears its position.
