@@ -9,6 +9,29 @@
 | `check-startup-budget.py` | Enforces the §3 300 ms P90 cold-start budget against Macrobenchmark JSON. Macrobenchmark has no assertion API, so the gate lives here. |
 | `run-benchmark.sh` | Drives the Macrobenchmarks through `am instrument`, keeping the app installed so the staged corpus survives between runs. |
 
+## Proving a checker actually checks
+
+Every gate in this directory is asserted by mutating it and watching the assertion fail. Two
+traps have caught us more than once, both of which make a broken checker look like a working
+one:
+
+**A mutant cannot die in a path the probe never executes.** Break a rule, run the tests, and if
+they still pass the usual conclusion — "the mutation was harmless" — is usually wrong. More
+often the fixture never reached the mutated line. The `%%` case in `check-translations.py` had
+the same literal on both sides of the comparison, so miscounting it cancelled out; the
+regional-locale fallback had no fixture using a regional locale at all; `pagesPerDay`'s
+distinctness survived a mutation that replaced the page number with a different *deterministic
+function* of the page number, which still collapsed duplicates. In each case the fix was a new
+fixture that exercises the line, not a shrug.
+
+**A mutation has to be able to fail.** Before concluding a rule is untested, check the mutation
+actually changes behaviour for the input at hand. Writing one that does not is easy, and it
+looks exactly like a gap in coverage.
+
+And when checking a gate's exit code from a shell, remember `$?` after a pipeline is the *last*
+command's status. `tool | grep foo; echo $?` reports grep's verdict, not the tool's, so a gate
+that correctly exited 1 reads as 0. Use `${PIPESTATUS[0]}`, or run it without the pipe.
+
 ## `check-strings.py` — no new hardcoded strings (i18n milestone 1)
 
 A string that never reaches `strings.xml` cannot be translated, and it is invisible in

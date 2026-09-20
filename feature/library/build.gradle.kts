@@ -13,6 +13,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
     kotlin { jvmToolchain(21) }
+    // Robolectric reads this module's own strings now that a label resolves one (formatSize's
+    // unknown-size dash), the same way core:data, core:gpu, feature:reader and the widget do.
+    testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 dependencies {
     implementation(project(":core:model"))
