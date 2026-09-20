@@ -1,5 +1,6 @@
 package com.absolutex.core.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Entity
 import androidx.room.Index
@@ -38,10 +39,13 @@ data class LibraryBook(
     val addedAt: Long,
     /** Bumped by each scan; rows from an older scan are gone from disk. See [deleteStaleIn]. */
     val seenAtScan: Long,
+    /** §5.1 favourites shelf: user-toggled flag that survives scans. */
+    @ColumnInfo(defaultValue = "0")
+    val isFavorite: Boolean = false,
 )
 
 /** Just the columns the upsert has to preserve across a rescan. */
-data class BookOrigin(val path: String, val addedAt: Long)
+data class BookOrigin(val path: String, val addedAt: Long, val isFavorite: Boolean)
 
 @Dao
 interface LibraryDao {
@@ -49,21 +53,27 @@ interface LibraryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(books: List<LibraryBook>)
 
-    @Query("SELECT path, addedAt FROM library_book WHERE path IN (:paths)")
+    @Query("SELECT path, addedAt, isFavorite FROM library_book WHERE path IN (:paths)")
     suspend fun originsOf(paths: List<String>): List<BookOrigin>
 
     /**
      * Upsert that keeps [LibraryBook.addedAt] from the row already on disk.
      *
      * REPLACE deletes and reinserts, so a plain upsert resets addedAt on every scan and
-     * "recently added" would show the whole library after any rescan. Everything else about a
-     * book is re-derived from disk and should be overwritten; when it first appeared cannot be.
+     * "recently added" would show the whole library after any rescan. [LibraryBook.isFavorite]
+     * is the same shape of problem: the user set it, so no scan may clear it. Everything else
+     * about a book is re-derived from disk and should be overwritten.
      */
     @Transaction
     suspend fun upsertPreservingAddedAt(books: List<LibraryBook>) {
         if (books.isEmpty()) return
-        val original = originsOf(books.map { it.path }).associate { it.path to it.addedAt }
-        upsertAll(books.map { book -> original[book.path]?.let { book.copy(addedAt = it) } ?: book })
+        val original = originsOf(books.map { it.path }).associateBy { it.path }
+        upsertAll(
+            books.map { book ->
+                val kept = original[book.path] ?: return@map book
+                book.copy(addedAt = kept.addedAt, isFavorite = kept.isFavorite)
+            },
+        )
     }
 
     @Query("SELECT * FROM library_book ORDER BY series IS NULL, series, issue")
@@ -74,9 +84,6 @@ interface LibraryDao {
 
     @Query("SELECT * FROM library_book WHERE series = :series ORDER BY issue")
     suspend fun booksInSeries(series: String): List<LibraryBook>
-
-    @Query("SELECT COUNT(*) FROM library_book")
-    suspend fun count(): Int
 
     /**
      * Instant-as-you-type search (§5.1). LIKE with a leading wildcard cannot use an index, but at
@@ -113,6 +120,9 @@ interface LibraryDao {
      */
     @Query("DELETE FROM library_book WHERE seenAtScan < :scanId AND path LIKE :pathPrefix || '%'")
     suspend fun deleteStaleIn(pathPrefix: String, scanId: Long): Int
+
+    @Query("UPDATE library_book SET isFavorite = :favorite WHERE path = :path")
+    suspend fun updateFavorite(path: String, favorite: Boolean): Int
 
     @Query("DELETE FROM library_book")
     suspend fun clear()

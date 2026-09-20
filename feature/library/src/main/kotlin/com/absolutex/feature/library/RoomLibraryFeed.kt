@@ -6,10 +6,12 @@ import com.absolutex.core.data.LibraryRepository
 import com.absolutex.core.data.ProgressDao
 import com.absolutex.core.data.ReadingProgress
 import com.absolutex.core.data.settings.AppPrefsSource
+import com.absolutex.core.scan.LibraryChange
 import com.absolutex.model.IssueNumber
 import com.absolutex.model.ParsedName
 import dagger.Binds
 import dagger.Module
+import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +20,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -162,4 +165,15 @@ internal abstract class LibraryFeedModule {
      */
     @Binds
     abstract fun bindLibraryFeed(impl: RoomLibraryFeed): LibraryFeed
+
+    companion object {
+        /**
+         * Dagger calls [LibraryViewModel]'s constructor with every argument explicit — it never
+         * sees Kotlin default values — so `watcherFactory` needs a real binding here too, or the
+         * app fails to build with a missing-binding error. [defaultWatcherFactory] is the same
+         * implementation the constructor's default uses for plain (non-Hilt) callers.
+         */
+        @Provides
+        fun provideWatcherFactory(): @JvmSuppressWildcards (File) -> Flow<LibraryChange> = defaultWatcherFactory()
+    }
 }

@@ -163,6 +163,11 @@ class LibraryRepository internal constructor(
         return ChangeResult.Upserted(path = path)
     }
 
+    /** Updates the favourites flag for a single book path (§5.1 favourites shelf). */
+    suspend fun upsertFavorite(path: String, favorite: Boolean) {
+        dao.updateFavorite(path, favorite)
+    }
+
     private fun ScannedBook.toEntity(scanId: Long) = LibraryBook(
         path = path,
         // Identity for cross-location deduplication (§5.1) and for joining reading progress,

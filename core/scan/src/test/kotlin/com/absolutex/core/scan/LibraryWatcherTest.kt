@@ -1,5 +1,6 @@
 package com.absolutex.core.scan
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,7 +21,6 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardWatchEventKinds
-import java.util.concurrent.CompletableDeferred
 
 class LibraryWatcherTest {
 
@@ -64,7 +64,9 @@ class LibraryWatcherTest {
         return try {
             withTimeout(timeoutMs) { deferred.await() }
         } catch (_: Exception) {
-            fail(message)
+            // fail() always throws AssertionError; spelling it out gives this branch type
+            // Nothing, which is what makes the try/catch expression typecheck as LibraryChange.
+            throw AssertionError(message)
         }
     }
 
