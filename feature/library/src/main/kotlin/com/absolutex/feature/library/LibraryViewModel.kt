@@ -2,16 +2,29 @@ package com.absolutex.feature.library
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.absolutex.core.scan.LibraryChange
+import com.absolutex.core.scan.LibraryWatcher
+import android.util.Log
 import com.absolutex.core.scan.SortKey
+import com.absolutex.core.data.LibraryRepository
+import com.absolutex.core.data.runCatchingCancellable
+import com.absolutex.core.data.settings.AppPrefsSource
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 import javax.inject.Inject
 
 /**
@@ -25,9 +38,23 @@ import javax.inject.Inject
  * It is the only place that calls [recomputed], which is what keeps a checkbox tap from
  * re-filtering and re-sorting the library.
  */
+private const val TAG = "LibraryViewModel"
+
+/**
+ * The real watcher factory, shared by the constructor's default (for plain Kotlin callers, tests
+ * included) and [LibraryFeedModule]'s `@Provides` (for Hilt, which calls the constructor with
+ * every argument and never sees a Kotlin default) — one implementation, not two to keep in sync.
+ */
+internal fun defaultWatcherFactory(): (File) -> Flow<LibraryChange> = { root ->
+    LibraryWatcher(roots = listOf(root), debounceMs = LibraryWatcher.DEBOUNCE_MS).watch()
+}
+
 @HiltViewModel
 internal class LibraryViewModel @Inject constructor(
     private val feed: LibraryFeed,
+    private val repository: LibraryRepository,
+    private val prefs: AppPrefsSource,
+    private val watcherFactory: @JvmSuppressWildcards (File) -> Flow<LibraryChange> = defaultWatcherFactory(),
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(LibraryUiState.Initial.copy(capabilities = feed.capabilities))
@@ -38,6 +65,52 @@ internal class LibraryViewModel @Inject constructor(
     private var searchJob: Job? = null
 
     init {
+        // Live library updates (§5.1): filesystem events coalesced by the watcher feed Room,
+        // which re-emits through [LibraryFeed.observeBooks] without a manual rescan.
+        // The collector lives in [viewModelScope] and dies with the screen; a single rescan
+        // job prevents a burst from queuing rescan behind rescan.
+        // The watcher observer: coalesced events feed the repository, which updates Room;
+        // the feed's observeBooks picks up Room changes automatically. A single rescan job
+        // prevents a burst from queuing rescan behind rescan (§5.1 live updates).
+        // SAF tree Uris (content://...) have no filesystem path and cannot be watched by a
+        // File-based watcher. Only file-system locations reach the watcher; SAF trees refresh
+        // through rescan-on-demand rather than live events (§5.1 live updates).
+        //
+        // watchRoot is local, not a member: one non-cancellation failure must not end live
+        // updates for the rest of the session, so a failure is logged and the loop keeps
+        // collecting — a single bad event (a transient I/O error, say) does not take the
+        // watcher down with it.
+        suspend fun watchRoot(root: File) {
+            watcherFactory(root).collect { change ->
+                runCatchingCancellable {
+                    repository.applyChange(change, root)
+                }.onFailure { error ->
+                    if (error is Exception && error !is CancellationException) {
+                        Log.w(TAG, "live update failed for $root", error)
+                    }
+                }
+            }
+        }
+        viewModelScope.launch {
+            prefs.appPrefs.map { it.locations }.distinctUntilChanged().collectLatest { locations ->
+                val fileRoots = locations.filterNot { it.startsWith("content:") || it.startsWith("android:") }
+                    .mapNotNull { path ->
+                        runCatchingCancellable { File(path) }
+                            .getOrNull()?.takeIf { it.exists() && it.isDirectory }
+                    }
+                // coroutineScope, not a bare launch per root: a bare launch here has no receiver
+                // of its own, so it would resolve to the outer viewModelScope.launch above and
+                // outlive collectLatest's per-emission cancellation. Nesting the per-root
+                // launches inside this coroutineScope makes them children of the action lambda
+                // collectLatest actually cancels, so a locations change tears the old watchers
+                // down instead of letting them accumulate.
+                coroutineScope {
+                    fileRoots.forEach { root ->
+                        launch { watchRoot(root) }
+                    }
+                }
+            }
+        }
         viewModelScope.launch {
             feed.observeBooks()
                 .catch { _ui.update { it.copy(loading = false, error = LibraryNotice.LoadFailed) } }
@@ -105,7 +178,7 @@ internal class LibraryViewModel @Inject constructor(
         val targets = _ui.value.selected
         if (targets.isEmpty()) return
         viewModelScope.launch {
-            val notice = runCatching {
+            val notice = runCatchingCancellable {
                 when (action) {
                     BatchAction.MARK_READ -> feed.setRead(targets, read = true)
                     BatchAction.MARK_UNREAD -> feed.setRead(targets, read = false)
@@ -146,7 +219,7 @@ internal class LibraryViewModel @Inject constructor(
                 return@launch
             }
             if (debounce) delay(SEARCH_DEBOUNCE_MS)
-            runCatching { feed.search(query) }.fold(
+            runCatchingCancellable { feed.search(query) }.fold(
                 onSuccess = { books ->
                     _ui.update { it.copy(allBooks = books, loading = false, error = null).recomputed() }
                 },

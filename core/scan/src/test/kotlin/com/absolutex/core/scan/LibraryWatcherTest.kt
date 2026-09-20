@@ -1,5 +1,6 @@
 package com.absolutex.core.scan
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -27,7 +28,10 @@ class LibraryWatcherTest {
 
     // Filesystem delivery is environment-paced (polling on macOS, inotify on Linux CI), so every
     // wait here is a generous liveness bound with polling asserts — never a timing assertion.
+    // Tests await signals (event arrival) rather than delay() against a real clock.
     private val liveTimeoutMs = 15_000L
+    // A generous window for cases that genuinely need to prove nothing happened (overflow,
+    // silence). Shortening it increases flake rate on loaded CI runners rather than reducing it.
     private val quietMs = 5_000L
 
     private fun write(path: String, bytes: Int = 32): File {
@@ -51,10 +55,25 @@ class LibraryWatcherTest {
         fun snapshot(): List<LibraryChange> = synchronized(events) { events.toList() }
     }
 
+    /** Awaits a signal (CompletableDeferred completed by the sink) rather than polling a real clock. */
+    private suspend fun awaitSignal(
+        timeoutMs: Long,
+        message: String,
+        deferred: CompletableDeferred<LibraryChange>,
+    ): LibraryChange {
+        return try {
+            withTimeout(timeoutMs) { deferred.await() }
+        } catch (_: Exception) {
+            // fail() always throws AssertionError; spelling it out gives this branch type
+            // Nothing, which is what makes the try/catch expression typecheck as LibraryChange.
+            throw AssertionError(message)
+        }
+    }
+
     private fun awaitTrue(timeoutMs: Long, message: String, condition: () -> Boolean) {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (!condition()) {
-            if (System.currentTimeMillis() > deadline) fail("$message")
+            if (System.currentTimeMillis() > deadline) fail(message)
             Thread.sleep(50)
         }
     }

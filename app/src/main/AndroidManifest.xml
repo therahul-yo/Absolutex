@@ -33,9 +33,26 @@
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="file" />
-                <data android:scheme="content" />
-                <data android:mimeType="*/*" />
+                <!-- host="*" is required once this filter also carries pathPattern data tags
+                     below: lint's AppLinkUrlError treats a path pattern with no host as broken,
+                     even for a local file/content scheme that has no real authority segment. -->
+                <data android:scheme="file" android:host="*" />
+                <data android:scheme="content" android:host="*" />
+                <!-- Types Absolutex actually opens (§5.1 file monitoring):
+                     comic archives (CBZ/CBR), PDFs, and ZIP containers.
+                     Each entry below is kept narrow so the app does not
+                     declare itself as a handler for every MIME type on
+                     the device (previous */* was too broad). -->
+                <data android:mimeType="application/vnd.comicbook+zip" />
+                <data android:mimeType="application/vnd.comicbook-rar" />
+                <data android:mimeType="application/x-cbz" />
+                <data android:mimeType="application/x-cbr" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/pdf" />
+                <!-- Extension filters for SAF tree picks where MIME isn't set. -->
+                <data android:pathPattern=".*\\.cbz" />
+                <data android:pathPattern=".*\\.cbr" />
+                <data android:pathPattern=".*\\.cb7" />
             </intent-filter>
         </activity>
 
