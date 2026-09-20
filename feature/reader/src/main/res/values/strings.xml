@@ -10,6 +10,10 @@
     <!-- Reader chrome. The indicator is 1-based: page 1 of 45, not 0 of 44. -->
     <string name="reader_page_indicator">%1$d / %2$d</string>
     <string name="reader_page_indicator_desc">Page %1$d of %2$d</string>
+    <!-- Same page, when it is bookmarked. A separate sentence rather than the one above
+         plus ", bookmarked", so a translation can put the state where its language
+         wants it instead of always last. -->
+    <string name="reader_page_indicator_desc_bookmarked">Page %1$d of %2$d, bookmarked</string>
     <string name="reader_seek_desc">Jump to a page</string>
     <string name="reader_close">Close</string>
     <string name="reader_settings">Settings</string>
