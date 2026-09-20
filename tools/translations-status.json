@@ -1,0 +1,145 @@
+{
+  "_comment": [
+    "Review state for every locale Absolutex ships or plans to ship.",
+    "",
+    "Only facts a person supplies are recorded here. A locale's state (planned / draft /",
+    "reviewed), its coverage, and whether its review has gone stale are all COMPUTED by",
+    "tools/check-translations.py from the files themselves — a recorded percentage is wrong",
+    "the moment English gains a string, and a file that can lie about itself is worse than",
+    "no file.",
+    "",
+    "The rule this enables: a locale does not enter locales_config.xml until it has a named",
+    "reviewer here. Until then its translations can sit in the tree, be checked for",
+    "well-formedness, and never be offered to a user. 'en' is the source language, not a",
+    "translation, and is exempt.",
+    "",
+    "reviewer          who vouched for this translation, by name. null means nobody yet.",
+    "reviewed_at       ISO date of that review.",
+    "reviewed_against  what was reviewed: the commit, and a digest of the English strings",
+    "                  at that moment. The digest is what makes staleness checkable without",
+    "                  git — it changes only when English strings actually change.",
+    "notes             free text for whoever reads this next."
+  ],
+  "locales": {
+    "en": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Source language. Not a translation, so it needs no reviewer to ship."
+    },
+    "ar": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Arabic. Planned for milestone 5; no strings yet."
+    },
+    "de": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "German. Planned for milestone 5; no strings yet."
+    },
+    "el": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Greek. Planned for milestone 5; no strings yet."
+    },
+    "es": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Spanish. Planned for milestone 5; no strings yet."
+    },
+    "fr": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "French. Planned for milestone 5; no strings yet."
+    },
+    "he": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Hebrew. Planned for milestone 5; no strings yet."
+    },
+    "hi": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Hindi. Planned for milestone 5; no strings yet."
+    },
+    "id": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Indonesian. Planned for milestone 5; no strings yet."
+    },
+    "it": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Italian. Planned for milestone 5; no strings yet."
+    },
+    "ja": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Japanese. Planned for milestone 5; no strings yet."
+    },
+    "ko": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Korean. Planned for milestone 5; no strings yet."
+    },
+    "nl": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Dutch. Planned for milestone 5; no strings yet."
+    },
+    "pl": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Polish. Planned for milestone 5; no strings yet."
+    },
+    "pt": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Portuguese. Planned for milestone 5; no strings yet."
+    },
+    "ru": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Russian. Planned for milestone 5; no strings yet."
+    },
+    "th": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Thai. Planned for milestone 5; no strings yet."
+    },
+    "tr": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Turkish. Planned for milestone 5; no strings yet."
+    },
+    "vi": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Vietnamese. Planned for milestone 5; no strings yet."
+    },
+    "zh-Hans": {
+      "reviewer": null,
+      "reviewed_at": null,
+      "reviewed_against": null,
+      "notes": "Chinese (Simplified). Planned for milestone 5; no strings yet."
+    }
+  }
+}

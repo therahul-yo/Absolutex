@@ -84,8 +84,9 @@ dependencies {
     // trigger call sites fire — no work starts from the dependency alone.
     implementation(project(":remote:sync"))
     // Remote file access (milestone 5): the servers UI plus the transports it tests and
-    // opens. First time smbj and commons-net enter the release APK — see the size note
-    // in the wiring PR; the ceiling decision belongs to the lead, not this dependency.
+    // opens, and the RemoteModule binding ReaderViewModel now injects to open a remote book.
+    // First time smbj and commons-net enter the release APK — see the size note in the
+    // wiring PR; the ceiling decision belongs to the lead, not this dependency.
     implementation(project(":feature:remote"))
     implementation(project(":remote:core"))
     implementation(project(":remote:smb"))
