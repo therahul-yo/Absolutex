@@ -4,7 +4,7 @@
 |---|---|
 | `make-corpus.py` | Generates the §8 hostile test corpus. Below. |
 | `check-strings.py` | Fails on **new** hardcoded user-visible strings in the UI modules. Pure stdlib, no Gradle, no SDK. Below. |
-| `check-translations.py` | Fails on a *present* translation that disagrees with English — placeholders, plural forms, stale keys. Pure stdlib. Below. |
+| `check-translations.py` | Fails on a *present* translation that disagrees with English — placeholders, plural forms, stale keys — and on a locale shipping without a named reviewer. Pure stdlib. Below. |
 | `check-apk-size.py` | Breaks the release APK down by category and fails on a size regression. Run by CI; see `.github/workflows/README.md`. |
 | `check-startup-budget.py` | Enforces the §3 300 ms P90 cold-start budget against Macrobenchmark JSON. Macrobenchmark has no assertion API, so the gate lives here. |
 | `run-benchmark.sh` | Drives the Macrobenchmarks through `am instrument`, keeping the app installed so the staged corpus survives between runs. |
@@ -105,6 +105,40 @@ Three ways a *present* translation is wrong:
 
 English's own plurals are checked too, as `english-reference`. If `other` were missing there,
 every locale's argument comparison would be quietly meaningless rather than failing.
+
+### Review state, and the rule it enforces
+
+`translations-status.json` records who reviewed a locale, when, and against what. The rule it
+exists for:
+
+> **A locale does not enter `locales_config.xml` until it has a named reviewer.**
+
+Until then its translations can sit in the tree and be checked for well-formedness, while no
+user can select them. Machine-translating two hundred strings is easy; shipping them unreviewed
+to people who read that language is how an app looks broken. `en` is the source language rather
+than a translation, so it is exempt.
+
+Only facts a person supplies are stored — `reviewer`, `reviewed_at`, `reviewed_against`, and
+free-text `notes`. **State, coverage and staleness are computed**, never recorded: a written-down
+percentage is wrong the moment English gains a string, and a file that can contradict the tree
+is worse than no file. So `--list` derives each locale's state (`source` / `reviewed` / `draft`
+/ `planned`) and its coverage from the resources themselves.
+
+`reviewed_against` holds both a `commit`, for a human following the trail, and an
+`english_digest`, which is what makes staleness answerable without git — it is a hash of every
+translatable English string, so it changes when English strings change and not when anything
+else does. Get the current value with `--digest` and paste it in when recording a review.
+
+A review going stale is **reported, not failed**. English gaining a string would otherwise make
+every reviewed locale fail at once, which would only teach people to stop adding strings; the
+untranslated ones fall back to English exactly as designed, and the coverage figure drops to say
+so.
+
+What does fail: a locale in `locales_config.xml` with no named reviewer; a locale with resources
+but no entry here at all; and a malformed entry — an unknown field, a reviewer with no date or
+no basis, a `reviewed_at` that is not a date. The misspelled-field check matters more than it
+looks: a typo'd key is how a review silently disappears while the reviewer believes it is
+recorded.
 
 ### Where the plural forms come from
 
