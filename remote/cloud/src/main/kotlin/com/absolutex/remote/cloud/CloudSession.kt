@@ -1,5 +1,7 @@
 package com.absolutex.remote.cloud
 
+import com.absolutex.remote.core.AUTHORIZATION
+
 /**
  * One signed-in cloud account's live token, refreshed when the provider stops accepting it.
  *
@@ -99,7 +101,8 @@ class CloudSession(
     }
 
     private companion object {
-        const val AUTHORIZATION = "Authorization"
+        /** The scheme prefix only — the header name itself comes from `:remote:core`, so the
+         * two cannot drift apart and start naming different headers. */
         const val BEARER_PREFIX = "Bearer "
     }
 }
