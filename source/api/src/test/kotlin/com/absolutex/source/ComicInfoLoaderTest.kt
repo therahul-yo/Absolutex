@@ -31,6 +31,29 @@ class ComicInfoLoaderTest {
     private fun loader(names: List<String>, extracted: ByteArray?) =
         ComicInfoLoader.from(names) { ordinal -> extracted?.let { ordinal to it } }
 
+    @Test fun `a throwing extractor costs the metadata, not the book`() {
+        // A corrupt or truncated entry, a wrong passphrase and a dead transport all reach the
+        // loader as a thrown IOException. Every one of them means "no metadata", never "no book":
+        // a caller must be able to route through here without wrapping it, because one that
+        // forgets turns an unreadable sidecar into a failed open.
+        val info = ComicInfoLoader.from(listOf("ComicInfo.xml", "001.jpg")) {
+            throw java.io.IOException("archive metadata read failed")
+        }
+        assertNull(info)
+    }
+
+    @Test fun `an extractor throwing something other than an IOException also degrades`() {
+        val info = ComicInfoLoader.from(listOf("ComicInfo.xml")) {
+            throw IllegalStateException("native layer said no")
+        }
+        assertNull(info)
+    }
+
+    @Test fun `bytes that are not XML at all cost the metadata, not the book`() {
+        val info = loader(listOf("ComicInfo.xml"), ByteArray(64) { 0xFF.toByte() })
+        assertNull(info)
+    }
+
     @Test fun `finds ComicInfo whatever its casing or folder`() {
         val info = loader(listOf("META-INF/COMICINFO.XML", "page/001.jpg"), comicInfoXml.toByteArray())
         assertEquals("Absolute Batman", info?.series)
