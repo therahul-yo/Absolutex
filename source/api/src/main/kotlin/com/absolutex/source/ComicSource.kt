@@ -1,5 +1,6 @@
 package com.absolutex.source
 
+import com.absolutex.model.ComicInfo
 import com.absolutex.model.Page
 import java.io.Closeable
 import java.io.InputStream
@@ -16,4 +17,11 @@ interface ComicSource : Closeable {
 
     /** Cover without decompressing the whole container. */
     fun openCover(): InputStream = openPage(0)
+
+    /**
+     * Container metadata (§2), or null when the format carries none or the implementation
+     * does not read it yet. Default null keeps every existing implementation — including
+     * remote openers — compiling untouched.
+     */
+    val comicInfo: ComicInfo? get() = null
 }

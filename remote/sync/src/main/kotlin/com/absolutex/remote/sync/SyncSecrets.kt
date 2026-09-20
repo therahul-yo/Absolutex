@@ -1,5 +1,7 @@
 package com.absolutex.remote.sync
 
+import com.absolutex.remote.core.CredentialStore
+
 /**
  * Sync secrets behind the Keystore-backed [CredentialStore]. Service ids embed the server id
  * and the secret kind, so two servers — or a key and a password on one server — can never

@@ -20,6 +20,13 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:ui"))
     implementation(project(":core:data"))
+    // DecodeDispatchers.extract: the real RemoteBookOpener binding below runs SMBJ/Commons Net
+    // (both blocking by design) off Main on it, same pool local archive extraction already uses.
+    implementation(project(":core:decode"))
+    // ComicSource: RemoteModule's binding closes RemoteOpenResult.Ready.source on a cancel that
+    // lands after the transport is already open. :remote:core depends on this too, but only as
+    // `implementation`, so it isn't visible here without its own line.
+    implementation(project(":source:api"))
     implementation(project(":remote:core"))
     implementation(project(":remote:sync"))
     implementation(project(":remote:ftp"))
