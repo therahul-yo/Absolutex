@@ -307,7 +307,7 @@ class ReaderViewModel internal constructor(
                 pageCount = count,
                 bookId = bookId,
                 currentPage = settledPage,
-                recoveryNotice = (source0 as? ComicSource)?.pageReadability?.let { context.recoveryNotice(it) },
+                recoveryNotice = recoveryNoticeFor(context, source0),
             )
             // After the state that gates the first page: contents are chrome, and a PDF outline is
             // a JNI call whose cost must not land in the tap-to-first-page budget.
@@ -591,6 +591,17 @@ private suspend fun CoroutineScope.applyCacheSizePref(appPrefs: AppPrefsSource, 
  * another thread would race in-flight renders for no benefit. NonCancellable: a cancelled
  * or superseded open must still close what it opened.
  */
+/**
+ * The payload-recovery notice for a freshly opened source, or null when it reported none.
+ *
+ * Top-level, like [closeSource] below, and for the same reason: inlined at the call site the
+ * safe cast and the null-chain cost a branch each in `open`, which detekt's cyclomatic limit has
+ * no room for — and as a member it would put the class over its function limit. Both limits are
+ * right; `open` is already the longest decision path in this file.
+ */
+private fun recoveryNoticeFor(context: Context, source: Closeable): String? =
+    (source as? ComicSource)?.pageReadability?.let { context.recoveryNotice(it) }
+
 private suspend fun closeSource(handle: Closeable?, remote: Boolean) {
     if (handle == null) return
     if (remote) {
