@@ -31,6 +31,33 @@ looks exactly like a gap in coverage.
 And when checking a gate's exit code from a shell, remember `$?` after a pipeline is the *last*
 command's status. `tool | grep foo; echo $?` reports grep's verdict, not the tool's, so a gate
 that correctly exited 1 reads as 0. Use `${PIPESTATUS[0]}`, or run it without the pipe.
+## What a no-SDK harness cannot see
+
+Some of this repository can be built and tested without the Android SDK — the plain
+Kotlin/JVM modules with `kotlinc` from Maven Central, detekt with `detekt-cli`, and every
+Python gate here. That is enough to land real work from a machine that cannot reach
+`dl.google.com`, and it is how several of these tools were written. It is not the gate, and the
+gap is not evenly distributed: it is widest exactly where a module does something **for the
+first time**.
+
+Twice now a change has passed everything runnable off-SDK and still failed on a real Gradle
+build, both times for the same underlying reason — the harness supplies by hand what the build
+would have had to be told to provide:
+
+- **`:core:ui` had no test dependencies at all.** Its first test compiled locally because the
+  harness puts `junit.jar` on the classpath itself. Under Gradle it did not compile: the module
+  needed `testImplementation(libs.junit)`.
+- **`feature/library` had no `testOptions { unitTests { isIncludeAndroidResources = true } }`.**
+  Its first test that resolved a string threw `Resources$NotFoundException`, because Robolectric
+  cannot see a library module's own resources without it. Five sibling modules already set it;
+  that module had simply never needed it.
+
+The rule worth carrying: **the first test in a module that does something new is usually a
+build-configuration change, not just a test.** First test at all, first test to read a resource,
+first test to need a database or a coroutine dispatcher — each is a line in `build.gradle.kts`
+that the modules which already do it have and this one does not. Before pushing such a test from
+an SDK-free environment, compare that module's `build.gradle.kts` against a sibling that already
+does the same thing, and say plainly in the report that it has not been compiled.
 
 ## `check-strings.py` — no new hardcoded strings (i18n milestone 1)
 
@@ -219,6 +246,12 @@ irreproducible and the `--check` gate worthless.
 | `15_rar5.cbr` | RAR5. |
 | `16_avif.cbz` | AVIF pages — what a modern scanner actually emits. |
 | `17_huge_2gb.cbz` | ~2.25 GiB, with real pages on **both sides** of the 2³¹-byte offset. |
+| `18_comicinfo_behind_junk.cbz` | `ComicInfo.xml` at a non-zero raw ordinal, behind junk, nested and mixed-case. |
+| `19_fixed_layout.epub` | A conforming fixed-layout EPUB: `mimetype` first and STORED, SVG page images, hrefs climbing `../` out of `text/` into `img/`. |
+| `20_epub_named_cbz.cbz` | **Byte-identical to `19`**, wearing `.cbz`. Anything that tells them apart is reading the name, not the content. |
+| `21_epub_rtl.epub` | The same book declaring `page-progression-direction="rtl"` — how a manga EPUB says which way it reads. |
+| `22_tar.cbt` | A real TAR: its magic sits at offset **257**, not at the start, so a sniffer reading only the first bytes misses it. |
+| `23_cbz_with_pdf_inside.cbz` | A CBZ **storing a real PDF**, so `%PDF-` lands inside the first kibibyte. Searching for it before establishing the container hands a ZIP to PDFium. |
 
 Two of those deserve an explanation.
 
@@ -228,6 +261,18 @@ wraps: reads below the line succeed, reads above it return garbage. Pages `tail0
 sit past the boundary specifically so that a truncated offset fails loudly. The bulk of the
 file is `STORED` filler under `filler/*.bin` — free to produce, and `EntryFilter` rejecting
 it by extension is itself worth asserting.
+
+**`20_epub_named_cbz.cbz` — why a duplicate earns its place.** It is the same bytes as `19`
+under a different name, and that is the entire test: a reader that opens one and not the other is
+dispatching on the extension. Two cases sharing a digest is the point, exactly as `03`/`04`/`05`
+already do.
+
+**`23_cbz_with_pdf_inside.cbz` — the case that was a live bug.** Until the magic-byte sniffer
+landed, `openBook()` searched the whole first kibibyte for `%PDF-` *before* establishing what the
+container was, so this file was handed to PDFium — which cannot open a ZIP — and the book failed.
+It is `STORED` rather than deflated so the magic genuinely is in those bytes. Pinned here so the
+ordering (structured signatures at fixed offsets first, the PDF scan last) cannot regress
+unnoticed.
 
 **`12_giant_page.cbz` — why the file is only 11 KB.** The giant page is a diagonal ramp, so
 it deflates to almost nothing. That is on purpose: the stress this case applies is the
@@ -251,13 +296,13 @@ RAR5 through a clean-room implementation, so the reader carries no licence probl
 
 ### Reproducibility
 
-`corpus-expected-sha256.json` pins the digests of the 13 always-generated, pure-Python
+`corpus-expected-sha256.json` pins the digests of the 19 always-generated, pure-Python
 cases. `--check` regenerates and compares, which is how CI notices that a refactor quietly
 changed the corpus. The external-tool cases are not pinned (their encoders differ between
 versions) and neither is `17_huge_2gb.cbz` (opt-in).
 
-`03`, `04` and `05` share a digest — same bytes, three different extension spellings. That
-is the point of those cases.
+`03`, `04` and `05` share a digest — same bytes, three different extension spellings — and so
+do `19` and `20`. That is the point of those cases.
 
 Determinism comes from: an explicit xorshift64\* PRNG rather than `random`; a fixed DOS
 timestamp, `create_system` and `external_attr` on every ZIP entry; and a pinned zlib level.

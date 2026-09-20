@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -78,6 +79,30 @@ class RoomLibraryFeedTest {
     }
 
     @After fun tearDown() = db.close()
+
+    @Test fun `the shipped feed can actually set a favourite and read it back`() = runTest {
+        // The favourites column, its migration and its DAO method are worth nothing unless the
+        // feed the app actually builds uses them. Asserting this against RoomLibraryFeed rather
+        // than a test feed is the point: a test-only implementation that does the right thing
+        // while the shipped one returns BatchUnsupported passes and ships a dead feature.
+        insert("/comics/Absolute Batman 001 (2024).cbr")
+        val feed = feed(AppPrefs())
+        assertTrue("the shipped feed must offer favouriting", feed.capabilities.canFavorite)
+        assertEquals(false, feed.observeBooks().first().single().isFavorite)
+
+        val applied = feed.setFavorite(setOf("/comics/Absolute Batman 001 (2024).cbr"), true)
+        assertEquals(LibraryNotice.BatchApplied(count = 1, skipped = 0), applied)
+        assertEquals(true, feed.observeBooks().first().single().isFavorite)
+
+        feed.setFavorite(setOf("/comics/Absolute Batman 001 (2024).cbr"), false)
+        assertEquals(false, feed.observeBooks().first().single().isFavorite)
+    }
+
+    @Test fun `favouriting a path the library does not hold is skipped, not applied`() = runTest {
+        insert("/comics/Absolute Batman 001 (2024).cbr")
+        val applied = feed(AppPrefs()).setFavorite(setOf("/comics/gone.cbz"), true)
+        assertEquals(LibraryNotice.BatchApplied(count = 0, skipped = 1), applied)
+    }
 
     @Test fun `the parsed label is the default display name`() = runTest {
         insert("/comics/Absolute Batman 001 (2024).cbr")

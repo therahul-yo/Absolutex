@@ -10,7 +10,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import com.absolutex.core.ui.A11y
 import com.absolutex.model.TocEntry
 
 private val PANEL_MAX_HEIGHT = 280.dp
@@ -32,7 +34,12 @@ internal fun TocPanel(entries: List<TocEntry>, onJump: (Int) -> Unit, modifier: 
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onJump(entry.pageIndex) }
+                        // Sized by its own padding, this cleared 48.dp only while the font scale
+                        // did; a raw clickable gets none of the minimum a Material control does.
+                        .heightIn(min = A11y.MinTouchTarget)
+                        // Without a role TalkBack reads a chapter as static text, so the contents
+                        // sound like a list of labels rather than a list of destinations.
+                        .clickable(role = Role.Button) { onJump(entry.pageIndex) }
                         .padding(
                             start = 16.dp + INDENT_PER_DEPTH * entry.depth,
                             end = 16.dp,

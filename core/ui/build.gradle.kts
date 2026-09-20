@@ -22,4 +22,8 @@ dependencies {
     // tooling-preview stays implementation (compile-only, never leaks).
     debugImplementation(libs.compose.ui.tooling)
     implementation(libs.compose.ui.tooling.preview)
+    // First tests in this module: LanguageOptionsTest is plain JVM — java.util.Locale and XML
+    // parsing, no Compose and no Robolectric — so junit alone is enough. Test-only, so the
+    // release APK is unchanged.
+    testImplementation(libs.junit)
 }

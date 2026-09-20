@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -182,6 +181,31 @@ internal fun coalesceSlider(events: List<SliderEvent>): List<Float> {
     return commits
 }
 
+/**
+ * How a grade row divides between its label and its slider.
+ *
+ * A fraction, not the 136.dp this used to be. The fixed width bought one thing worth keeping —
+ * every slider track starting at the same x, because a column of sliders with ragged tracks
+ * reads as broken — and it bought it at the cost of pinning the label to a size chosen at one
+ * font scale. At 200% "White-balance strength" cannot fit 136.dp and stacks into several lines,
+ * making that row several times taller than its neighbours.
+ *
+ * Every row is the same width, so the same fraction gives every label the same width: the
+ * alignment survives, and the label is free to wrap rather than being sized for one scale.
+ *
+ * `widthIn(min = 136.dp)` does not work here, which is worth recording. Row measures its
+ * unweighted children before its weighted one, so a Text with a minimum and no maximum takes
+ * its own intrinsic width — "Gamma" would settle at 136.dp and "White-balance strength" at
+ * whatever it needs, and the tracks would part company at default scale, not just at 200%.
+ * `IntrinsicSize.Max` does not fix that either: each row here is an independent [Row], so the
+ * maximum it resolves is that one label's, never the widest of the ten.
+ *
+ * 0.4 is where 136.dp already sat on the reference device's panel, so this is not a visible
+ * change at the scale everything was drawn for.
+ */
+private const val LABEL_WEIGHT = 0.4f
+private const val SLIDER_WEIGHT = 0.6f
+
 internal sealed interface SliderEvent {
     data class Change(val value: Float) : SliderEvent
     data object Finish : SliderEvent
@@ -218,14 +242,16 @@ private fun GradeRow(
         Text(
             text = name,
             style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.width(136.dp),
+            // No maxLines: a control name that is clipped is unusable sighted and useless with
+            // TalkBack. It wraps instead, and the row grows to fit.
+            modifier = Modifier.weight(LABEL_WEIGHT),
         )
         Slider(
             value = pending,
             onValueChange = { pending = it },
             onValueChangeFinished = { onChange(pending) },
             valueRange = range,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(SLIDER_WEIGHT),
         )
     }
 }

@@ -1,6 +1,7 @@
 package com.absolutex.feature.reader
 
 import android.graphics.Bitmap
+import androidx.annotation.StringRes
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,7 +28,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -65,11 +69,12 @@ internal fun ThumbnailStrip(
         modifier = Modifier.height(THUMB_HEIGHT).padding(vertical = 4.dp),
     ) {
         items(pageCount) { index ->
+            val bookmarked = index in marks
             ThumbnailCell(
                 index = index,
                 current = index == page,
-                bookmarked = index in marks,
-                label = stringResource(R.string.reader_page_indicator_desc, index + 1, pageCount),
+                bookmarked = bookmarked,
+                label = stringResource(thumbnailLabelRes(bookmarked), index + 1, pageCount),
                 onTap = { onSeek(index) },
                 onLongPress = { vm.toggle(bookId, index) },
                 load = { thumbnail(index, widthPx) },
@@ -90,6 +95,7 @@ private fun ThumbnailCell(
 ) {
     // Keyed by index: a recycled cell must not show the previous page while its own decodes.
     val bitmap by produceState<Bitmap?>(null, index) { value = load() }
+    val bookmarkActionLabel = stringResource(bookmarkActionRes(bookmarked))
     val colours = MaterialTheme.colorScheme
     Box(
         Modifier
@@ -97,7 +103,17 @@ private fun ThumbnailCell(
             .background(colours.surfaceVariant)
             .then(if (current) Modifier.border(2.dp, colours.primary) else Modifier)
             .combinedClickable(onClick = onTap, onLongClick = onLongPress)
-            .semantics { contentDescription = label },
+            .semantics {
+                contentDescription = label
+                // The border alone said which page you were on, which is nothing to a screen
+                // reader. `selected` is announced by the platform, in the platform's language.
+                selected = current
+                // Long-press is not a gesture TalkBack offers, so without this the strip's
+                // bookmarking is unreachable without sight — a feature, not a label problem.
+                customActions = listOf(
+                    CustomAccessibilityAction(bookmarkActionLabel) { onLongPress(); true },
+                )
+            },
         contentAlignment = Alignment.Center,
     ) {
         bitmap?.let {
@@ -119,3 +135,20 @@ private fun ThumbnailCell(
         }
     }
 }
+
+/**
+ * Which description a cell carries. Bookmarked pages get their own sentence, so the fact is in
+ * the announcement rather than only in a dot a screen reader cannot see.
+ *
+ * Split out so the choice is testable without rendering the strip: which string is picked is the
+ * whole of the fix, and a composable cannot be asserted on from a unit test.
+ */
+@StringRes
+internal fun thumbnailLabelRes(bookmarked: Boolean): Int =
+    if (bookmarked) R.string.reader_page_indicator_desc_bookmarked
+    else R.string.reader_page_indicator_desc
+
+/** What the cell's accessibility action offers to do, which is the opposite of the current state. */
+@StringRes
+internal fun bookmarkActionRes(bookmarked: Boolean): Int =
+    if (bookmarked) R.string.reader_bookmark_remove else R.string.reader_bookmark_add
