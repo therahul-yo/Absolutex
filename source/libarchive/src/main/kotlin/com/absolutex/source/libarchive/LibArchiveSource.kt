@@ -8,6 +8,7 @@ import com.absolutex.source.ComicInfoLoader
 import com.absolutex.source.ComicSource
 import com.absolutex.source.EntryFilter
 import com.absolutex.source.NaturalOrder
+import com.absolutex.source.PageReadability
 import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.io.InputStream
@@ -34,6 +35,7 @@ class LibArchiveSource private constructor(
     /** Archive ordinal of each page, parallel to [pages]. Sorting reorders pages, not ordinals. */
     private val ordinals: IntArray,
     override val comicInfo: ComicInfo?,
+    override val pageReadability: PageReadability?,
 ) : ComicSource {
 
     override fun openPage(index: Int): InputStream {
@@ -66,10 +68,14 @@ class LibArchiveSource private constructor(
         /**
          * @param openFd must return a NEW, independent descriptor on every call.
          * @throws IOException if the container cannot be read at all. A container that reads
-         * partially yields the pages that are readable — §2 requires degrading, never crashing.
+         * partially retains discovered slots and reports readable payloads separately.
          */
         fun open(openFd: () -> ParcelFileDescriptor): LibArchiveSource = traced("absx.archiveOpen") {
-            val raw = traced("absx.entryList") { openFd().use { LibArchive.nativeList(it.fd) } }
+            // Out-param rather than a richer return type: the listing already crosses JNI, and
+            // whether it reached clean EOF is the one bit separating "this is the whole book"
+            // from "this is what survived".
+            val complete = BooleanArray(1)
+            val raw = traced("absx.entryList") { openFd().use { LibArchive.nativeList(it.fd, complete) } }
                 ?: throw IOException("not a readable archive")
             // String(bytes, UTF_8) substitutes U+FFFD for malformed input instead of throwing, so
             // a Shift-JIS name from an old Japanese scan degrades to mojibake, not to a crash.
@@ -87,13 +93,30 @@ class LibArchiveSource private constructor(
             // real — costs the metadata, not the book. The cap is checked after extraction
             // because the size limit would otherwise have to live in JNI; 1 MiB is far past
             // any ComicInfo.xml a real scan carries.
+            //
+            // runCatching, never a throwing read. This is what #38 exists to deliver: a corrupt
+            // or truncated ComicInfo.xml degrades to comicInfo = null instead of killing the
+            // book open. The branch this was rebuilt from had a version that caught IOException
+            // and rethrew it wrapped, called unconditionally, which reverses that guarantee —
+            // it is deliberately not carried over. MAX_COMIC_INFO_BYTES rather than a literal,
+            // so the limit is stated once and cannot drift.
             val info = runCatching {
                 ComicInfoLoader.from(raw.map { String(it, Charsets.UTF_8) }) { ordinal ->
                     val bytes = openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinal) }
                     bytes?.takeIf { it.size <= MAX_COMIC_INFO_BYTES }?.let { ordinal to it }
                 }
             }.getOrNull()
-            LibArchiveSource(openFd, pages, ordinals, info)
+            // Only recovery pays for payload validation. Header discovery alone overcounts the
+            // final cut-off entry; metadata can also reveal a cut exactly between entries.
+            val recovery = !complete[0] || (info?.pageCount ?: 0) > pages.size
+            val readability = if (recovery) {
+                PageReadability.inspect(ordinals.toList(), info?.pageCount) { ordinal ->
+                    openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinal) }?.isNotEmpty() == true
+                }
+            } else {
+                null
+            }
+            LibArchiveSource(openFd, pages, ordinals, info, readability)
         }
     }
 }

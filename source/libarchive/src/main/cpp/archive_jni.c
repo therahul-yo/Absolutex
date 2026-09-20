@@ -185,9 +185,12 @@ static const char *entry_name(struct archive_entry *e) {
  * brief requires degrading to "N of M readable", never crashing.
  */
 static jobjectArray
-list_impl(JNIEnv *env, jclass clazz, jint fd) {
+list_impl(JNIEnv *env, jclass clazz, jint fd, jbooleanArray complete) {
     (void) clazz;
-    if (fd < 0) return NULL;
+    if (fd < 0 || complete == NULL || (*env)->GetArrayLength(env, complete) != 1) return NULL;
+    jboolean finished = JNI_FALSE;
+    (*env)->SetBooleanArrayRegion(env, complete, 0, 1, &finished);
+    if ((*env)->ExceptionCheck(env)) return NULL;
     int dfd = -1;
     struct archive *a = open_fd(fd, &dfd);
     if (a == NULL) return NULL;
@@ -220,6 +223,9 @@ list_impl(JNIEnv *env, jclass clazz, jint fd) {
         LOGE("nativeList stopped early after %zu entries: %s", n, errstr(a));
     }
     close_archive(a, dfd);
+    finished = r == ARCHIVE_EOF ? JNI_TRUE : JNI_FALSE;
+    (*env)->SetBooleanArrayRegion(env, complete, 0, 1, &finished);
+    if ((*env)->ExceptionCheck(env)) goto fail;
 
     /* n <= MAX_ENTRIES (20000) < INT_MAX, so the (jsize) casts below cannot overflow;
        the explicit check is defense in depth against future cap changes. */
@@ -399,9 +405,10 @@ extract_impl(JNIEnv *env, jclass clazz,
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_com_absolutex_source_libarchive_LibArchive_nativeList(JNIEnv *env, jclass clazz, jint fd) {
+Java_com_absolutex_source_libarchive_LibArchive_nativeList(JNIEnv *env, jclass clazz, jint fd,
+                                                         jbooleanArray complete) {
     locale_t prev = enter_utf8();
-    jobjectArray r = list_impl(env, clazz, fd);
+    jobjectArray r = list_impl(env, clazz, fd, complete);
     leave_utf8(prev);
     return r;
 }
