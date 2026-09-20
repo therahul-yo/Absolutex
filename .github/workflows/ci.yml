@@ -63,6 +63,13 @@ jobs:
       - name: No new hardcoded strings
         run: python3 tools/check-strings.py
 
+      # Placeholders, CLDR plural forms and stale keys in every values-<tag>/strings.xml.
+      # A missing translation is not a failure — Android falls back per resource — but a
+      # translation that drops a %2$s or a plural form its language needs is a crash or a
+      # wrong sentence on a device nobody here tests on.
+      - name: Translations are well-formed
+        run: python3 tools/check-translations.py
+
       - name: No module dropped by accident
         if: github.event_name == 'pull_request'
         env:

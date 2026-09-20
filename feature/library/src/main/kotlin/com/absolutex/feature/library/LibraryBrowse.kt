@@ -34,6 +34,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.absolutex.core.ui.A11y
 
 /** Cover aspect ratio. Comic pages are taller than wide; 2:3 is the common trim. */
 private const val COVER_ASPECT = 2f / 3f
@@ -185,7 +186,7 @@ private fun SelectableRow(
     context: RowContext,
     content: @Composable () -> Unit,
 ) {
-    SelectableSurface(book, isSelected, context, Modifier.heightIn(min = Space.MinTouchTarget)) {
+    SelectableSurface(book, isSelected, context, Modifier.heightIn(min = A11y.MinTouchTarget)) {
         Row(
             modifier = Modifier.padding(horizontal = Space.Edge, vertical = Space.Row),
             verticalAlignment = Alignment.CenterVertically,
