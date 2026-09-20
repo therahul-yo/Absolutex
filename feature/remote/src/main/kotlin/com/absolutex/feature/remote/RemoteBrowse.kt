@@ -99,10 +99,33 @@ internal fun join(parent: String, name: String): String =
 /**
  * Display rows: folders plus book files only, folders first, each by lowercase name.
  * Anything else the server holds (playlists, covers, text files) is not openable here.
+ *
+ * Two guards live here, where both backends converge: hostile base names die in
+ * [isDisplayName] (FTP has no mapper sieve — only SMB's mapper sieves today — so an
+ * FTP `..` would otherwise become a tile that walks out of the share), and rows
+ * de-duplicate by path (SMB2 enumeration is no atomic snapshot, so a rename-and-
+ * replace mid-listing can genuinely repeat a name, and duplicate Compose keys throw
+ * at composition time without any hostile server at all).
  */
 internal fun List<RemoteEntry>.toDisplayRows(): List<RemoteEntry> =
-    filter { it.isDirectory || isBookFile(it.name) }
+    filter { isDisplayName(it.name) }
+        .filter { it.isDirectory || isBookFile(it.name) }
         .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase(Locale.ROOT) }))
+        .distinctBy { it.path }
+
+/**
+ * Hostile-name sieve: empty, dots, over-long, path-carrying. Mirrors SMB's
+ * `isListableName` rules (and its 255 cap) so both backends enforce the same shape
+ * at the convergence point regardless of what each mapper does.
+ */
+internal fun isDisplayName(name: String): Boolean {
+    if (name.isEmpty() || name == "." || name == "..") return false
+    if (name.length > MAX_DISPLAY_NAME_LENGTH) return false
+    if (name.contains('/')) return false
+    return true
+}
+
+internal const val MAX_DISPLAY_NAME_LENGTH = 255
 
 internal fun isBookFile(name: String): Boolean {
     val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)

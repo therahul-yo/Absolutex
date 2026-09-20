@@ -45,6 +45,7 @@
     <string name="remote_edit">Edit server</string>
 
     <string name="remote_browse_title">Browse</string>
+    <string name="remote_browse_loading">Loading folder…</string>
     <string name="remote_browse_empty">This folder is empty.</string>
     <string name="remote_browse_failed">Could not list this folder.</string>
     <string name="remote_browse_up">Up one folder</string>

@@ -98,6 +98,23 @@ class RemoteListingTest {
         assertEquals("/pub", resolver.rootPath("ftp"))
     }
 
+    @Test fun `display rows de-duplicate by path and sieve hostile names`() {
+        // A rename-and-replace mid-listing genuinely repeats a name (SMB2 enumeration
+        // is no snapshot); without distinctBy the duplicate Compose key throws. The
+        // sieve is backend-blind: FTP rows never saw SMB's mapper, so `..` dies here.
+        val rows = listOf(
+            RemoteEntry("a.cbz", "/a.cbz", false, 1L),
+            RemoteEntry("a.cbz", "/a.cbz", false, 1L),
+            RemoteEntry("..", "/..", true, 0L),
+            RemoteEntry(".", "/.", true, 0L),
+            RemoteEntry("", "/", false, 0L),
+            RemoteEntry("x".repeat(300), "/long", false, 1L),
+            RemoteEntry("a/b", "/a/b", false, 1L),
+            RemoteEntry("sub", "/sub", true, 0L),
+        ).toDisplayRows()
+        assertEquals(listOf("sub", "a.cbz"), rows.map { it.name })
+    }
+
     @Test fun `display rows keep folders and books, folders first by name`() {
         val rows = listOf(
             RemoteEntry("notes.txt", "/notes.txt", false, 1L),

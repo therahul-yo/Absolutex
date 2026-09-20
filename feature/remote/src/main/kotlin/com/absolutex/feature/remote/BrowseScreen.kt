@@ -142,7 +142,7 @@ private fun BrowseBody(
 
 @Composable
 private fun LoadingPane(modifier: Modifier = Modifier) {
-    val label = stringResource(R.string.remote_loading)
+    val label = stringResource(R.string.remote_browse_loading)
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         CircularProgressIndicator(
             Modifier.semantics { contentDescription = label },

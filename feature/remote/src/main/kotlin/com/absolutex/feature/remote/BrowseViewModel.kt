@@ -75,13 +75,14 @@ class BrowseViewModel @Inject constructor(
     private var rootCache: String? = null
 
     init {
-        val restored = savedStateHandle.get<String>(KEY_PATH)?.let(Uri::decode)
-        if (restored != null) {
-            load(restored)
-        } else {
-            viewModelScope.launch {
-                load(history.lastDir(serverId) ?: rootOrFallback())
-            }
+        viewModelScope.launch {
+            val root = rootOrFallback()
+            val restored = savedStateHandle.get<String>(KEY_PATH)?.let(Uri::decode)
+            val remembered = if (restored == null) history.lastDir(serverId) else null
+            // Either start path can lie outside the record root: the handle survives
+            // a root narrowing (process death between edit and browse), and so can
+            // the remembered folder. Clamp both into the root; the root itself stays.
+            load(listOfNotNull(restored, remembered).firstOrNull { isWithinRoot(it, root) } ?: root)
         }
     }
 
@@ -191,9 +192,20 @@ class BrowseViewModel @Inject constructor(
     }
 
     private suspend fun rootOrFallback(): String =
-        runCatching {
+        com.absolutex.core.data.runCatchingCancellable {
             withContext(Dispatchers.IO) { browser.rootPath(serverId) }
         }.getOrNull()?.also { rootCache = it } ?: ROOT_PATH
+
+    /**
+     * True when [path] is the root or lives under it. The root itself is absolute;
+     * anything else must carry the root plus its separator, so a sibling prefix
+     * ("/books2" under root "/books") never passes.
+     */
+    private fun isWithinRoot(path: String, root: String): Boolean {
+        if (root == ROOT_PATH) return path.startsWith(ROOT_PATH)
+        val base = root.trimEnd('/')
+        return path == base || path.startsWith("$base/")
+    }
 
     private fun currentPath(): String? = when (val current = _state.value) {
         is BrowseState.Content -> current.path

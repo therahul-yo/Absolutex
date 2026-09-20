@@ -246,6 +246,24 @@ class BrowseViewModelTest {
         assertEquals("/books", contentAt(fresh, "/books").path)
     }
 
+    @Test fun `remembered and restored folders outside a narrowed root fall back to it`() = runTest {
+        // The record root narrowed after the folder was remembered (or restored):
+        // opening the stale path would browse outside the share, so both clamp —
+        // including the sibling-prefix trap ("/books2" is not under "/books").
+        val browser = FakeBrowser(
+            root = "/books",
+            tree = mapOf("/books" to dir("/books", "a.cbz")),
+        )
+        val store = history()
+        store.saveDir("srv-1", "/old-root/deep")
+        val remembered = viewModel(handle(), browser, store = store)
+        assertEquals("/books", contentAt(remembered, "/books").path)
+        val restored = viewModel(handle(path = "/old-root/deep"), browser)
+        assertEquals("/books", contentAt(restored, "/books").path)
+        val sibling = viewModel(handle(path = "/books2"), browser)
+        assertEquals("/books", contentAt(sibling, "/books").path)
+    }
+
     @Test fun `history round-trips per server and rejects hostile paths`() = runTest {
         val store = history()
         store.saveDir("a", "/books/sub")
