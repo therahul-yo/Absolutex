@@ -116,17 +116,21 @@ object EpubPackage {
     ): String? {
         val document = read(documentEntry)?.let(::parseXml) ?: return null
         val baseDir = EpubPath.parentOf(documentEntry)
-        for (element in document.descendantElements()) {
-            val href = when (element.localName()) {
-                "img" -> element.attr("src")
-                "image" -> element.attr("href")      // xlink:href folds to href — see SafeXml.attr
-                else -> null
-            } ?: continue
-            val entry = EpubPath.resolve(baseDir, href)?.let { names[it.lowercase()] } ?: continue
-            // An entry that is not an image is not a page, whatever the markup called it.
-            if (EntryFilter.isPage(entry)) return entry
-        }
-        return null
+        // First in document order wins: a page with a decorative second image is still that page.
+        return document.descendantElements()
+            .firstNotNullOfOrNull { element -> pageImageIn(element, baseDir, names) }
+    }
+
+    /** The page image [element] references, or null if it references none this container holds. */
+    private fun pageImageIn(element: Element, baseDir: String, names: Map<String, String>): String? {
+        val href = when (element.localName()) {
+            "img" -> element.attr("src")
+            "image" -> element.attr("href")      // xlink:href folds to href — see SafeXml.attr
+            else -> null
+        } ?: return null
+        val entry = EpubPath.resolve(baseDir, href)?.let { names[it.lowercase()] } ?: return null
+        // An entry that is not an image is not a page, whatever the markup called it.
+        return entry.takeIf { EntryFilter.isPage(it) }
     }
 
     /**
