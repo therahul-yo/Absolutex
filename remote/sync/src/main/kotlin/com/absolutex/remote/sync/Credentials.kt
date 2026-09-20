@@ -2,6 +2,7 @@ package com.absolutex.remote.sync
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import com.absolutex.remote.core.CredentialStore
 import java.io.File
 import java.io.IOException
 import java.security.KeyStore
@@ -17,31 +18,6 @@ private const val GCM_TAG_BITS = 128
 private const val GCM_IV_BYTES = 12
 private const val ALIAS_PREFIX = "absolutex-sync-"
 private const val BLOB_SUFFIX = ".bin"
-
-/**
- * CharArray-based credential storage. CharArray (not String) so callers can zero secrets after
- * use; implementations must copy on save/load so callers cannot mutate stored state.
- */
-interface CredentialStore {
-    fun save(service: String, secret: CharArray)
-    fun load(service: String): CharArray?
-    fun clear(service: String)
-}
-
-/** In-memory fake: copies on save/load, zeroes on clear. Drives JVM tests (no KeyStore there). */
-class InMemoryCredentialStore : CredentialStore {
-    private val secrets = mutableMapOf<String, CharArray>()
-
-    override fun save(service: String, secret: CharArray): Unit {
-        secrets[service] = secret.copyOf()
-    }
-
-    override fun load(service: String): CharArray? = secrets[service]?.copyOf()
-
-    override fun clear(service: String): Unit {
-        secrets.remove(service)?.fill('\u0000')
-    }
-}
 
 /**
  * AES/GCM credential store backed by the platform AndroidKeyStore (platform only: instantiating

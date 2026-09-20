@@ -1,6 +1,7 @@
 package com.absolutex.feature.remote
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import com.absolutex.remote.core.InMemoryCredentialStore
 import com.absolutex.remote.ftp.FtpLocation
 import com.absolutex.remote.smb.RemoteFileHandle
 import com.absolutex.remote.smb.SmbConnection
@@ -11,7 +12,6 @@ import com.absolutex.remote.sync.KomgaServer
 import com.absolutex.remote.sync.SmbServer
 import com.absolutex.remote.sync.RemoteServers
 import com.absolutex.remote.sync.SyncSecrets
-import com.absolutex.remote.sync.InMemoryCredentialStore
 import com.hierynomus.mssmb2.SMB2MessageCommandCode
 import com.hierynomus.mssmb2.SMBApiException
 import com.hierynomus.smbj.session.SMB2GuestSigningRequiredException

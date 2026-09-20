@@ -1,5 +1,6 @@
 package com.absolutex.remote.sync
 
+import com.absolutex.remote.core.InMemoryCredentialStore
 import java.io.File
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
