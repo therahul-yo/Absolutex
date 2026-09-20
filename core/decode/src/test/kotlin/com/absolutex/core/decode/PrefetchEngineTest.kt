@@ -2,13 +2,16 @@ package com.absolutex.core.decode
 
 import com.absolutex.model.PageLayout
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -33,12 +36,22 @@ class PrefetchEngineTest {
         val oomPages = mutableSetOf<Int>()
         /** Pages whose decode reports Unreadable instead of completing. */
         val unreadablePages = mutableSetOf<Int>()
+        /** Pages that park NON-cancellably, like a blocking native decodeRegion. */
+        val nonCancellablePages = mutableSetOf<Int>()
 
         suspend fun decode(page: Int): DecodeOutcome {
             started += page
             if (page in oomPages) return DecodeOutcome.OutOfMemory
             if (page in unreadablePages) return DecodeOutcome.Unreadable
             if (autoComplete) return DecodeOutcome.Decoded(FAKE_IMAGE)
+            if (page in nonCancellablePages) {
+                // Models the real decoder: a blocking native call does not observe the
+                // job's cancellation until it returns. withContext(NonCancellable) keeps
+                // the gate await running to completion even under cancel().
+                val gate = gates.getOrPut(page) { CompletableDeferred() }
+                withContext(kotlinx.coroutines.NonCancellable) { gate.await() }
+                return DecodeOutcome.Decoded(FAKE_IMAGE)
+            }
             val gate = gates.getOrPut(page) { CompletableDeferred() }
             try {
                 gate.await()
@@ -62,6 +75,7 @@ class PrefetchEngineTest {
     private fun TestScope.harness(
         budgetBytes: Long = 1_000_000,
         pageBytes: Long = 100_000,
+        decodeDispatcher: CoroutineDispatcher = Dispatchers.Unconfined,
     ): Harness {
         val decode = FakeDecode()
         val budget = java.util.concurrent.atomic.AtomicLong(budgetBytes)
@@ -69,7 +83,7 @@ class PrefetchEngineTest {
         val evicted = mutableListOf<Int>()
         val engine = PrefetchEngine(
             scope = this,
-            decodeDispatcher = Dispatchers.Unconfined,
+            decodeDispatcher = decodeDispatcher,
             budgetBytes = { budget.get() },
             tileBytes = { tile.get() },
             pageBytesEstimate = { pageBytes },
@@ -259,6 +273,35 @@ class PrefetchEngineTest {
         // The other gated decodes are untouched — cancelInFlight is per-page.
         assertTrue(11 !in h.decode.cancelled)
         assertTrue(13 !in h.decode.cancelled)
+        h.engine.dropAll()
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `cancelInFlight suspends until the decode stops, on a queueing dispatcher`() = runTest {
+        // This is the suspension half of the contract, against a decode that models the
+        // real one: a blocking native decodeRegion does not observe cancellation until it
+        // returns, so the join in cancelInFlight must hold the closer until the gate opens.
+        val queued = StandardTestDispatcher(testScheduler)
+        val h = harness(decodeDispatcher = queued)
+        h.decode.autoComplete = false
+        h.decode.nonCancellablePages += 12
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 3)
+        advanceUntilIdle() // 11 and 13 parked cancellably, 12 parked non-cancellably
+
+        var closeAfterCancel = false
+        val closer = launch {
+            h.engine.cancelInFlight(12)
+            closeAfterCancel = 12 in h.decode.cancelled
+        }
+        // The decode ignores the cancel until its gate opens, so the join holds the
+        // closer across a full drain.
+        advanceUntilIdle()
+        assertTrue("closer must be suspended until the decode stops", !closer.isCompleted)
+        // The native call returns; the job completes; only now does the join release.
+        h.decode.gates.getValue(12).complete(Unit)
+        advanceUntilIdle()
+        assertTrue(closer.isCompleted)
         h.engine.dropAll()
         advanceUntilIdle()
     }
