@@ -112,34 +112,3 @@ internal data class Shelf(val id: String, val books: List<LibraryBookUi>, val ti
     val size: Int get() = books.size
     val totalBytes: Long get() = books.sumOf { it.sizeBytes }
 }
-
-/**
- * Human-readable byte count for the detailed list (§5.1).
- *
- * Pure and `Locale.ROOT`, so it is testable off-device and identical everywhere. The localised
- * alternative is `android.text.format.Formatter.formatFileSize`, which needs a Context and cannot
- * be unit-tested here.
- * TODO(library): switch to the platform formatter when the app grows a second locale.
- */
-internal fun formatSize(bytes: Long): String {
-    if (bytes < 0) return "—"
-    if (bytes < UNIT) return "$bytes B"
-    var value = bytes.toDouble()
-    // Counts divisions, so it is 1 once we are in kilobytes — hence the -1 when naming the unit.
-    var divisions = 0
-    while (value >= UNIT && divisions < UNIT_NAMES.size) {
-        value /= UNIT
-        divisions++
-    }
-    // One decimal below 10 (9.4 MB), none above: a tenth of a megabyte is noise at 412 MB.
-    val rounded = if (value < DECIMAL_BELOW) {
-        String.format(java.util.Locale.ROOT, "%.1f", value)
-    } else {
-        value.toLong().toString()
-    }
-    return "$rounded ${UNIT_NAMES[divisions - 1]}"
-}
-
-private const val UNIT = 1024.0
-private const val DECIMAL_BELOW = 10.0
-private val UNIT_NAMES = listOf("KB", "MB", "GB", "TB")

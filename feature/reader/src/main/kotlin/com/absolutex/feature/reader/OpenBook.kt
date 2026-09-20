@@ -6,7 +6,9 @@ import android.provider.OpenableColumns
 import com.absolutex.core.data.ContentResolverTree
 import com.absolutex.core.scan.LibraryScanner
 import com.absolutex.model.BookIdentity
+import com.absolutex.source.ContainerFormat
 import com.absolutex.source.EntryFilter
+import com.absolutex.source.FormatSniffer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import com.absolutex.source.libarchive.LibArchiveSource
@@ -15,18 +17,21 @@ import java.io.Closeable
 import java.io.File
 import java.io.IOException
 
-/** PDF allows junk before the header, up to 1024 bytes of it. */
-private const val PDF_SNIFF_BYTES = 1024
-private const val PDF_MAGIC = "%PDF-"
-
 /**
  * Opens the book behind [uri], choosing the format by its content rather than its name: a SAF
  * document's name is whatever the provider says, and plenty of PDFs arrive named .cbz.
+ *
+ * The decision is [FormatSniffer] in :source:api rather than an inline check, so the cases that
+ * actually go wrong — a ZIP wearing .cbr, a CBZ that merely contains "%PDF-", a truncated header
+ * — are JVM tests instead of something only a device can reproduce. It costs the same single
+ * header read the inline check did.
  */
 internal fun Context.openBook(uri: Uri): Closeable {
     val head = ParcelFileDescriptor.AutoCloseInputStream(openDescriptor(uri))
-        .use { it.readNBytes(PDF_SNIFF_BYTES) }
-    if (!String(head, Charsets.ISO_8859_1).contains(PDF_MAGIC)) {
+        .use { it.readNBytes(FormatSniffer.HEADER_BYTES) }
+    if (FormatSniffer.detect(head) != ContainerFormat.PDF) {
+        // Everything else is libarchive's, which reads more formats than the sniffer names — so
+        // UNKNOWN is a route, not a failure, and behaviour for every non-PDF is unchanged.
         // A fresh descriptor per read — a shared SAF fd corrupts parallel reads.
         return LibArchiveSource.open { openDescriptor(uri) }
     }

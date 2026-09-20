@@ -49,9 +49,16 @@ import re
 import tarfile
 import urllib.request
 import xml.etree.ElementTree as ET
+from datetime import date
 from pathlib import Path
 
 CLDR_DATA = Path("tools/cldr-plural-forms.json")
+STATUS_DATA = Path("tools/translations-status.json")
+# The source language: English is what everything is translated *from*, so it shipping without
+# a reviewer is not an unreviewed translation.
+SOURCE_LOCALE = "en"
+STATUS_KEYS = frozenset({"reviewer", "reviewed_at", "reviewed_against", "notes"})
+REVIEWED_AGAINST_KEYS = frozenset({"commit", "english_digest"})
 CLDR_PACKAGE = "cldr-core"
 CLDR_VERSION = "48.2.0"
 CLDR_URL = f"https://registry.npmjs.org/{CLDR_PACKAGE}/-/{CLDR_PACKAGE}-{CLDR_VERSION}.tgz"
@@ -214,6 +221,9 @@ KIND_STALE = "stale-key"
 KIND_UNTRANSLATABLE = "not-translatable"
 KIND_LOCALE = "unknown-locale"
 KIND_REFERENCE = "english-reference"
+KIND_UNREVIEWED = "unreviewed-but-shipped"
+KIND_UNTRACKED = "untracked-locale"
+KIND_STATUS = "status-file"
 
 
 def placeholder_problems(english: str, translated: str) -> list[str]:
@@ -341,6 +351,162 @@ def scan_tree(root: Path, cardinal: dict[str, list[str]]) -> tuple[list[Finding]
     return findings, compared
 
 
+
+# --------------------------------------------------------------------------------------
+# Review state
+#
+# The status file records only what a person supplies — who reviewed, when, against what.
+# State, coverage and staleness are computed here from the files themselves: a recorded
+# percentage is wrong the moment English gains a string, and a file that can contradict the
+# tree is worse than no file at all.
+# --------------------------------------------------------------------------------------
+
+
+def english_digest(root: Path) -> str:
+    """A digest of every translatable English string, stable across unrelated commits.
+
+    This is what makes "has English changed since this locale was reviewed?" answerable without
+    git. Strings marked translatable="false" are excluded: editing one cannot invalidate a
+    review of a translation that never contained it.
+    """
+    parts: list[str] = []
+    for path in english_sources(root):
+        strings, plurals, untranslatable = parse_strings(path.read_text(encoding="utf-8"))
+        module = path.relative_to(root).as_posix()
+        for name, text in sorted(strings.items()):
+            if name not in untranslatable:
+                parts.append(f"{module}\x1fs\x1f{name}\x1f{text}")
+        for name, quantities in sorted(plurals.items()):
+            if name in untranslatable:
+                continue
+            for quantity, text in sorted(quantities.items()):
+                parts.append(f"{module}\x1fp\x1f{name}\x1f{quantity}\x1f{text}")
+    return "sha256:" + hashlib.sha256("\x1e".join(parts).encode("utf-8")).hexdigest()
+
+
+def load_status(root: Path) -> dict[str, dict]:
+    path = root / STATUS_DATA
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8")).get("locales", {})
+
+
+def shipped_locales(root: Path) -> set[str]:
+    """The locales offered by the system language picker, read from locales_config.xml.
+
+    Globbed rather than hardcoded so moving the resource between modules does not silently
+    disable the rule that depends on it.
+    """
+    found: set[str] = set()
+    for config in list(root.glob("*/*/src/main/res/xml/locales_config.xml")) + \
+            list(root.glob("*/src/main/res/xml/locales_config.xml")):
+        root_element = ET.fromstring(config.read_text(encoding="utf-8"))
+        for element in root_element.iter("locale"):
+            name = element.get("{http://schemas.android.com/apk/res/android}name")
+            if name:
+                found.add(name)
+    return found
+
+
+def translated_locales(root: Path) -> dict[str, tuple[int, int]]:
+    """{locale: (translated, translatable)} counted over every module's English source."""
+    totals: dict[str, list[int]] = {}
+    for english_path in english_sources(root):
+        strings, plurals, untranslatable = parse_strings(english_path.read_text(encoding="utf-8"))
+        keys = {name for name in list(strings) + list(plurals) if name not in untranslatable}
+        res_dir = english_path.parent.parent
+        for values_dir in sorted(res_dir.iterdir()):
+            locale = locale_of(values_dir.name) if values_dir.is_dir() else None
+            strings_xml = values_dir / "strings.xml"
+            if locale is None or not strings_xml.is_file():
+                continue
+            done, plural_done, _ = parse_strings(strings_xml.read_text(encoding="utf-8"))
+            have = (set(done) | set(plural_done)) & keys
+            entry = totals.setdefault(locale, [0, 0])
+            entry[0] += len(have)
+            entry[1] += len(keys)
+    return {locale: (done, total) for locale, (done, total) in totals.items()}
+
+
+def _status_problems(locale: str, entry: dict) -> list[str]:
+    """Ways one status entry is malformed. A typo'd key is how a review silently vanishes."""
+    problems = [f"unknown field {key!r}" for key in sorted(set(entry) - STATUS_KEYS)]
+    reviewer = entry.get("reviewer")
+    if reviewer is not None and not str(reviewer).strip():
+        problems.append("reviewer is blank; use null for 'nobody yet'")
+        reviewer = None
+    reviewed_at = entry.get("reviewed_at")
+    if reviewed_at is not None:
+        try:
+            date.fromisoformat(str(reviewed_at))
+        except ValueError:
+            problems.append(f"reviewed_at {reviewed_at!r} is not an ISO date")
+    against = entry.get("reviewed_against")
+    if against is not None:
+        if not isinstance(against, dict):
+            problems.append("reviewed_against must be an object")
+        else:
+            problems += [f"unknown reviewed_against field {key!r}"
+                         for key in sorted(set(against) - REVIEWED_AGAINST_KEYS)]
+    if reviewer:
+        # A review with no date and no basis is a name, not a review.
+        if reviewed_at is None:
+            problems.append("has a reviewer but no reviewed_at")
+        if not isinstance(against, dict) or not against.get("english_digest"):
+            problems.append("has a reviewer but no reviewed_against.english_digest")
+    return problems
+
+
+def review_report(
+    root: Path, status: dict[str, dict], shipped: set[str], digest: str,
+) -> tuple[list[Finding], list[str]]:
+    """(findings, one report line per locale) over the review state of every known locale."""
+    present = translated_locales(root)
+    findings: list[Finding] = []
+    lines: list[str] = []
+    rel_status = STATUS_DATA.as_posix()
+
+    for locale in sorted(set(status) | set(present) | shipped):
+        entry = status.get(locale)
+        reviewer = (entry or {}).get("reviewer")
+        if entry is None:
+            if locale in present or locale in shipped:
+                findings.append(Finding(
+                    rel_status, locale, KIND_UNTRACKED, locale,
+                    "has resources or ships, but no entry here — record its review state",
+                ))
+        else:
+            for problem in _status_problems(locale, entry):
+                findings.append(Finding(rel_status, locale, KIND_STATUS, locale, problem))
+
+        if locale in shipped and locale != SOURCE_LOCALE and not reviewer:
+            findings.append(Finding(
+                rel_status, locale, KIND_UNREVIEWED, locale,
+                "listed in locales_config.xml with no named reviewer — a user can select a "
+                "language nobody has vouched for",
+            ))
+
+        if locale == SOURCE_LOCALE:
+            state = "source"
+        elif reviewer:
+            state = "reviewed"
+        elif locale in present:
+            state = "draft"
+        else:
+            state = "planned"
+
+        done, total = present.get(locale, (0, 0))
+        percent = f"{100 * done // total:3d}%" if total else "  -"
+        marks = "ships" if locale in shipped else "     "
+        stale = ""
+        recorded = ((entry or {}).get("reviewed_against") or {}).get("english_digest")
+        if reviewer and recorded and recorded != digest:
+            stale = "  (English has changed since this review)"
+        lines.append(f"  {locale:<8} {state:<8} {percent} of {total:<3} {marks}"
+                     f"  {reviewer or '-'}{stale}")
+    return findings, lines
+
+
 # --------------------------------------------------------------------------------------
 # Self-test
 #
@@ -426,6 +592,32 @@ FIXTURES: tuple[tuple[str, str, str, str, set[tuple[str, str]]], ...] = (
      _xml('<string name="page">Page %1$d of %2$d</string>'), {(KIND_LOCALE, "zz")}),
 )
 
+STATUS_FIXTURES: tuple[tuple[str, dict, int], ...] = (
+    ("a complete review is clean",
+     {"reviewer": "Jane Doe", "reviewed_at": "2026-09-20",
+      "reviewed_against": {"commit": "abc1234", "english_digest": "sha256:ff"}}, 0),
+    ("a planned locale with nothing filled in is clean",
+     {"reviewer": None, "reviewed_at": None, "reviewed_against": None, "notes": "later"}, 0),
+    # A typo'd key is how a review silently disappears: the reviewer believes it is recorded.
+    ("a misspelled field is reported", {"reviewer": None, "reviewd_at": "2026-09-20"}, 1),
+    ("a reviewer with no date is not a review",
+     {"reviewer": "Jane Doe", "reviewed_against": {"english_digest": "sha256:ff"}}, 1),
+    ("a reviewer with no basis is not a review",
+     {"reviewer": "Jane Doe", "reviewed_at": "2026-09-20"}, 1),
+    ("a date that is not a date",
+     {"reviewer": "Jane Doe", "reviewed_at": "20th Sept",
+      "reviewed_against": {"english_digest": "sha256:ff"}}, 1),
+    # Reported once, then treated as "nobody yet" — so the reviewer-implies-date-and-basis
+    # checks below deliberately do not pile on.
+    ("a blank reviewer is not a name",
+     {"reviewer": "   ", "reviewed_at": "2026-09-20",
+      "reviewed_against": {"english_digest": "sha256:ff"}}, 1),
+    ("reviewed_against must be an object", {"reviewer": None, "reviewed_against": "abc123"}, 1),
+    ("a misspelled reviewed_against field",
+     {"reviewer": "Jane Doe", "reviewed_at": "2026-09-20",
+      "reviewed_against": {"commmit": "abc", "english_digest": "sha256:ff"}}, 1),
+)
+
 QUALIFIERS: tuple[tuple[str, str | None], ...] = (
     ("values-de", "de"),
     ("values-zh-rCN", "zh-CN"),
@@ -464,6 +656,14 @@ def self_test(root: Path) -> int:
             failures += 1
             print(f"FAIL  qualifier {qualifier}: expected {expected_locale}, got {actual_locale}")
 
+    for name, entry, expected in STATUS_FIXTURES:
+        actual = len(_status_problems("xx", entry))
+        if actual != expected:
+            failures += 1
+            print(f"FAIL  {name}: expected {expected} problem(s), got {actual}")
+            for problem in _status_problems("xx", entry):
+                print(f"        {problem}")
+
     reference = check_english(
         "values/strings.xml",
         parse_strings(_xml('<plurals name="p"><item quantity="one">x</item></plurals>'))[1],
@@ -473,12 +673,12 @@ def self_test(root: Path) -> int:
         failures += 1
         print("FAIL  an English plural missing 'other' must be reported")
 
-    total = len(FIXTURES) + len(QUALIFIERS) + 1
+    total = len(FIXTURES) + len(QUALIFIERS) + len(STATUS_FIXTURES) + 1
     if failures:
         print(f"\n{failures} of {total} cases failed")
         return 1
     print(f"OK: {total} cases pass ({len(FIXTURES)} translation, "
-          f"{len(QUALIFIERS)} qualifier, 1 English reference)")
+          f"{len(QUALIFIERS)} qualifier, {len(STATUS_FIXTURES)} status, 1 English reference)")
     return 0
 
 
@@ -495,6 +695,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--list", action="store_true", help="print every comparison made")
     ap.add_argument("--refresh-cldr", action="store_true",
                     help=f"re-download {CLDR_PACKAGE}@{CLDR_VERSION} and rewrite {CLDR_DATA}")
+    ap.add_argument("--digest", action="store_true",
+                    help="print the current English digest, the value a reviewer records in "
+                         f"{STATUS_DATA.as_posix()} as reviewed_against.english_digest")
     ap.add_argument("--summary", type=Path, default=None,
                     help="append a Markdown report here (GITHUB_STEP_SUMMARY)")
     args = ap.parse_args(argv)
@@ -510,6 +713,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         return self_test(args.root)
 
+    if args.digest:
+        print(english_digest(args.root))
+        return 0
+
     cardinal = load_cldr(args.root)
     sources = english_sources(args.root)
     if not sources:
@@ -518,12 +725,21 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     findings, compared = scan_tree(args.root, cardinal)
+    digest = english_digest(args.root)
+    review, review_lines = review_report(
+        args.root, load_status(args.root), shipped_locales(args.root), digest,
+    )
+    findings += review
 
     if args.list:
         for line in compared:
             print(f"  compared  {line}")
         if not compared:
             print("  (no translated locales yet)")
+        print(f"\n  review state ({STATUS_DATA.as_posix()}), English digest {digest[:19]}…")
+        print(f"  {'locale':<8} {'state':<8} coverage    ships  reviewer")
+        for line in review_lines:
+            print(line)
 
     for finding in findings:
         print(finding)
@@ -531,7 +747,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.summary:
         lines = ["### Translations\n",
                  f"{len(sources)} English source(s) · {len(compared)} translated locale file(s) "
-                 f"· **{len(findings)} finding(s)**\n"]
+                 f"· **{len(findings)} finding(s)**\n",
+                 "```", *review_lines, "```\n"]
         lines += [f"- `{f.path}` [{f.kind}] `{f.name}` — {f.detail}" for f in findings]
         with args.summary.open("a", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
@@ -542,12 +759,16 @@ def main(argv: list[str] | None = None) -> int:
               "resource. These are translations that are present and wrong.")
         return 1
 
+    states = [line.split()[1] for line in review_lines]
+    summary = (f"{len(review_lines)} locale(s) tracked: {states.count('source')} source, "
+               f"{states.count('reviewed')} reviewed, {states.count('draft')} draft, "
+               f"{states.count('planned')} planned")
     if not compared:
-        print(f"OK: {len(sources)} English source(s), no translated locales yet — "
-              "nothing to compare, and that is the expected state before milestone 5.")
+        print(f"OK: {len(sources)} English source(s), no translated locales yet — nothing to "
+              f"compare, and that is the expected state before milestone 5. {summary}.")
         return 0
-    print(f"OK: {len(compared)} translated file(s) across {len(sources)} module(s) agree "
-          "with English")
+    print(f"OK: {len(compared)} translated file(s) across {len(sources)} module(s) agree with "
+          f"English. {summary}.")
     return 0
 
 

@@ -78,6 +78,9 @@
         <item quantity="other">%1$d pages</item>
     </plurals>
     <string name="library_book_pages_unknown">Page count unknown</string>
+    <!-- Shown in place of a file size when the size could not be read off disk.
+         An em dash by default; a translation may prefer a word. -->
+    <string name="library_size_unknown">—</string>
     <string name="library_book_on_page">On page %1$d of %2$d</string>
     <string name="library_book_finished">Finished</string>
     <string name="library_book_unread">Unread</string>
