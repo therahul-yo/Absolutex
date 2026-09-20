@@ -213,7 +213,21 @@ class CloudTokensTest {
         assertEquals(2, http.sent.size)
     }
 
-    @Test fun `an endless rate limit gives up rather than hammering the endpoint`() {
+    @Test fun `a 503 is waited out as well, not turned straight into a failure`() {
+        // 503 and 429 are the same situation to a caller — come back shortly — and the code
+        // treats them alike. Only 429 was ever exercised, so dropping the 503 arm turned a
+        // transient unavailability into an immediate hard failure with nothing red.
+        val http = FakeHttp().apply {
+            enqueue(503, headers = mapOf("Retry-After" to listOf("1")))
+            enqueue(200, "{}")
+        }
+        val slept = mutableListOf<Long>()
+        endpoint(http, slept = slept).refresh("t".toCharArray()).close()
+        assertEquals(listOf(1_000L), slept)
+        assertEquals("the 503 must be retried, not thrown", 2, http.sent.size)
+    }
+
+    @Test fun `an endless rate limit gives up after exactly the retry budget`() {
         val http = FakeHttp()
         repeat(RATE_LIMIT_RESPONSES) { http.enqueue(429) }
         val slept = mutableListOf<Long>()
@@ -222,9 +236,39 @@ class CloudTokensTest {
             fail("expected IOException")
         } catch (expected: IOException) {
             assertTrue(expected.message?.contains("rate limited") == true)
+            // The exact count, not just "some": an upper bound alone cannot tell a budget of
+            // three from a budget of one, so cutting the budget by two-thirds shipped green.
+            assertTrue("gave up after the wrong count: ${expected.message}", expected.message
+                ?.contains("after $EXPECTED_ATTEMPTS attempts") == true)
         }
-        assertTrue("bounded waits, got ${slept.size}", slept.size <= 4)
+        // One more request than sleeps: the final 429 is what exhausts the budget, and it is
+        // not slept on because there is nothing left to wait for.
+        assertEquals("waits", EXPECTED_ATTEMPTS - 1, slept.size)
+        assertEquals("requests", EXPECTED_ATTEMPTS, http.sent.size)
         assertTrue("a zero backoff is a hot loop", slept.all { it > 0 })
+    }
+
+    @Test fun `an interrupt during backoff ends the exchange and restores the flag`() {
+        // The sleeper is where a cancelling pool reaches this code, and the ordinary helper's
+        // sleeper never throws, so neither behaviour here was observable. Both matter: an
+        // implementation that drops the flag swallows a cancellation the caller depends on,
+        // and one that lets InterruptedException escape breaks @Throws(IOException::class).
+        Thread.interrupted() // clear anything an earlier test left set
+        val http = FakeHttp().apply { enqueue(429) }
+        val endpoint = CloudTokenEndpoint(http, TOKEN_URL, "client-1", FakeParser()) {
+            throw InterruptedException("the pool is shutting down")
+        }
+        try {
+            endpoint.refresh("t".toCharArray())
+            fail("expected IOException")
+        } catch (expected: IOException) {
+            // Catching IOException is itself half the assertion: InterruptedException is not
+            // one, so a raw escape would sail past this clause and fail the test.
+            assertTrue(expected.message?.contains("cancelled") == true)
+            assertTrue("the cause must be kept", expected.cause is InterruptedException)
+        }
+        // Reads *and* clears, so this asserts the flag and leaves the thread clean after it.
+        assertTrue("the interrupt flag must survive for the calling pool", Thread.interrupted())
     }
 
     // --- secrets -----------------------------------------------------------------------------
@@ -254,5 +298,12 @@ class CloudTokensTest {
     private companion object {
         const val TOKEN_URL = "https://login.example/oauth2/token"
         const val RATE_LIMIT_RESPONSES = 8
+
+        /**
+         * Requests a rate-limited exchange makes before giving up: MAX_RATE_LIMIT_RETRIES + 1.
+         * Written out rather than read from the endpoint, because a test that sourced the
+         * number from the code under test would agree with any value that code was changed to.
+         */
+        const val EXPECTED_ATTEMPTS = 4
     }
 }
