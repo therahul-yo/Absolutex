@@ -42,6 +42,7 @@ import os
 import shutil
 import struct
 import subprocess
+import tarfile
 import sys
 import zipfile
 import zlib
@@ -500,6 +501,100 @@ def case_comicinfo_deep(out: Path) -> None:
             zf.writestr(zinfo(name), blob)
 
 
+def _epub_bytes(rtl: bool = False) -> bytes:
+    """A conforming fixed-layout EPUB, in memory.
+
+    OCF requires the ``mimetype`` entry first and STORED, which is the whole reason an EPUB is
+    identifiable from its first 58 bytes. Written here with that shape on purpose, so a sniffer
+    that skips the compression method or the entry order is caught rather than flattered.
+
+    Kindle Comic Creator's markup: the page wrapped in <svg><image xlink:href> so it scales to
+    the viewport. The href climbs out of text/ into img/, which is the path-resolution case a
+    reader gets wrong first.
+    """
+    import io
+
+    direction = ' page-progression-direction="rtl"' if rtl else ""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", allowZip64=True) as zf:
+        zf.writestr(zinfo("mimetype", zipfile.ZIP_STORED), b"application/epub+zip")
+        zf.writestr(zinfo("META-INF/container.xml"),
+                    '<?xml version="1.0"?>\n'
+                    '<container version="1.0" '
+                    'xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                    '<rootfiles><rootfile full-path="OEBPS/content.opf" '
+                    'media-type="application/oebps-package+xml"/></rootfiles></container>')
+        items, refs = [], []
+        for i in range(1, 5):
+            items.append('<item id="p%d" href="text/p%d.xhtml" media-type="application/xhtml+xml"/>'
+                         '<item id="i%d" href="img/p%d.png" media-type="image/png"/>' % (i, i, i, i))
+            refs.append('<itemref idref="p%d"/>' % i)
+        zf.writestr(zinfo("OEBPS/content.opf"),
+                    '<?xml version="1.0" encoding="utf-8"?>\n'
+                    '<package xmlns="http://www.idpf.org/2007/opf" version="3.0">'
+                    '<metadata/><manifest>%s</manifest><spine%s>%s</spine></package>'
+                    % ("".join(items), direction, "".join(refs)))
+        for i in range(1, 5):
+            zf.writestr(zinfo("OEBPS/text/p%d.xhtml" % i),
+                        '<html xmlns:xlink="http://www.w3.org/1999/xlink"><body>'
+                        '<svg viewBox="0 0 1240 1754"><image xlink:href="../img/p%d.png"/></svg>'
+                        '</body></html>' % i)
+            zf.writestr(zinfo("OEBPS/img/p%d.png" % i), page_png(i - 1))
+    return buf.getvalue()
+
+
+def case_epub(out: Path) -> None:
+    """A fixed-layout EPUB, and the same bytes wearing a .cbz suffix.
+
+    The pair is the point: they are byte-identical, so anything that tells them apart is reading
+    the name rather than the content. The RTL variant carries
+    ``page-progression-direction="rtl"``, which is how a manga EPUB says which way it reads.
+    """
+    (out / "19_fixed_layout.epub").write_bytes(_epub_bytes())
+    (out / "20_epub_named_cbz.cbz").write_bytes(_epub_bytes())
+    (out / "21_epub_rtl.epub").write_bytes(_epub_bytes(rtl=True))
+
+
+def case_tar(out: Path) -> None:
+    """A real TAR wearing .cbt, whose magic sits at offset 257 rather than at the start.
+
+    Every field that would otherwise carry this machine's identity is pinned, because tarfile
+    defaults to the current uid/gid/mtime and would make the corpus irreproducible.
+    """
+    import io
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w", format=tarfile.USTAR_FORMAT) as tf:
+        for i in range(1, 5):
+            blob = page_png(i - 1)
+            info = tarfile.TarInfo("page%03d.png" % i)
+            info.size = len(blob)
+            info.mtime = 978307200            # 2001-01-01T00:00:00Z, matching ZIP_EPOCH
+            info.mode = 0o644
+            info.uid = info.gid = 0
+            info.uname = info.gname = ""
+            tf.addfile(info, io.BytesIO(blob))
+    (out / "22_tar.cbt").write_bytes(buf.getvalue())
+
+
+def case_cbz_holding_a_pdf(out: Path) -> None:
+    """A CBZ that stores a real PDF, which is the misroute case §6's sniffer exists to fix.
+
+    "%PDF-" lands inside the first kibibyte, so a reader that searches for the PDF magic before
+    establishing the container hands a ZIP to the PDF engine and the book fails to open. STORED,
+    so the magic really is in those bytes rather than behind a deflate stream.
+    """
+    pdf = out / ".tmp_bonus.pdf"
+    build_pdf_with_outline(pdf)
+    entries = [("bonus.pdf", pdf.read_bytes())] + pages(4)
+    pdf.unlink()
+    path = out / "23_cbz_with_pdf_inside.cbz"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", allowZip64=True) as zf:
+        for name, blob in entries:
+            zf.writestr(zinfo(name, zipfile.ZIP_STORED), blob)
+
+
 def case_huge(out: Path) -> None:
     """~2.1 GiB CBZ with real pages on both sides of the 2^31 byte offset.
 
@@ -556,6 +651,9 @@ CASES: list[tuple[str, Callable[[Path], None], bool]] = [
     ("giant_page",     case_giant_page,     True),
     ("comicinfo_deep", case_comicinfo_deep, True),
     ("pdf_outline",    case_pdf_outline,    True),
+    ("epub",           case_epub,           True),
+    ("tar",            case_tar,            True),
+    ("cbz_with_pdf",   case_cbz_holding_a_pdf, True),
     ("solid_7z",      case_solid_7z,       False),
     ("rar5",          case_rar5,           False),
     ("avif",          case_avif,           False),
@@ -569,6 +667,8 @@ REPRODUCIBLE_FILES = [
     "05_upper.CB7", "06_zip_named_cbr.cbr", "07_deep_nesting.cbz", "08_nonascii_rtl.cbz",
     "09_two_pages.cbz", "10_junk_entries.cbz", "11_truncated.cbz", "12_giant_page.cbz",
     "18_comicinfo_behind_junk.cbz", "13_outline.pdf",
+    "19_fixed_layout.epub", "20_epub_named_cbz.cbz", "21_epub_rtl.epub",
+    "22_tar.cbt", "23_cbz_with_pdf_inside.cbz",
 ]
 
 
