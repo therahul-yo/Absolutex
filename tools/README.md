@@ -31,6 +31,33 @@ looks exactly like a gap in coverage.
 And when checking a gate's exit code from a shell, remember `$?` after a pipeline is the *last*
 command's status. `tool | grep foo; echo $?` reports grep's verdict, not the tool's, so a gate
 that correctly exited 1 reads as 0. Use `${PIPESTATUS[0]}`, or run it without the pipe.
+## What a no-SDK harness cannot see
+
+Some of this repository can be built and tested without the Android SDK — the plain
+Kotlin/JVM modules with `kotlinc` from Maven Central, detekt with `detekt-cli`, and every
+Python gate here. That is enough to land real work from a machine that cannot reach
+`dl.google.com`, and it is how several of these tools were written. It is not the gate, and the
+gap is not evenly distributed: it is widest exactly where a module does something **for the
+first time**.
+
+Twice now a change has passed everything runnable off-SDK and still failed on a real Gradle
+build, both times for the same underlying reason — the harness supplies by hand what the build
+would have had to be told to provide:
+
+- **`:core:ui` had no test dependencies at all.** Its first test compiled locally because the
+  harness puts `junit.jar` on the classpath itself. Under Gradle it did not compile: the module
+  needed `testImplementation(libs.junit)`.
+- **`feature/library` had no `testOptions { unitTests { isIncludeAndroidResources = true } }`.**
+  Its first test that resolved a string threw `Resources$NotFoundException`, because Robolectric
+  cannot see a library module's own resources without it. Five sibling modules already set it;
+  that module had simply never needed it.
+
+The rule worth carrying: **the first test in a module that does something new is usually a
+build-configuration change, not just a test.** First test at all, first test to read a resource,
+first test to need a database or a coroutine dispatcher — each is a line in `build.gradle.kts`
+that the modules which already do it have and this one does not. Before pushing such a test from
+an SDK-free environment, compare that module's `build.gradle.kts` against a sibling that already
+does the same thing, and say plainly in the report that it has not been compiled.
 
 ## `check-strings.py` — no new hardcoded strings (i18n milestone 1)
 
