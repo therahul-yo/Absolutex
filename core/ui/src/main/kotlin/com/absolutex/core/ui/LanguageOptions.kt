@@ -39,21 +39,22 @@ data class LanguageOption(val tag: String?, val label: String) {
 fun languageOptions(
     tags: List<String> = SUPPORTED_LOCALES,
     systemDefaultLabel: String,
-): List<LanguageOption> {
-    val rows = mutableListOf(LanguageOption(null, systemDefaultLabel))
-    val seen = mutableSetOf<String>()
-    for (tag in tags) {
-        val trimmed = tag.trim()
-        if (trimmed.isEmpty() || !seen.add(trimmed)) continue
-        val locale = Locale.forLanguageTag(trimmed)
-        if (locale.language.isEmpty()) continue
-        val endonym = locale.getDisplayName(locale)
-        // The JVM returns the tag itself when it has no name for the locale. Offering that as a
-        // choice tells the user nothing, so it is not offered.
-        if (endonym.isEmpty() || endonym.equals(trimmed, ignoreCase = true)) continue
-        rows += LanguageOption(trimmed, endonym.replaceFirstChar { it.titlecase(locale) })
-    }
-    return rows
+): List<LanguageOption> =
+    listOf(LanguageOption(null, systemDefaultLabel)) +
+        tags.map(String::trim).filter(String::isNotEmpty).distinct().mapNotNull(::optionFor)
+
+/**
+ * The row for one tag, or null when it names no language this JVM can write.
+ *
+ * The JVM hands back the tag itself when it has no name for the locale, so a typo in the config
+ * surfaces as a missing row rather than one reading "qqq" — which would tell a reader nothing.
+ */
+private fun optionFor(tag: String): LanguageOption? {
+    val locale = Locale.forLanguageTag(tag)
+    if (locale.language.isEmpty()) return null
+    val endonym = locale.getDisplayName(locale)
+    if (endonym.isEmpty() || endonym.equals(tag, ignoreCase = true)) return null
+    return LanguageOption(tag, endonym.replaceFirstChar { it.titlecase(locale) })
 }
 
 /**
@@ -69,8 +70,13 @@ fun selectedTag(appliedTags: List<String>, options: List<LanguageOption>): Strin
     val applied = appliedTags.firstOrNull()?.trim().orEmpty()
     if (applied.isEmpty()) return null
     val offered = options.mapNotNull { it.tag }
-    offered.firstOrNull { it.equals(applied, ignoreCase = true) }?.let { return it }
-    val appliedLanguage = Locale.forLanguageTag(applied).language
-    if (appliedLanguage.isEmpty()) return null
-    return offered.firstOrNull { Locale.forLanguageTag(it).language == appliedLanguage }
+    val language = Locale.forLanguageTag(applied).language
+    val exact = offered.firstOrNull { it.equals(applied, ignoreCase = true) }
+    // Stated once, in priority order: the tag itself, then the same language whatever its
+    // region, then nothing rather than a row the reader did not choose.
+    return when {
+        exact != null -> exact
+        language.isEmpty() -> null
+        else -> offered.firstOrNull { Locale.forLanguageTag(it).language == language }
+    }
 }

@@ -90,6 +90,16 @@ class LanguageOptionsTest {
     }
 
     @Test
+    fun `an exact regional tag beats another region of the same language`() {
+        // A list offering both pt-PT and pt-BR must select the one actually applied. Matching on
+        // language alone would hand back whichever comes first, silently giving a Brazilian
+        // reader European Portuguese — and both are on the milestone 5 list.
+        val options = languageOptions(listOf("pt-PT", "pt-BR"), system)
+        assertEquals("pt-BR", selectedTag(listOf("pt-BR"), options))
+        assertEquals("pt-PT", selectedTag(listOf("pt-PT"), options))
+    }
+
+    @Test
     fun `an applied tag nothing offers falls back to the system default`() {
         assertNull(selectedTag(listOf("is"), languageOptions(listOf("en", "de"), system)))
     }
