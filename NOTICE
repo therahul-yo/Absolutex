@@ -1,0 +1,10 @@
+Absolutex
+Copyright 2026 Rahul (therahul-yo)
+
+This product includes software developed as part of the Absolutex project.
+
+Third-party components are listed with their licences in README.md
+("Licensing") and, for the native PDF stack, in source/pdf/LICENSES.md.
+Those notices are also shown in the app under Settings → About → Open-source
+licences, which is where the positive-attribution obligations of the IJG JPEG
+library and FreeType are met.

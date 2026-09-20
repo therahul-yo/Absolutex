@@ -46,9 +46,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Not line-anchored for the angle-bracket markers: a marker left inside a KDoc begins
+      # with " * ", compiles fine, and sailed straight past the anchored pattern — a green
+      # gate that proved nothing. "=======" stays anchored, because "===" rules are ordinary
+      # prose in the vendored licence texts.
       - name: No conflict markers
         run: |
-          if git grep -nE '^(<<<<<<<|=======|>>>>>>>) ' -- ':!*.md' ':!.github/workflows/ci.yml'; then
+          if git grep -nE '(^|[[:space:]]|\*[[:space:]])(<<<<<<<|>>>>>>>)[[:space:]]' \
+               -- ':!*.md' ':!.github/workflows/ci.yml' ||
+             git grep -nE '^======= *$' -- ':!*.md' ':!.github/workflows/ci.yml' ':!**/licenses/**'; then
             echo "::error::conflict markers are committed — resolve them before pushing"
             exit 1
           fi
@@ -62,6 +68,13 @@ jobs:
       # size baseline works — the gate is green on main and red on anything new.
       - name: No new hardcoded strings
         run: python3 tools/check-strings.py
+
+      # Placeholders, CLDR plural forms and stale keys in every values-<tag>/strings.xml.
+      # A missing translation is not a failure — Android falls back per resource — but a
+      # translation that drops a %2$s or a plural form its language needs is a crash or a
+      # wrong sentence on a device nobody here tests on.
+      - name: Translations are well-formed
+        run: python3 tools/check-translations.py
 
       - name: No module dropped by accident
         if: github.event_name == 'pull_request'

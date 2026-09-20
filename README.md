@@ -107,6 +107,10 @@ quietly change any of them.
 
 ## Licensing
 
+Absolutex itself is [Apache-2.0](LICENSE). That choice follows its dependencies —
+AndroidX, Kotlin and Compose are all Apache-2.0 — and it carries an explicit patent
+grant, which matters for a reader that links native decoders.
+
 No dependency is GPL or AGPL. No ads, no analytics, no crash reporting.
 
 | Component | Licence | Note |

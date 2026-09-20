@@ -4,9 +4,33 @@
 |---|---|
 | `make-corpus.py` | Generates the §8 hostile test corpus. Below. |
 | `check-strings.py` | Fails on **new** hardcoded user-visible strings in the UI modules. Pure stdlib, no Gradle, no SDK. Below. |
+| `check-translations.py` | Fails on a *present* translation that disagrees with English — placeholders, plural forms, stale keys — and on a locale shipping without a named reviewer. Pure stdlib. Below. |
 | `check-apk-size.py` | Breaks the release APK down by category and fails on a size regression. Run by CI; see `.github/workflows/README.md`. |
 | `check-startup-budget.py` | Enforces the §3 300 ms P90 cold-start budget against Macrobenchmark JSON. Macrobenchmark has no assertion API, so the gate lives here. |
 | `run-benchmark.sh` | Drives the Macrobenchmarks through `am instrument`, keeping the app installed so the staged corpus survives between runs. |
+
+## Proving a checker actually checks
+
+Every gate in this directory is asserted by mutating it and watching the assertion fail. Two
+traps have caught us more than once, both of which make a broken checker look like a working
+one:
+
+**A mutant cannot die in a path the probe never executes.** Break a rule, run the tests, and if
+they still pass the usual conclusion — "the mutation was harmless" — is usually wrong. More
+often the fixture never reached the mutated line. The `%%` case in `check-translations.py` had
+the same literal on both sides of the comparison, so miscounting it cancelled out; the
+regional-locale fallback had no fixture using a regional locale at all; `pagesPerDay`'s
+distinctness survived a mutation that replaced the page number with a different *deterministic
+function* of the page number, which still collapsed duplicates. In each case the fix was a new
+fixture that exercises the line, not a shrug.
+
+**A mutation has to be able to fail.** Before concluding a rule is untested, check the mutation
+actually changes behaviour for the input at hand. Writing one that does not is easy, and it
+looks exactly like a gap in coverage.
+
+And when checking a gate's exit code from a shell, remember `$?` after a pipeline is the *last*
+command's status. `tool | grep foo; echo $?` reports grep's verdict, not the tool's, so a gate
+that correctly exited 1 reads as 0. Use `${PIPESTATUS[0]}`, or run it without the pipe.
 
 ## `check-strings.py` — no new hardcoded strings (i18n milestone 1)
 
@@ -72,6 +96,93 @@ note, never a failure: the gate must not punish the work it exists to encourage.
 - **No XML scanning.** `android:text` on a layout would be missed. The app has no layout
   XML today (`android:label` in the manifest already points at `@string/app_name`), so this
   buys nothing yet.
+
+## `check-translations.py` — translations that are present and wrong (i18n milestone 5)
+
+A bad translation does not look like a bug in review. `"Page %1$d of %2$d"` coming back as
+`"Seite %1$d"` reads fine in a diff and throws `MissingFormatArgumentException` on a device; a
+Polish plural missing `few` silently renders the `other` form for 2, 3 and 4. Neither is visible
+to anyone who does not read the language, so the gate lands before the translations do —
+exactly as `check-strings.py` landed before externalisation.
+
+```sh
+python3 tools/check-translations.py            # the gate
+python3 tools/check-translations.py --check    # self-test over fixtures
+python3 tools/check-translations.py --list     # every locale found and what was compared
+python3 tools/check-translations.py --refresh-cldr   # re-pin the plural data (network)
+```
+
+### What fails, and what deliberately does not
+
+**A missing string is not a failure.** Android falls back to English per resource, which is the
+designed behaviour and the normal state of a translation in progress. Which locales are complete
+enough to ship is the review-status list's job, not this gate's.
+
+Three ways a *present* translation is wrong:
+
+| Kind | Caught |
+|---|---|
+| `placeholder` | Positions, conversion types or count disagree with English. Reordering is fine — that is what positional arguments are for. `%%` is a percent sign, not an argument. |
+| `plural` | A `<plurals>` lacks a form its language requires. |
+| `stale-key` / `not-translatable` | The key does not exist in English (renamed or removed), or English marks it `translatable="false"`. |
+
+English's own plurals are checked too, as `english-reference`. If `other` were missing there,
+every locale's argument comparison would be quietly meaningless rather than failing.
+
+### Review state, and the rule it enforces
+
+`translations-status.json` records who reviewed a locale, when, and against what. The rule it
+exists for:
+
+> **A locale does not enter `locales_config.xml` until it has a named reviewer.**
+
+Until then its translations can sit in the tree and be checked for well-formedness, while no
+user can select them. Machine-translating two hundred strings is easy; shipping them unreviewed
+to people who read that language is how an app looks broken. `en` is the source language rather
+than a translation, so it is exempt.
+
+Only facts a person supplies are stored — `reviewer`, `reviewed_at`, `reviewed_against`, and
+free-text `notes`. **State, coverage and staleness are computed**, never recorded: a written-down
+percentage is wrong the moment English gains a string, and a file that can contradict the tree
+is worse than no file. So `--list` derives each locale's state (`source` / `reviewed` / `draft`
+/ `planned`) and its coverage from the resources themselves.
+
+`reviewed_against` holds both a `commit`, for a human following the trail, and an
+`english_digest`, which is what makes staleness answerable without git — it is a hash of every
+translatable English string, so it changes when English strings change and not when anything
+else does. Get the current value with `--digest` and paste it in when recording a review.
+
+A review going stale is **reported, not failed**. English gaining a string would otherwise make
+every reviewed locale fail at once, which would only teach people to stop adding strings; the
+untranslated ones fall back to English exactly as designed, and the coverage figure drops to say
+so.
+
+What does fail: a locale in `locales_config.xml` with no named reviewer; a locale with resources
+but no entry here at all; and a malformed entry — an unknown field, a reviewer with no date or
+no basis, a `reviewed_at` that is not a date. The misspelled-field check matters more than it
+looks: a typo'd key is how a review silently disappears while the reviewer believes it is
+recorded.
+
+### Where the plural forms come from
+
+`cldr-plural-forms.json`, derived from CLDR's supplemental data — **not typed out here**. The
+sets genuinely differ: English needs `one`/`other`, Polish `one`/`few`/`many`/`other`, Japanese
+only `other`, Arabic all six. The file records the npm package, CLDR version, URL and SHA-256 it
+came from, and `--refresh-cldr` regenerates it from that same pinned source, so the provenance is
+executable rather than a comment. Hand-maintaining the table is how a language quietly gets the
+wrong rules: French gained a `many` category in recent CLDR and nobody would have noticed.
+
+Lookup walks from the most specific tag to the bare language, because CLDR keys are languages
+and sometimes language-plus-region: `values-pt-rBR` resolves through `pt-BR` to `pt`, and
+`values-zh-rCN` to `zh`. Qualifiers that are not languages — `values-night`, `values-sw600dp` —
+are skipped rather than guessed at.
+
+### Known gaps
+
+- **`<string-array>` is not compared.** Nothing in the app uses one yet; an array whose element
+  count differs between locales is a real bug and would need its own rule.
+- **Nothing checks whether a translation is any good.** This proves structure, never meaning.
+  That is what the milestone 5 review status is for, and no gate substitutes for it.
 
 ## `make-corpus.py` — the hostile test corpus (spec §8)
 

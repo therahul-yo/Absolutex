@@ -15,6 +15,17 @@ android {
         versionName = "0.1.0"
         ndk { abiFilters += "arm64-v8a" }
     }
+    packaging {
+        resources {
+            // BouncyCastle arrives via smbj, but these resource tables are for code paths
+            // SMB never calls: PQC (picnic) lookup tables and X.509 reviewer messages.
+            // ~1.2 MiB of APK weight with zero handshake coverage — see the wiring PR.
+            // If smbj ever needs them, the failure is a loud MissingResourceException at
+            // handshake time, and the live-handshake test in :remote:smb proves it works.
+            excludes += "org/bouncycastle/pqc/**"
+            excludes += "org/bouncycastle/x509/CertPathReviewerMessages*.properties"
+        }
+    }
     buildFeatures { compose = true }
     // Release signing config (§5.1): keystore from env/properties, never committed.
     signingConfigs {
@@ -72,6 +83,14 @@ dependencies {
     // Sync wiring (milestone 5): installs SyncModule into the app graph. Inert until the
     // trigger call sites fire — no work starts from the dependency alone.
     implementation(project(":remote:sync"))
+    // Remote file access (milestone 5): the servers UI plus the transports it tests and
+    // opens, and the RemoteModule binding ReaderViewModel now injects to open a remote book.
+    // First time smbj and commons-net enter the release APK — see the size note in the
+    // wiring PR; the ceiling decision belongs to the lead, not this dependency.
+    implementation(project(":feature:remote"))
+    implementation(project(":remote:core"))
+    implementation(project(":remote:smb"))
+    implementation(project(":remote:ftp"))
     implementation(project(":feature:widget")) // manifest merge for the widget receiver
 
     implementation(platform(libs.compose.bom))

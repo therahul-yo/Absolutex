@@ -147,7 +147,7 @@ private fun DetailedBookContent(book: LibraryBookUi) {
             )
             Text(book.pagesLabel(), style = MaterialTheme.typography.bodySmall)
             Text(book.positionLabel(), style = MaterialTheme.typography.bodySmall)
-            Text(formatSize(book.sizeBytes), style = MaterialTheme.typography.bodySmall)
+            Text(book.sizeLabel(), style = MaterialTheme.typography.bodySmall)
             Text(
                 stringResource(R.string.library_book_filename, book.originalFilename),
                 style = MaterialTheme.typography.bodySmall,

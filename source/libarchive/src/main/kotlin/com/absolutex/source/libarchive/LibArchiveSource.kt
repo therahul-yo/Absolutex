@@ -2,7 +2,9 @@ package com.absolutex.source.libarchive
 
 import android.os.ParcelFileDescriptor
 import android.os.Trace
+import com.absolutex.model.ComicInfo
 import com.absolutex.model.Page
+import com.absolutex.source.ComicInfoLoader
 import com.absolutex.source.ComicSource
 import com.absolutex.source.EntryFilter
 import com.absolutex.source.NaturalOrder
@@ -31,6 +33,7 @@ class LibArchiveSource private constructor(
     override val pages: List<Page>,
     /** Archive ordinal of each page, parallel to [pages]. Sorting reorders pages, not ordinals. */
     private val ordinals: IntArray,
+    override val comicInfo: ComicInfo?,
 ) : ComicSource {
 
     override fun openPage(index: Int): InputStream {
@@ -49,6 +52,8 @@ class LibArchiveSource private constructor(
     override fun close() = Unit
 
     companion object {
+        private const val MAX_COMIC_INFO_BYTES = 1024 * 1024
+
         private inline fun <T> traced(name: String, block: () -> T): T {
             Trace.beginSection(name)
             return try {
@@ -76,7 +81,19 @@ class LibArchiveSource private constructor(
                 .sortedWith(compareBy(NaturalOrder) { it.second })
             val pages = kept.mapIndexed { i, (_, name) -> Page(index = i, entryName = name) }
             val ordinals = IntArray(kept.size) { kept[it].first }
-            LibArchiveSource(openFd, pages, ordinals)
+            // Locate against the RAW entry list (ordinals must match nativeExtract), parse once;
+            // a missing, unreadable or malformed ComicInfo costs the metadata, not the open.
+            // Any failure below — unreadable entry, malformed XML, a sidecar too large to be
+            // real — costs the metadata, not the book. The cap is checked after extraction
+            // because the size limit would otherwise have to live in JNI; 1 MiB is far past
+            // any ComicInfo.xml a real scan carries.
+            val info = runCatching {
+                ComicInfoLoader.from(raw.map { String(it, Charsets.UTF_8) }) { ordinal ->
+                    val bytes = openFd().use { pfd -> LibArchive.nativeExtract(pfd.fd, ordinal) }
+                    bytes?.takeIf { it.size <= MAX_COMIC_INFO_BYTES }?.let { ordinal to it }
+                }
+            }.getOrNull()
+            LibArchiveSource(openFd, pages, ordinals, info)
         }
     }
 }

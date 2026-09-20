@@ -13,9 +13,10 @@ import com.absolutex.source.ComicSource
  * IOException for the reader's generic error path; only the container format itself returns
  * [RemoteOpenResult.DownloadRequired].
  *
- * TODO(lead): route absolutex-remote:// Uris to the injected RemoteBookOpener in
- * ReaderViewModel.open (feature/reader ReaderViewModel.kt, the context.openBook(uri) call) —
- * OpenBook stays local-only; the opener returns a ComicSource the reader already knows.
+ * `ReaderViewModel.open` (feature/reader) routes `absolutex-remote://` Uris here; OpenBook
+ * stays local-only. The reader calls [open] from its own open coroutine with no `NonCancellable`
+ * wrapper of its own — a cancel landing mid-open is this function's job to survive without
+ * leaking whatever it already opened (see the Hilt binding in `:feature:remote`'s RemoteModule).
  */
 interface RemoteBookOpener {
     /**

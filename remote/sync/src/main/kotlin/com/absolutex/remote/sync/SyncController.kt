@@ -6,6 +6,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -80,6 +82,21 @@ class SyncController @Inject constructor(
 
     private val _offers = MutableStateFlow<RemoteProgressOffer?>(null)
 
+    /**
+     * Serialises the full passes only: app start, manual sync, background, `syncNow` and
+     * `syncBooks`. Those can overlap (a slow start pull with a backgrounding mid-way), and two
+     * concurrent drain+pull runs would push the same outbox twice and interleave pull adoptions.
+     *
+     * Single-book lifecycle calls (`onBookOpened`, `onBookClosed`, `onPageSettled`) stay outside
+     * this lock on purpose, so a pass never blocks the reader-latency path. That exception is
+     * safe but not free: a book-close push and its trailing drain can still race a locked pass
+     * over the same entry. It stays benign because every `SyncQueue` mutation runs inside one
+     * DataStore `edit` (atomic), and every push re-reads the other side first — `ServerSync.sync`
+     * is compare-then-push, so two attempts for one book settle on one value instead of
+     * duplicating it. Coalescing the trailing drain into the mutex is deliberately out of scope.
+     */
+    private val runMutex = Mutex()
+
     /** Newer remote positions for the already-open book; the reader offers, never applies. */
     val progressOffers: StateFlow<RemoteProgressOffer?> = _offers.asStateFlow()
 
@@ -94,13 +111,17 @@ class SyncController @Inject constructor(
 
     /** App start / manual: flush the outbox, then adopt anything newer for known books. */
     suspend fun onAppStart() = withContext(Dispatchers.IO) {
-        runner.drainQueue()
-        runner.pullKnownBooks(openBookId) { _offers.value = it }
+        runMutex.withLock {
+            runner.drainQueue()
+            runner.pullKnownBooks(openBookId) { _offers.value = it }
+        }
     }
 
     suspend fun onManualSync() = withContext(Dispatchers.IO) {
-        runner.drainQueue()
-        runner.pullKnownBooks(openBookId) { _offers.value = it }
+        runMutex.withLock {
+            runner.drainQueue()
+            runner.pullKnownBooks(openBookId) { _offers.value = it }
+        }
     }
 
     /**
@@ -110,14 +131,16 @@ class SyncController @Inject constructor(
      * remembered from [onBookOpened]/[onBookClosed].
      */
     suspend fun onAppBackgrounded() = withContext(Dispatchers.IO) {
-        val open = openBookId
-        if (open != null) {
-            // Explicit pass: attempt even stopped servers, so a fixed password recovers
-            // here instead of waiting for a manual sync. Automatic triggers stay quiet.
-            runner.pushBook(open, attemptStopped = true)
+        runMutex.withLock {
+            val open = openBookId
+            if (open != null) {
+                // Explicit pass: attempt even stopped servers, so a fixed password recovers
+                // here instead of waiting for a manual sync. Automatic triggers stay quiet.
+                runner.pushBook(open, attemptStopped = true)
+            }
+            runner.drainQueue()
+            runner.pullKnownBooks(openBookId) { _offers.value = it }
         }
-        runner.drainQueue()
-        runner.pullKnownBooks(openBookId) { _offers.value = it }
     }
 
     /** Book open: pull only. Returns a position to adopt pre-first-paint, or null. */
@@ -144,14 +167,18 @@ class SyncController @Inject constructor(
 
     /** Folder browse / refresh for one server: flush its outbox, then pull through it. */
     suspend fun syncNow(serverId: String) = withContext(Dispatchers.IO) {
-        runner.syncServer(serverId, openBookId) { _offers.value = it }
+        runMutex.withLock {
+            runner.syncServer(serverId, openBookId) { _offers.value = it }
+        }
     }
 
     /** Pushes (and pulls) exactly these books — the browse/refresh trigger for a folder. */
     suspend fun syncBooks(bookIds: List<String>) = withContext(Dispatchers.IO) {
-        for (bookId in bookIds) {
-            runner.pushBook(bookId)
-            runner.pullBook(bookId, offerWhenOpen = true, openBookId, attemptStopped = true) { _offers.value = it }
+        runMutex.withLock {
+            for (bookId in bookIds) {
+                runner.pushBook(bookId)
+                runner.pullBook(bookId, offerWhenOpen = true, openBookId, attemptStopped = true) { _offers.value = it }
+            }
         }
     }
 
