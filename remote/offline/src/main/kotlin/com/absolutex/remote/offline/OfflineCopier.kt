@@ -130,9 +130,17 @@ class OfflineCopier(private val chunkBytes: Int = DEFAULT_CHUNK_BYTES) {
          * no ETag, no mtime — so the size is the only evidence available. Encoding it here
          * means a remote file that changed length cannot be resumed into, with no sidecar file
          * to keep in step. **The gap this leaves, stated rather than papered over:** a file
-         * edited without changing its length still resumes, splicing old bytes and new. A real
-         * validator belongs in RangeTransport and would close it; until then this catches the
-         * common case and the archive's own central directory catches much of the rest.
+         * edited without changing its length still resumes, splicing old bytes and new. Until a
+         * validator exists this catches the common case, and the archive's own central directory
+         * catches much of the rest.
+         *
+         * **The upgrade path, when [RangeTransport] gains a validator (an ETag, an mtime).**
+         * Resume must then **fail closed**: a part may be continued only when the stored
+         * validator is present *and* matches, and must be discarded otherwise. It must not fall
+         * back to matching on length when the validator is missing or unreadable — that is the
+         * failure this whole scheme already cannot detect, and falling back would reintroduce
+         * it precisely when a better answer had become available. Length stops being evidence
+         * the moment something stronger exists; it becomes a coincidence.
          */
         fun partFile(destination: File, total: Long): File =
             File(destination.parentFile, "${destination.name}.$total$PART_SUFFIX")
