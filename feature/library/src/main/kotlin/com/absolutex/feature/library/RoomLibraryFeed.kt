@@ -38,8 +38,7 @@ internal class RoomLibraryFeed @Inject constructor(
 ) : LibraryFeed {
 
     override val capabilities = LibraryCapabilities(
-        // Nothing stores a favourite: no column, no table, no preference. See setFavorite.
-        canFavorite = false,
+        canFavorite = true,
         canMarkRead = true,
         // No repository delete exists, and inventing one that removes a user's files from disk
         // is not a call this lane should make. See delete.
@@ -70,8 +69,21 @@ internal class RoomLibraryFeed @Inject constructor(
             .map { it.toUi(progress, prefs.useOriginalFilename) }
     }
 
-    override suspend fun setFavorite(paths: Set<String>, favorite: Boolean): LibraryNotice =
-        LibraryNotice.BatchUnsupported(UnsupportedReason.FAVOURITES_STORE_MISSING)
+    /**
+     * Sets or clears the favourite flag on a selection (§5.1 favourites shelf).
+     *
+     * The flag is a column on the book row rather than a side table, which is why
+     * [com.absolutex.core.data.LibraryDao.upsertPreservingAddedAt] has to carry it across a
+     * rescan the same way it carries `addedAt`: everything else about a book is re-derived from
+     * disk, but this the user set.
+     */
+    override suspend fun setFavorite(paths: Set<String>, favorite: Boolean): LibraryNotice {
+        if (paths.isEmpty()) return LibraryNotice.BatchApplied(count = 0, skipped = 0)
+        val known = repository.observeLibrary().first().map { it.path }.toSet()
+        val targets = paths.filter { it in known }
+        targets.forEach { repository.upsertFavorite(it, favorite) }
+        return LibraryNotice.BatchApplied(count = targets.size, skipped = paths.size - targets.size)
+    }
 
     /**
      * Marks a selection read, or clears its position.
@@ -126,8 +138,7 @@ internal class RoomLibraryFeed @Inject constructor(
             // The scanner leaves a container's count null; a position row knows it once opened.
             pageCount = pageCount ?: position?.pageCount?.takeIf { it > 0 },
             currentPage = position?.pageIndex,
-            // TODO(library): read from a real favourites store; see setFavorite.
-            isFavorite = false,
+            isFavorite = isFavorite,
         )
     }
 
