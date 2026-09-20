@@ -1,6 +1,7 @@
 package com.absolutex.remote.sync
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import com.absolutex.remote.core.InMemoryCredentialStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
