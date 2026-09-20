@@ -19,6 +19,9 @@ android {
 dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:gpu"))
+    // Reading history is stored here and shaped there: PageSettled is the domain type,
+    // and :core:stats is plain Kotlin/JVM so this costs no Android dependency.
+    implementation(project(":core:stats"))
     implementation(project(":core:scan"))
     // NaturalOrder, for the auto-advance lookup's filename ordering (§5.2).
     implementation(project(":source:api"))
