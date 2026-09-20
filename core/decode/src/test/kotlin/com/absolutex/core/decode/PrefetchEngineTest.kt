@@ -34,6 +34,8 @@ class PrefetchEngineTest {
         var autoComplete = true
         /** Pages whose decode reports OutOfMemory instead of completing. */
         val oomPages = mutableSetOf<Int>()
+        /** Pages that park non-cancellably and THEN report OutOfMemory when released. */
+        val parkThenOomPages = mutableSetOf<Int>()
         /** Pages whose decode reports Unreadable instead of completing. */
         val unreadablePages = mutableSetOf<Int>()
         /** Pages that park NON-cancellably, like a blocking native decodeRegion. */
@@ -59,9 +61,13 @@ class PrefetchEngineTest {
          */
         private suspend fun parkAndDecode(page: Int): DecodeOutcome {
             val gate = gates.getOrPut(page) { CompletableDeferred() }
-            if (page in nonCancellablePages) {
+            if (page in nonCancellablePages || page in parkThenOomPages) {
                 withContext(kotlinx.coroutines.NonCancellable) { gate.await() }
-                return DecodeOutcome.Decoded(FAKE_IMAGE)
+                return if (page in parkThenOomPages) {
+                    DecodeOutcome.OutOfMemory
+                } else {
+                    DecodeOutcome.Decoded(FAKE_IMAGE)
+                }
             }
             try {
                 gate.await()
@@ -314,6 +320,82 @@ class PrefetchEngineTest {
         h.decode.gates.getValue(12).complete(Unit)
         advanceUntilIdle()
         assertTrue(closer.isCompleted)
+        h.engine.dropAll()
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `a decode held across a book switch does not land into the new book`() = runTest {
+        // The lead's finding (b): dropAll() at book open cancels in-flight decodes, but a
+        // NON-CANCELLABLE decode (a blocking native call, per the fake above) outlives the
+        // drop and its completion then writes into the engine's book-agnostic resident map.
+        // Book B must not be billed for book A's page. If the engine has no way to express
+        // "which book", the difficulty of this test IS the finding.
+        val queued = StandardTestDispatcher(testScheduler)
+        val h = harness(decodeDispatcher = queued)
+        h.decode.autoComplete = false
+        h.decode.nonCancellablePages += 11 // book A's page, mid native call
+
+        // Book A: settle, decode 11 parks non-cancellably.
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 1)
+        advanceUntilIdle()
+
+        // Book B opens: dropAll (as ReaderViewModel.open does), then B reads page 10.
+        h.engine.dropAll()
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 1)
+        advanceUntilIdle()
+
+        // Book A's decode finally returns from its native call.
+        h.decode.gates.getValue(11).complete(Unit)
+        advanceUntilIdle()
+
+        // Book B's resident map must not contain page 11 — B never planned it — and B's
+        // budget must not be billed for it.
+        assertEquals(
+            "book A's late decode must not land into book B's resident set",
+            0,
+            h.engine.residentBytes,
+        )
+        h.engine.dropAll()
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `a stale OOM does not stop the new book's batch`() = runTest {
+        // The other half of the generation guard: book A's decode reporting OutOfMemory
+        // AFTER book B opened must not shed B's fresh batch — B would start degraded for
+        // a resource event that happened in a book the user already closed. Found by
+        // reasoning during the guard's fix, so this test pins it: guarded-but-unpinned
+        // survives one refactor and dies in the next.
+        val queued = StandardTestDispatcher(testScheduler)
+        val h = harness(decodeDispatcher = queued)
+        h.decode.autoComplete = false
+        h.decode.parkThenOomPages += 11 // book A's page: parks, then reports OOM on release
+
+        // Book A: settle, decode 11 parks non-cancellably.
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 1)
+        advanceUntilIdle()
+
+        // Book B opens: dropAll, then B settles and plans its own window (page 11 again,
+        // same index — the engine is book-agnostic, which is exactly why the guard needs
+        // to be a generation and not a page key).
+        var shed = 0
+        h.engine.onOutOfMemory = { shed++ }
+        h.engine.dropAll()
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 1)
+        advanceUntilIdle()
+        assertTrue("book B's own decode must be planned", 11 in h.decode.started)
+
+        // Book A's decode returns from its native call — reporting OOM.
+        h.decode.gates.getValue(11).complete(Unit)
+        advanceUntilIdle()
+
+        // The stale OOM must not have stopped B's batch or fired the host shed.
+        assertEquals("a stale OOM must not fire the host shed", 0, shed)
+        // And B's batch still plans: a further settle decodes ahead normally.
+        h.engine.onSettled(11, 200, PageLayout.SINGLE, depth = 1)
+        advanceUntilIdle()
+        assertTrue(12 in h.decode.started)
         h.engine.dropAll()
         advanceUntilIdle()
     }

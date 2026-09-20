@@ -82,6 +82,16 @@ class PrefetchEngine(
     @Volatile
     private var batchStopped = false
 
+    /**
+     * Book generation, bumped by [dropAll]. A decode that completes for a stale generation
+     * writes nothing: a non-cancellable decode (a blocking native call) can outlive the
+     * dropAll that a book switch performs, and its landing must not bill the NEW book's
+     * resident set for the OLD book's page. Without this, ordering is the only protection
+     * and ordering is not a guarantee — proven by the book-switch test.
+     */
+    @Volatile
+    private var generation = 0
+
     /** A settle: update direction, cancel behind-work, restore the budget, plan ahead. */
     fun onSettled(page: Int, pageCount: Int, layout: PageLayout, depth: Int) {
         if (page == settled) return
@@ -148,6 +158,9 @@ class PrefetchEngine(
 
     private fun launchDecode(target: Int) {
         val estimate = pageBytesEstimate(target)
+        // Capture the book generation at launch: this decode belongs to it, and a landing
+        // after dropAll() (a book switch) must not bill the new book.
+        val launchedGeneration = generation
         // LAZY start with register-then-run: with a synchronous dispatcher (Unconfined in
         // tests, or a decode that completes without suspending), the body can finish
         // inside scope.launch() BEFORE the inFlight put below would run — the finally's
@@ -159,9 +172,14 @@ class PrefetchEngine(
             try {
                 when (val outcome = decode(target)) {
                     is DecodeOutcome.Decoded -> {
-                        val actual = onDecoded(target, estimate, outcome.image)
-                        synchronized(resident) { resident[target] = actual }
-                        reconcile(protect = target)
+                        if (launchedGeneration == generation) {
+                            val actual = onDecoded(target, estimate, outcome.image)
+                            synchronized(resident) { resident[target] = actual }
+                            reconcile(protect = target)
+                        }
+                        // A stale landing writes nothing: the decode started for a book
+                        // that has since closed, and the image it produced is the host's
+                        // to manage through its own book-switch path.
                     }
                     DecodeOutcome.Unreadable ->
                         // A property of the page: done, not resident, no bytes. The
@@ -172,9 +190,13 @@ class PrefetchEngine(
                         // Resource event (docs/decode-oom-policy.md): shed everything,
                         // stop this batch, leave the page unmarked. The visible page's
                         // own path retries once with the budget actually freed.
-                        batchStopped = true
-                        dropAll()
-                        onOutOfMemory()
+                        // Guarded on generation: a stale OOM (book A's decode reporting
+                        // after book B opened) must not stop B's fresh batch.
+                        if (launchedGeneration == generation) {
+                            batchStopped = true
+                            dropAll()
+                            onOutOfMemory()
+                        }
                     }
                 }
             } finally {
@@ -217,6 +239,9 @@ class PrefetchEngine(
 
     /** Drops every prefetched page and cancels every in-flight decode. For book close/trim. */
     fun dropAll() {
+        // Invalidate every in-flight decode: a non-cancellable one can outlive this call,
+        // and its landing must not write into the next book's resident set.
+        generation++
         inFlight.values.forEach { it.job.cancel() }
         inFlight.clear()
         synchronized(resident) { resident.clear() }
