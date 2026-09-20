@@ -225,6 +225,10 @@ irreproducible and the `--check` gate worthless.
 | `21_epub_rtl.epub` | The same book declaring `page-progression-direction="rtl"` — how a manga EPUB says which way it reads. |
 | `22_tar.cbt` | A real TAR: its magic sits at offset **257**, not at the start, so a sniffer reading only the first bytes misses it. |
 | `23_cbz_with_pdf_inside.cbz` | A CBZ **storing a real PDF**, so `%PDF-` lands inside the first kibibyte. Searching for it before establishing the container hands a ZIP to PDFium. |
+| `24_comicinfo_malformed.cbz` | A sidecar that is not valid XML. The metadata is lost; the book is not. |
+| `25_comicinfo_oversized.cbz` | A sidecar past the 1 MiB parser cap — 1.5 MiB inflated from 5 KB, in an 8 KB file. |
+| `26_comicinfo_corrupt_entry.cbz` | A sidecar whose deflate stream is corrupt, so **extraction** fails rather than parsing. |
+| `27_comicinfo_two_sidecars.cbz` | A root sidecar and a nested one disagreeing; raw archive order decides which wins. |
 
 Two of those deserve an explanation.
 
@@ -234,6 +238,18 @@ wraps: reads below the line succeed, reads above it return garbage. Pages `tail0
 sit past the boundary specifically so that a truncated offset fails loudly. The bulk of the
 file is `STORED` filler under `filler/*.bin` — free to produce, and `EntryFilter` rejecting
 it by extension is itself worth asserting.
+
+**The four ComicInfo cases — why the sidecar needs its own row.** `01` already carries a
+well-formed sidecar at the archive root and `18` carries a nested, mixed-case one at a non-zero
+raw ordinal, so what was missing was every way a sidecar goes *wrong*. `24` cannot be parsed,
+`25` is refused by the 1 MiB cap before parsing is attempted, and `26` cannot be extracted at
+all — a distinction that matters, because that last one is the path a reader takes when the
+sidecar is damaged rather than merely wrong, and a loader that turns it into a thrown exception
+stops the book opening with pages that are perfectly readable. `27` pins the tie-break between
+two sidecars, which is a property of entry order rather than path depth.
+
+Verified against the production `ComicInfoLoader`: `24`, `25` and `26` each yield null metadata
+with all six pages intact, and `27` resolves to the root sidecar.
 
 **`20_epub_named_cbz.cbz` — why a duplicate earns its place.** It is the same bytes as `19`
 under a different name, and that is the entire test: a reader that opens one and not the other is
@@ -269,7 +285,7 @@ RAR5 through a clean-room implementation, so the reader carries no licence probl
 
 ### Reproducibility
 
-`corpus-expected-sha256.json` pins the digests of the 19 always-generated, pure-Python
+`corpus-expected-sha256.json` pins the digests of the 23 always-generated, pure-Python
 cases. `--check` regenerates and compares, which is how CI notices that a refactor quietly
 changed the corpus. The external-tool cases are not pinned (their encoders differ between
 versions) and neither is `17_huge_2gb.cbz` (opt-in).
