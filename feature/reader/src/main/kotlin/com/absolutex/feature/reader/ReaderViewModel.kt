@@ -143,6 +143,16 @@ class ReaderViewModel internal constructor(
     private var source: Closeable? = null
 
     /**
+     * Whether [source] is a remote book, which decides how it may be closed.
+     *
+     * A local close is in-process — a recycled bitmap, a native PDF handle. A remote one is a
+     * session teardown round trip: SMB logs off, FTP sends QUIT bounded only by its 30 s socket
+     * timeout. The flag is set where the book is opened rather than sniffed from the type, so
+     * the close path cannot be wrong about a source it did not open.
+     */
+    private var sourceIsRemote = false
+
+    /**
      * Page thumbnails for the chrome's strip, on their own caches and dispatcher so a strip scroll
      * can never starve the page being read. One per book: its disk entries are keyed by book.
      * Built lazily (see [ThumbPipelineHolder]), not in [open]: a book's first page never needs one.
@@ -231,8 +241,9 @@ class ReaderViewModel internal constructor(
             cacheSizeJob?.cancel()
             cacheSizeJob = applyCacheSizePref(appPrefs, tileCache)
 
+            val remote = uri.scheme == REMOTE_URI_SCHEME
             val opened = try {
-                if (uri.scheme == REMOTE_URI_SCHEME) {
+                if (remote) {
                     // No NonCancellable here: RemoteBookOpener.open is a real suspend fun, and
                     // per its own KDoc ("the reader calls it from its open coroutine, same as
                     // every other open path") a cancel is its own implementation's job to
@@ -269,20 +280,22 @@ class ReaderViewModel internal constructor(
             val (source0, identity) = opened
             val count = (source0 as? PdfDocument)?.pageCount ?: (source0 as ComicSource).pages.size
             if (generation != openGeneration.get()) {
-                runCatching { source0.close() }
+                closeSource(source0, remote)
                 return@launch
             }
             // Close the old source only now, immediately before replacing, so in-flight
             // page decodes against it fail cleanly instead of racing a premature close.
             val old = source
+            val oldWasRemote = sourceIsRemote
             source = source0
+            sourceIsRemote = remote
             // Closed now, but not rebuilt until first use (see ThumbPipelineHolder): its
             // disk-journal reconciliation is a real cost that must not land before the state
             // below, which gates the first page.
             thumbs.reset()
             openedUri = uri.toString()
             bookId = identity
-            runCatching { old?.close() }
+            closeSource(old, oldWasRemote)
             val resume = progressDao.get(bookId)?.pageIndex ?: 0
             // The previous book's settled page would otherwise stand in until the pager settles.
             settledPage = resume.coerceIn(0, (count - 1).coerceAtLeast(0))
@@ -441,8 +454,16 @@ class ReaderViewModel internal constructor(
         bases.clear()
         tileCache.clear()
         thumbs.reset()
-        runCatching { source?.close() }
+        // viewModelScope is already cancelled here and onCleared runs on Main, so a remote
+        // close gets the same detached treatment the pending progress write above does.
+        val closing = source
+        if (sourceIsRemote) {
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { runCatching { closing?.close() } }
+        } else {
+            runCatching { closing?.close() }
+        }
         source = null
+        sourceIsRemote = false
         super.onCleared()
     }
 
@@ -559,6 +580,23 @@ private suspend fun CoroutineScope.applyCacheSizePref(appPrefs: AppPrefsSource, 
  * Top-level, not a member of [ReaderViewModel]: the class is already at detekt's function-count
  * ceiling, and this needs nothing from it but [opener] and [uri].
  */
+/**
+ * Closes a book source without ever blocking Main.
+ *
+ * A remote close is network I/O (see [sourceIsRemote]), so it goes to the pool the
+ * transports already block on; a local close stays inline, because moving a PDF close to
+ * another thread would race in-flight renders for no benefit. NonCancellable: a cancelled
+ * or superseded open must still close what it opened.
+ */
+private suspend fun closeSource(handle: Closeable?, remote: Boolean) {
+    if (handle == null) return
+    if (remote) {
+        withContext(NonCancellable + DecodeDispatchers.extract) { runCatching { handle.close() } }
+    } else {
+        runCatching { handle.close() }
+    }
+}
+
 private suspend fun openRemote(opener: RemoteBookOpener, uri: Uri): Pair<Closeable, String> =
     when (val result = opener.open(uri.toString())) {
         is RemoteOpenResult.Ready -> result.source to result.identity

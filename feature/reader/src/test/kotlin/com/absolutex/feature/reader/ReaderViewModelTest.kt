@@ -2,6 +2,7 @@ package com.absolutex.feature.reader
 
 import android.content.Context
 import android.net.Uri
+import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import com.absolutex.core.data.ProgressDao
 import com.absolutex.core.data.ReadingProgress
@@ -11,11 +12,13 @@ import com.absolutex.core.gpu.Upscaler
 import com.absolutex.model.BookIdentity
 import com.absolutex.model.Page
 import com.absolutex.remote.core.REMOTE_URI_SCHEME
+import com.absolutex.remote.core.parseRemoteUri
 import com.absolutex.remote.core.RemoteBookOpener
 import com.absolutex.remote.core.RemoteOpenResult
 import com.absolutex.source.ComicSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -31,6 +34,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -40,6 +44,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.io.Closeable
 import java.io.IOException
 import java.io.InputStream
@@ -288,20 +293,48 @@ class ReaderViewModelTest {
         assertTrue("must never leak a credential", error?.contains("hunter2") != true)
     }
 
-    @Test fun `a remote book's identity matches the same file opened locally`() = test {
-        val name = "Watchmen 01.cbz"
-        val identity = BookIdentity.of(name, FakeRemoteBookOpener.SIZE_BYTES)
+    @Test fun `a remote book and the same file opened locally share one identity`() {
+        // Both sides run the real identity code for one file, rather than being handed a
+        // precomputed string: the local path derives it from the file's own name and length,
+        // the remote path from parseRemoteUri's decoding plus the size the transport reports.
+        // A decode that mangled the '+' — or a size taken from somewhere else — forks a
+        // reader's progress and bookmarks between the NAS copy and the local one, and that is
+        // exactly what this asserts cannot happen.
+        val name = "Batman + Robin 001.cbz"
+        val bytes = 4096L
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val file = File(context.cacheDir, name).apply { writeBytes(ByteArray(bytes.toInt())) }
 
-        val localVm = vm(BookOpener { _ -> FakeComicSource(name) to identity })
-        localVm.open(uri(name))
+        val local = context.identityOf(Uri.fromFile(file))
+        val parsed = parseRemoteUri("$REMOTE_URI_SCHEME://nas/" + Uri.encode(name))
+        val remote = BookIdentity.of(parsed.displayName, bytes)
+
+        assertEquals("the same book read two ways must key one history", local, remote)
+        file.delete()
+    }
+
+    @Test fun `closing a remote book never runs on the main thread`() = test {
+        // A remote close is a session teardown round trip — SMB logoff, FTP QUIT bounded only
+        // by a 30 s socket timeout — so running it inline on Main is an ANR against a NAS that
+        // has gone away. Opening a second book closes the first, which is the ordinary path.
+        val remote = FakeRemoteBookOpener()
+        val vm = vm(FakeBookOpener(), remote)
+        vm.open(remoteUri("first.cbz"))
+        advanceUntilIdle()
+        vm.open(remoteUri("second.cbz"))
         advanceUntilIdle()
 
-        val remoteVm = vm(FakeBookOpener(), FakeRemoteBookOpener())
-        remoteVm.open(remoteUri(name))
+        val closingThread = withTimeout(10_000) { remote.opened.first().closedOn.await() }
+        // The close runs on the pool, then the open coroutine resumes on Main; let that
+        // resumption land before the test ends, or teardown resets Main underneath it.
         advanceUntilIdle()
-
-        assertEquals(identity, localVm.ui.value.bookId)
-        assertEquals(localVm.ui.value.bookId, remoteVm.ui.value.bookId)
+        // Asserting the pool by name, not "not the main thread": under Robolectric the main
+        // looper's thread is not the one this coroutine runs on, so a not-equals check passes
+        // even when the close is inline — it proved nothing until it was made to fail first.
+        assertTrue(
+            "a remote close must run on the extract pool, not inline; ran on $closingThread",
+            closingThread.startsWith("extract-"),
+        )
     }
 
     private companion object {
@@ -329,10 +362,14 @@ private class FakeBookOpener : BookOpener {
 private class FakeComicSource(val name: String) : ComicSource {
     var closed = false
         private set
+
+    /** Completed with the thread that ran [close], so a caller can await the close itself. */
+    val closedOn = CompletableDeferred<String>()
     override val pages: List<Page> = listOf(Page(0, "page0.jpg"))
     override fun openPage(index: Int): InputStream = ByteArrayInputStream(ByteArray(0))
     override fun close() {
         closed = true
+        closedOn.complete(Thread.currentThread().name)
     }
 }
 

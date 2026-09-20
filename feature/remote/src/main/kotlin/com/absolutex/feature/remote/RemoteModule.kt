@@ -10,6 +10,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
 /**
@@ -48,7 +49,16 @@ object RemoteModule {
                 return try {
                     withContext(DecodeDispatchers.extract) { transport.open(uri).also { opened = it } }
                 } catch (e: CancellationException) {
-                    (opened as? RemoteOpenResult.Ready)?.source?.let { runCatching { it.close() } }
+                    // NonCancellable + the extract pool, not inline: this catch runs after
+                    // withContext has resumed the caller on ITS dispatcher, which is Main, and
+                    // closing a transport is a session teardown round trip (SMB logoff, FTP QUIT
+                    // bounded only by a 30 s socket timeout). Closing here directly would block a
+                    // frame — or the whole UI, against a NAS that has gone away.
+                    (opened as? RemoteOpenResult.Ready)?.source?.let { handle ->
+                        withContext(NonCancellable + DecodeDispatchers.extract) {
+                            runCatching { handle.close() }
+                        }
+                    }
                     throw e
                 }
             }
