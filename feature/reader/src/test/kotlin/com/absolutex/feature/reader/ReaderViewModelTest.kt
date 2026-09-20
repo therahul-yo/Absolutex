@@ -19,6 +19,7 @@ import com.absolutex.source.ComicSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -324,7 +325,17 @@ class ReaderViewModelTest {
         vm.open(remoteUri("second.cbz"))
         advanceUntilIdle()
 
-        val closingThread = withTimeout(10_000) { remote.opened.first().closedOn.await() }
+        val closing = remote.opened.first().closedOn
+        // withTimeout inside runTest bounds VIRTUAL time, not the wall clock: the moment this
+        // coroutine parks on await() the test scheduler has nothing runnable, so it advances
+        // straight to the deadline and the extract pool gets ~0 real milliseconds to answer.
+        // The test then passed only when the pool happened to finish first — measured, the 10 s
+        // bound fired after 3 ms of wall clock. Dispatchers.Default is not a Delay, so withTimeout
+        // falls back to DefaultDelay and the bound becomes real milliseconds, which is what a
+        // handoff to a real thread needs.
+        val closingThread = withContext(Dispatchers.Default) {
+            withTimeout(CLOSE_TIMEOUT_MS) { closing.await() }
+        }
         // The close runs on the pool, then the open coroutine resumes on Main; let that
         // resumption land before the test ends, or teardown resets Main underneath it.
         advanceUntilIdle()
@@ -339,6 +350,9 @@ class ReaderViewModelTest {
 
     private companion object {
         const val TOTAL_RAM_BYTES = 4L * 1024 * 1024 * 1024
+
+        /** Real milliseconds now, so it is a genuine bound rather than a virtual-clock no-op. */
+        const val CLOSE_TIMEOUT_MS = 10_000L
     }
 }
 
