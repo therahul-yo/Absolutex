@@ -53,6 +53,30 @@ class DatabaseSchemaTest {
         assertEquals(listOf("book_prefs", "bookmark", "library_book", "reading_progress"), tables(4))
     }
 
+    @Test fun `version 6 adds reading history and keeps everything before it`() {
+        // Also the guard that 6.json was exported at all: schema() fails if the file is absent,
+        // which is the mistake this class exists to catch.
+        assertEquals(
+            listOf("book_prefs", "bookmark", "library_book", "page_view", "reading_progress"),
+            tables(6),
+        )
+    }
+
+    @Test fun `reading history is indexed for the queries the stats screen runs`() {
+        val entities = schema(6).getJSONArray("entities")
+        val history = (0 until entities.length())
+            .map { entities.getJSONObject(it) }
+            .single { it.getString("tableName") == "page_view" }
+        val indices = history.optJSONArray("indices")
+        val indexed = (0 until (indices?.length() ?: 0))
+            .flatMap { i ->
+                val cols = indices!!.getJSONObject(i).getJSONArray("columnNames")
+                (0 until cols.length()).map { cols.getString(it) }
+            }
+        assertTrue("bookKey should be indexed: per-book totals look up by it", "bookKey" in indexed)
+        assertTrue("atEpochMs should be indexed: a window query ranges over it", "atEpochMs" in indexed)
+    }
+
     @Test fun `the library table is indexed for the queries the library actually runs`() {
         val entities = schema(2).getJSONArray("entities")
         val library = (0 until entities.length())
