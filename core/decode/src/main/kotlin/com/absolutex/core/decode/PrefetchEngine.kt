@@ -51,7 +51,7 @@ class PrefetchEngine(
     /** Actual bytes a decoded page holds, once it lands. */
     private val onDecoded: (page: Int, estimated: Long, image: PageImage) -> Long,
     /** Decode one page, classifying the outcome at the boundary that sees the cause. */
-    private val decode: suspend (page: Int) -> DecodeOutcome,
+    internal var decode: suspend (page: Int) -> DecodeOutcome,
 ) {
 
     private val inFlight = ConcurrentHashMap<Int, PrefetchEntry>()

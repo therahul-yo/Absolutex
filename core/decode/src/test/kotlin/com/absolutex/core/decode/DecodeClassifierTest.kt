@@ -1,5 +1,7 @@
 package com.absolutex.core.decode
 
+
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
@@ -12,25 +14,25 @@ import java.io.IOException
 class DecodeClassifierTest {
 
     @Test
-    fun `a successful decode is Decoded`() {
+    fun `a successful decode is Decoded`() = runTest {
         val outcome = DecodeClassifier.classify { FAKE }
         assertTrue(outcome is DecodeOutcome.Decoded)
     }
 
     @Test
-    fun `a null decoder result is Unreadable`() {
+    fun `a null decoder result is Unreadable`() = runTest {
         // Decoders signal some corrupt input by returning null rather than throwing.
         assertTrue(DecodeClassifier.classify { null } is DecodeOutcome.Unreadable)
     }
 
     @Test
-    fun `an OutOfMemoryError is a resource event, never Unreadable`() {
+    fun `an OutOfMemoryError is a resource event, never Unreadable`() = runTest {
         val outcome = DecodeClassifier.classify { throw OutOfMemoryError("bitmap") }
         assertTrue(outcome is DecodeOutcome.OutOfMemory)
     }
 
     @Test
-    fun `corrupt-input exceptions are Unreadable`() {
+    fun `corrupt-input exceptions are Unreadable`() = runTest {
         assertTrue(
             DecodeClassifier.classify { throw IOException("truncated") } is DecodeOutcome.Unreadable,
         )
@@ -41,11 +43,11 @@ class DecodeClassifierTest {
     }
 
     @Test
-    fun `unrelated Errors propagate instead of becoming unreadable pages`() {
+    fun `unrelated Errors propagate instead of becoming unreadable pages`() = runTest {
         // The policy's point: a broad catch would launder an assertion failure or a
         // StackOverflowError into "this page could not be read", which is false and
         // hides a real bug. These must escape.
-        val propagates: (Class<out Throwable>) -> Boolean = { type ->
+        val propagates: suspend (Class<out Throwable>) -> Boolean = { type ->
             try {
                 DecodeClassifier.classify {
                     throw type.getDeclaredConstructor(String::class.java).newInstance("x")

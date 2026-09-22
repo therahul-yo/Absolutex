@@ -27,7 +27,7 @@ object DecodeClassifier {
      *   (assertions, StackOverflowError) into "unreadable page", which is the exact
      *   failure mode the policy exists to prevent.
      */
-    fun classify(attempt: () -> PageImage?): DecodeOutcome = try {
+    suspend fun classify(attempt: suspend () -> PageImage?): DecodeOutcome = try {
         when (val image = attempt()) {
             null -> DecodeOutcome.Unreadable
             else -> DecodeOutcome.Decoded(image)
