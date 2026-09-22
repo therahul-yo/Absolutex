@@ -57,6 +57,51 @@ fun interface AuthorizedRequest {
 }
 
 /**
+ * A Graph download URL that re-resolves itself before it can go stale.
+ *
+ * [DriveItem.downloadUrl] is pre-authenticated and short-lived, so a transport holding one for
+ * the length of a big read would eventually present a dead URL — and because the refusal is a
+ * 401/403, that surfaces as "sign in again" when the account was never the problem. This caches
+ * one URL and re-resolves on a timer, so [HttpRangeTransport] can keep asking without ever
+ * knowing that URLs expire.
+ *
+ * **Cached, because the alternative is absurd.** The transport asks per *request*; a supplier
+ * that resolved every time would turn one ranged read into a Graph round trip per block — about
+ * 300 extra calls for a 300 MB book, which is the very cost streaming exists to avoid.
+ *
+ * **Single-flight, because reads fan out.** `readAt` is explicitly concurrent, so an expired URL
+ * expires for every in-flight read at once. Resolving under the lock means the losers wait for
+ * the winner's URL and find it already fresh, rather than each firing their own metadata call.
+ *
+ * **On the TTL.** Graph does not state the lifetime in the response, so this cannot be derived
+ * and is deliberately set far below any documented value. The asymmetry decides it: too long
+ * costs a user-visible, wrong sign-in prompt, while too short costs one cheap metadata GET —
+ * about thirty an hour, against the hundreds of ranged reads happening anyway.
+ *
+ * **What this still does not cover, stated rather than implied:** a URL that dies *before* its
+ * TTL — revoked, or Graph shortening the lifetime — is still refused, and the transport still
+ * reports that as [ReauthRequiredException]. Closing that needs the transport to distinguish
+ * "this URL is stale" from "this account is refused", which it deliberately cannot see.
+ */
+internal class CachedDownloadUrl(
+    initial: String,
+    private val ttlMillis: Long,
+    private val clock: () -> Long,
+    private val resolve: () -> String,
+) {
+    private val guard = Any()
+    private var url: String = initial
+    private var freshUntil: Long = clock() + ttlMillis
+
+    fun get(): String = synchronized(guard) {
+        if (clock() < freshUntil) return url
+        url = resolve()
+        freshUntil = clock() + ttlMillis
+        url
+    }
+}
+
+/**
  * OneDrive over Microsoft Graph, by raw REST — no provider SDK, per the lane's constraint.
  *
  * **Why metadata first and not `/content` directly.** Graph's `/items/{id}/content` answers
@@ -78,6 +123,8 @@ class GraphDrive(
     private val authorized: AuthorizedRequest,
     private val parser: GraphParser,
     private val baseUrl: String = GRAPH_BASE,
+    private val urlTtlMillis: Long = DOWNLOAD_URL_TTL_MS,
+    private val clock: () -> Long = System::currentTimeMillis,
     private val sleeper: (Long) -> Unit = Thread::sleep,
 ) {
 
@@ -110,9 +157,22 @@ class GraphDrive(
     @Throws(IOException::class)
     fun open(path: String): HttpRangeTransport {
         val item = itemAt(path)
+        val cached = CachedDownloadUrl(downloadUrlOf(item, path), urlTtlMillis, clock) {
+            downloadUrlOf(itemAt(path), path)
+        }
+        return HttpRangeTransport(http, cached::get, knownSizeBytes = item.sizeBytes, sleeper = sleeper)
+    }
+
+    /**
+     * An item's pre-authenticated download URL, or a clear refusal.
+     *
+     * Shared between the first resolution and every re-resolution on purpose: a path that has
+     * since become a folder, or lost its URL, must be refused the same way the second time as
+     * the first. Re-resolution is not a trusted path just because the first one succeeded.
+     */
+    private fun downloadUrlOf(item: DriveItem, path: String): String {
         if (item.isFolder) throw IOException("not a file: $path")
-        val url = item.downloadUrl ?: throw IOException("no download url for $path")
-        return HttpRangeTransport(http, url, knownSizeBytes = item.sizeBytes, sleeper = sleeper)
+        return item.downloadUrl ?: throw IOException("no download url for $path")
     }
 
     /** A GET carrying the account's token, retried only for throttling and only as asked. */
@@ -182,6 +242,14 @@ class GraphDrive(
         const val UNAVAILABLE = 503
         const val ITEM_NOT_FOUND = "itemNotFound"
         const val MAX_THROTTLE_RETRIES = 3
+
+        /**
+         * Two minutes. Not derived — Graph does not report the download URL's lifetime — so it
+         * is pitched far under any documented figure, because the two failure directions are
+         * not symmetric: too long shows the user a wrong sign-in prompt, too short costs one
+         * metadata GET.
+         */
+        const val DOWNLOAD_URL_TTL_MS = 2 * 60 * 1000L
 
         /**
          * Graph pages children 200 at a time, so this allows a 100,000-file library before

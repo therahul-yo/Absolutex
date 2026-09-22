@@ -43,12 +43,24 @@ class ReauthRequiredException(message: String) : IOException(message)
  *
  * **Secrets.** Auth arrives from [headers], read per request so a refreshed token is picked up
  * without rebuilding the transport. Nothing here logs, no header value is ever put in a message,
- * and no token is ever placed in [url] — messages carry the status and the range, never the
+ * and no token is ever placed in a message — those carry the status and the range, never the
  * credential and never the URL.
+ *
+ * **[url] is a supplier for the same reason [headers] is.** Some providers hand out a
+ * short-lived, pre-authenticated download URL rather than a stable one — Microsoft Graph's
+ * `@microsoft.graph.downloadUrl` is the case that forced this — and a transport that resolved
+ * once at construction would keep presenting a dead URL for the rest of a long read. Since the
+ * refusal arrives as 401/403, that would surface as [ReauthRequiredException] and tell the user
+ * to sign in again when their token was never the problem.
+ *
+ * Asking for a URL per request inverts that: this class stops knowing that URLs expire at all,
+ * and whoever supplies them owns the policy. "Resolve once at construction" was never true here
+ * anyway — one transport makes many requests — so the supplier only makes the existing shape
+ * honest. A stable URL costs `{ url }` at the call site.
  */
 class HttpRangeTransport(
     private val http: HttpCall,
-    private val url: String,
+    private val url: () -> String,
     knownSizeBytes: Long? = null,
     private val headers: () -> Map<String, String> = ::emptyMap,
     private val sleeper: (Long) -> Unit = Thread::sleep,
@@ -161,7 +173,9 @@ class HttpRangeTransport(
         while (true) {
             ensureOpen()
             calls.incrementAndGet()
-            val response = http.requestStream(GET, url, headers() + (RANGE to range))
+            // Resolved per request, not per transport: a supplier that re-resolves an expired
+            // URL takes effect on the next range without the book being reopened.
+            val response = http.requestStream(GET, url(), headers() + (RANGE to range))
             val retryMs = rateLimitDelayOrNull(response)
             if (retryMs == null) {
                 return abandonedUnlessPartial(response, range)

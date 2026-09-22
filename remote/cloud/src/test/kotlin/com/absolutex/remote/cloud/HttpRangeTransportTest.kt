@@ -30,7 +30,31 @@ class HttpRangeTransportTest {
         size: Long? = FILE_BYTES.toLong(),
         headers: () -> Map<String, String> = ::emptyMap,
         sleeper: (Long) -> Unit = {},
-    ) = HttpRangeTransport(http, "https://cloud.example/book.cbz", size, headers, sleeper)
+    ) = HttpRangeTransport(http, { "https://cloud.example/book.cbz" }, size, headers, sleeper)
+
+    // --- the url is a supplier ------------------------------------------------------------
+
+    @Test fun `the url is resolved per request, so a re-resolved one takes effect mid-read`() {
+        // The whole point of the widening: a provider whose download url expires mid-book must
+        // be able to hand over a new one without the book being reopened. A transport that
+        // resolved once at construction would keep asking the dead url for ever.
+        val fake = server()
+        var issued = 0
+        val transport = HttpRangeTransport(fake, { "https://cloud.example/book-${++issued}.cbz" }, FILE_BYTES.toLong())
+        transport.readAt(0, 16)
+        transport.readAt(64, 16)
+
+        assertEquals(listOf("https://cloud.example/book-1.cbz", "https://cloud.example/book-2.cbz"), fake.urlsSeen)
+    }
+
+    @Test fun `a stable url supplier is asked again but answers the same`() {
+        val fake = server()
+        val transport = transportOver(fake)
+        transport.readAt(0, 16)
+        transport.readAt(64, 16)
+        assertEquals(setOf("https://cloud.example/book.cbz"), fake.urlsSeen.toSet())
+        assertEquals("each range is still one request", 2, fake.urlsSeen.size)
+    }
 
     // --- honours Range ------------------------------------------------------------------
 

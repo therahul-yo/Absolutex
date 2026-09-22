@@ -192,6 +192,32 @@ class GraphDriveTest {
         assertEquals("bytes=0-3", ranged.headers["Range"])
     }
 
+    @Test fun `a long read re-resolves the download url instead of reusing a dead one`() {
+        // downloadUrl is short-lived. Without re-resolution a big book eventually asks a dead
+        // url, gets 401/403, and the reader tells the user to sign in when nothing is wrong
+        // with their account.
+        var now = 0L
+        var issued = 0
+        val http = FakeGraph().apply { enqueue(200); enqueue(200) }
+        val parser = object : GraphParser {
+            override fun page(body: String) = DrivePage(emptyList(), null)
+            override fun item(body: String) =
+                DriveItem("id", "a.cbz", 4, isFolder = false, downloadUrl = "https://storage.example/d${++issued}")
+            override fun errorCode(body: String): String? = null
+        }
+        val drive = GraphDrive(http, authorized, parser, BASE, urlTtlMillis = TTL, clock = { now }) { }
+
+        drive.open("/Comics/a.cbz").use { transport ->
+            transport.readAt(0, 4)
+            now += TTL
+            transport.readAt(0, 4)
+        }
+
+        assertEquals("the second read must use the re-resolved url",
+            listOf("https://storage.example/d1", "https://storage.example/d2"), http.ranged.map { it.url })
+        assertEquals("re-resolution costs exactly one extra metadata call", 2, http.sent.size)
+    }
+
     @Test fun `opening a folder is refused rather than range-read`() {
         val http = FakeGraph().apply { enqueue(200) }
         val parser = FakeParser(item = DriveItem("id", "Comics", 0, isFolder = true, downloadUrl = null))
@@ -267,5 +293,6 @@ class GraphDriveTest {
     private companion object {
         const val BASE = "https://graph.microsoft.com/v1.0"
         const val DOWNLOAD = "https://storage.example/download?pre=authenticated"
+        const val TTL = 120_000L
     }
 }
