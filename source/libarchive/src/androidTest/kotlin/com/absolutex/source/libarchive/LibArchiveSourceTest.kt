@@ -83,6 +83,16 @@ class LibArchiveSourceTest {
         }
     }
 
+    @Test fun truncated_archive_reports_payloads_without_renumbering_pages() {
+        open("11_truncated.cbz").use { src ->
+            assertEquals(14, src.pages.size)
+            assertEquals((0 until 14).toList(), src.pages.map { it.index })
+            assertEquals(com.absolutex.source.PageReadability(13, 20), src.pageReadability)
+            repeat(13) { assertTrue(src.openPage(it).use { stream -> stream.readBytes().isNotEmpty() }) }
+            assertTrue(runCatching { src.openPage(13).close() }.exceptionOrNull() is java.io.IOException)
+        }
+    }
+
     @Test fun an_archive_without_comicinfo_opens_with_null_metadata() {
         open("02_no_comicinfo.cbz").use { src ->
             assertEquals(12, src.pages.size)

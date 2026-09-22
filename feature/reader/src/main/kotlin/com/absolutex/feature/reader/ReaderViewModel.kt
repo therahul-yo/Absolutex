@@ -72,6 +72,8 @@ data class ReaderUiState(
     /** Scopes cached tiles to this book. Empty until a book is open. */
     val bookId: String = "",
     val error: String? = null,
+    /** Payload recovery report, never used as the pager/progress count. */
+    val recoveryNotice: String? = null,
 )
 
 @HiltViewModel
@@ -305,6 +307,7 @@ class ReaderViewModel internal constructor(
                 pageCount = count,
                 bookId = bookId,
                 currentPage = settledPage,
+                recoveryNotice = recoveryNoticeFor(context, source0),
             )
             // After the state that gates the first page: contents are chrome, and a PDF outline is
             // a JNI call whose cost must not land in the tap-to-first-page budget.
@@ -580,6 +583,17 @@ private suspend fun CoroutineScope.applyCacheSizePref(appPrefs: AppPrefsSource, 
  * Top-level, not a member of [ReaderViewModel]: the class is already at detekt's function-count
  * ceiling, and this needs nothing from it but [opener] and [uri].
  */
+/**
+ * The payload-recovery notice for a freshly opened source, or null when it reported none.
+ *
+ * Top-level, like [closeSource] below, and for the same reason: inlined at the call site the
+ * safe cast and the null-chain cost a branch each in `open`, which detekt's cyclomatic limit has
+ * no room for — and as a member it would put the class over its function limit. Both limits are
+ * right; `open` is already the longest decision path in this file.
+ */
+private fun recoveryNoticeFor(context: Context, source: Closeable): String? =
+    (source as? ComicSource)?.pageReadability?.let { context.recoveryNotice(it) }
+
 /**
  * Closes a book source without ever blocking Main.
  *

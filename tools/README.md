@@ -210,6 +210,33 @@ are skipped rather than guessed at.
   count differs between locales is a real bug and would need its own rule.
 - **Nothing checks whether a translation is any good.** This proves structure, never meaning.
   That is what the milestone 5 review status is for, and no gate substitutes for it.
+## Benign encrypted-archive regression
+
+Run `sh tools/test-archive-password.sh` on macOS with JDK 21 and Homebrew libarchive.
+It decodes the checked-in `source/libarchive/src/androidTest/assets/encrypted-zipcrypto.cbz.b64`
+into build output, checks SHA-256, and exercises the real JNI bridge under `-Xcheck:jni`:
+password required, wrong password, correct PNG and ComicInfo payloads, no password reuse
+between native calls, and an ordinary ZIP regression. Android instrumentation bundles the
+same asset; no device-side corpus staging is required. `sh tools/test-archive-recovery.sh`
+continues to verify slice A against the already-generated `build/corpus/11_truncated.cbz`.
+
+The tiny fixture was authored here using `/usr/bin/zip -X -0 -P corpus-only` over `001.png`
+(a 1×1 PNG) and `ComicInfo.xml` (series `Encrypted fixture`, PageCount 1), each with a fixed
+2000-01-01 mtime. **`corpus-only` is a public, nonsecret test password.** Info-ZIP generates
+random encryption headers, so rerunning zip is not byte-deterministic. Instead the frozen
+base64 seed is decoded deterministically; the resulting archive's pinned SHA-256 is
+`c685663840fc953c7c4e0b70e324400317d97130b4707d3a779cc2afa9c3848b`.
+No third-party comic, exploit or malformed payload is included.
+
+Capability limits: the Android build supports traditional ZIP/ZipCrypto decryption through
+libarchive, not WinZip AES (no crypto backend is added). Upstream libarchive 3.8.9 does not
+support encrypted RAR4/RAR5 or 7z decryption. Known unsupported diagnostics have their own
+exception; CRC/data errors are not falsely labelled wrong passwords. The host's crypto
+capabilities may differ. Encrypted entries are validated at open, so this path costs a full
+payload read; ordinary archive listing/recovery behavior is unchanged. No cache or parallel
+extraction changes are included. Password bytes are held only by the live encrypted source,
+cleared at close/failed open, and copied briefly per native call. libarchive frees its own
+internal copies; secure erasure of all library/JVM memory cannot be guaranteed.
 
 ## `make-corpus.py` — the hostile test corpus (spec §8)
 

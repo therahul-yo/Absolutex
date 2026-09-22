@@ -16,6 +16,7 @@ import com.absolutex.remote.core.parseRemoteUri
 import com.absolutex.remote.core.RemoteBookOpener
 import com.absolutex.remote.core.RemoteOpenResult
 import com.absolutex.source.ComicSource
+import com.absolutex.source.PageReadability
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeout
@@ -345,6 +346,36 @@ class ReaderViewModelTest {
         assertTrue(
             "a remote close must run on the extract pool, not inline; ran on $closingThread",
             closingThread.startsWith("extract-"),
+        )
+    }
+
+    @Test fun `recovery notice does not change pagination and clears on the next book`() = test {
+        val damaged = object : ComicSource {
+            override val pages = List(14) { Page(it, "page$it.png") }
+            override val pageReadability = PageReadability(13, 20)
+            override fun openPage(index: Int): InputStream = ByteArrayInputStream(ByteArray(0))
+            override fun close() = Unit
+        }
+        val vm = vm(object : BookOpener {
+            override suspend fun open(uri: Uri): Pair<Closeable, String> =
+                (if (uri.lastPathSegment == "damaged") damaged else FakeComicSource("normal")) to uri.toString()
+        })
+        vm.open(uri("damaged"))
+        advanceUntilIdle()
+        assertEquals(14, vm.ui.value.pageCount)
+        assertEquals("13 of 20 pages readable", vm.ui.value.recoveryNotice)
+        vm.open(uri("normal"))
+        assertEquals(null, vm.ui.value.recoveryNotice)
+        advanceUntilIdle()
+        assertEquals(1, vm.ui.value.pageCount)
+        assertEquals(null, vm.ui.value.recoveryNotice)
+    }
+
+    @Test fun `recovery notice never invents a missing total`() = test {
+        val context: Context = ApplicationProvider.getApplicationContext()
+        assertEquals(
+            "13 pages readable (total unknown)",
+            context.recoveryNotice(PageReadability(13, null)),
         )
     }
 
