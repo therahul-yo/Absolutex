@@ -14,6 +14,7 @@ import com.absolutex.core.scan.LibraryScanner
 import com.absolutex.core.scan.SafScanner
 import com.absolutex.core.scan.TreeEntry
 import com.absolutex.model.BookIdentity
+import com.absolutex.source.ComicSource
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -86,6 +87,61 @@ class OpenBookTest {
         assertEquals(scanSideKey, context.identityOf(folderUri))
     }
 
+    // ---- PR: the reader can now OPEN a folder book, not just key it ------------------------
+
+    @Test fun `a filesystem folder book opens, with its pages in natural order`() {
+        // The library has listed folder books since the scanner landed; until now opening one
+        // reached openDescriptor() with a directory and failed. "10" must land after "2".
+        val dir = tmp.newFolder("Loose Pages")
+        for (name in listOf("10.jpg", "2.jpg", "1.jpg", "notes.txt")) {
+            File(dir, name).writeBytes(ByteArray(PAGE_1_BYTES))
+        }
+
+        val source = context.openBook(Uri.fromFile(dir)) as ComicSource
+        assertEquals(listOf("1.jpg", "2.jpg", "10.jpg"), source.pages.map { it.entryName })
+    }
+
+    @Test fun `a folder book's pages read their own bytes`() {
+        val dir = tmp.newFolder("Readable")
+        File(dir, "001.jpg").writeBytes("first".toByteArray())
+        File(dir, "002.jpg").writeBytes("second".toByteArray())
+
+        val source = context.openBook(Uri.fromFile(dir)) as ComicSource
+        assertEquals("first", String(source.openPage(0).use { it.readBytes() }))
+        assertEquals("second", String(source.openPage(1).use { it.readBytes() }))
+    }
+
+    @Test fun `a folder book's page set is the same set its identity is summed from`() {
+        // The two must never diverge: identity keys progress and bookmarks, and a page list
+        // built from a different set would silently orphan them.
+        val dir = tmp.newFolder("Consistent")
+        File(dir, "001.jpg").writeBytes(ByteArray(PAGE_1_BYTES))
+        File(dir, "002.jpg").writeBytes(ByteArray(PAGE_2_BYTES))
+        File(dir, "003.jpg").writeBytes(ByteArray(PAGE_3_BYTES))
+        File(dir, "notes.txt").writeBytes(ByteArray(9_999))
+
+        val source = context.openBook(Uri.fromFile(dir)) as ComicSource
+        assertEquals(TOTAL_BYTES, source.pages.sumOf { it.sizeBytes })
+        assertEquals(BookIdentity.of("Consistent", TOTAL_BYTES), context.identityOf(Uri.fromFile(dir)))
+    }
+
+    @Test fun `a SAF folder book opens, with its pages in natural order`() = runTest {
+        val provider = Robolectric.buildContentProvider(FakeDocumentsProvider::class.java).create(AUTHORITY).get()
+        provider.addDoc("root", parentId = null, name = "Comics", mime = DocumentsContract.Document.MIME_TYPE_DIR)
+        provider.addDoc("folder", "root", "Loose Pages", DocumentsContract.Document.MIME_TYPE_DIR)
+        provider.addDoc("p10", "folder", "10.jpg", "image/jpeg", PAGE_1_BYTES.toLong())
+        provider.addDoc("p2", "folder", "2.jpg", "image/jpeg", PAGE_2_BYTES.toLong())
+        provider.addDoc("p1", "folder", "1.jpg", "image/jpeg", PAGE_3_BYTES.toLong())
+
+        val treeUri = DocumentsContract.buildTreeDocumentUri(AUTHORITY, "root")
+        val folderUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, "folder")
+
+        val source = context.openBook(folderUri) as ComicSource
+        assertEquals(listOf("1.jpg", "2.jpg", "10.jpg"), source.pages.map { it.entryName })
+        // Sizes travel with their page through the sort, so the identity sum stays the same set.
+        assertEquals(TOTAL_BYTES, source.pages.sumOf { it.sizeBytes })
+    }
+
     private companion object {
         const val PAGE_1_BYTES = 100
         const val PAGE_2_BYTES = 250
@@ -136,7 +192,12 @@ class FakeDocumentsProvider : ContentProvider() {
         addRow(arrayOf<Any?>(doc.name, doc.size, doc.mime))
     }
 
-    override fun getType(uri: Uri): String? = null
+    /**
+     * Real, not a stub: the SAF route recognises a folder book by its MIME type, so a fake that
+     * answered null would make the folder branch untestable and quietly pass by not being taken.
+     */
+    override fun getType(uri: Uri): String? =
+        docs[runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull()]?.mime
     override fun insert(uri: Uri, values: ContentValues?): Uri? = null
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<String>?) = 0
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<String>?) = 0
