@@ -15,12 +15,19 @@ grid mirrored for RTL, immersive chrome with a seek bar, a thumbnail strip, book
 of contents, page export, keyboard, gamepad and volume-key control, and progress that resumes
 the last book on launch.
 
-**Around it:** a library scanner with a filesystem watcher, a library screen, a settings surface,
-a thumbnail pipeline, and remote modules for SMB, FTP/FTPS and Komga/Kavita progress sync.
+It also has page transitions, per-book reading flow and layout overrides, an AGSL colour
+pipeline with GPU crop, Mitchell/Lanczos upscaling and an automatic background colour.
 
-**Not yet built:** the AGSL colour pipeline, GPU crop and auto background colour; transitions;
-the library as the app's home screen (it still opens a file picker); remote sources reachable
-from the UI. See [Roadmap](#roadmap).
+**Around it:** the library is the app's home screen, with the reader and settings as
+destinations. A parallel scanner with a filesystem watcher keeps it live, and there is a
+thumbnail pipeline, a settings surface, and remote modules for SMB, FTP/FTPS and Komga/Kavita
+progress sync, wired into the app.
+
+**Not yet built:** a way in to the remote servers from the UI. Their destinations are registered
+and their transports ship, but nothing navigates to them yet — see the `TODO` in
+`feature/remote/.../RemoteNav.kt`. Folder browsing over a remote share, offline copies and cloud
+accounts are in review rather than merged; the roadmap names the pull request for each.
+See [Roadmap](#roadmap).
 
 ## Platform floor
 
@@ -242,11 +249,11 @@ permission monitoring* is on **and the phone has been rebooted since**.
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Audit, licensing gates, platform decisions | done |
-| 2 | Scaffold + CBZ/CBR vertical slice | working; page turn measured (see above) |
-| 3 | Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | tiles done; colour and crop next |
-| 4 | Library: parallel scanner, metadata, home, browse, search | scanner, watcher and screen done; not yet the home screen |
-| 5 | Reader depth: layouts, flows, transitions, bookmarks, TOC, input devices | done except transitions and per-book overrides |
-| 6 | Formats: 7z, TAR, PDFium, image folders, full codec set | archives and PDF done; image folders open in the library only |
-| 7 | Settings surface | done, not yet reachable from the app shell |
-| 8 | Remote: SMB streaming, FTP, Komga/Kavita sync | FTP and sync modules merged; SMB in review; no UI yet |
-| 9 | NPU upscaling R&D, release polish | |
+| 2 | Scaffold + CBZ/CBR vertical slice | done; page turn measured (see above) |
+| 3 | Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | tiles, colour (#22), upscaling (#24), crop (#25) and auto background (#26) done; prefetch engine in review (#77) |
+| 4 | Library: parallel scanner, metadata, home, browse, search | done, and the launch destination; live updates merged (#63) |
+| 5 | Reader depth: layouts, flows, transitions, bookmarks, TOC, input devices | done, transitions and per-book overrides included |
+| 6 | Formats: 7z, TAR, PDFium, image folders, full codec set | archives, PDF and image folders (#76) open in the reader; recovery, encryption and indexed extraction in review (#39) |
+| 7 | Settings surface | done and reachable from the library |
+| 8 | Remote: SMB streaming, FTP, Komga/Kavita sync | transports and sync merged and wired into the app; browse UI in review (#50), and nothing navigates to the servers list yet |
+| 9 | NPU upscaling R&D (§4 M6); release polish: licence, signing, launcher icon, baseline profiles | R&D done and the verdict is **no** — see [`docs/npu-sr-report.md`](docs/npu-sr-report.md); Apache-2.0 (#70), signing config, licences screen and launcher icon (#56) done |
