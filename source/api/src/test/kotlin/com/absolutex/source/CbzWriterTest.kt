@@ -155,3 +155,53 @@ class CbzWriterTest {
         assertEquals(emptyList<ReadEntry>(), readBack(writeToBytes(emptyList())))
     }
 }
+
+/** The ComicInfo.xml an export carries, and how it differs from the pages around it. */
+class CbzWriterComicInfoTest {
+
+    private val info = com.absolutex.model.ComicInfo(
+        series = "Absolute Batman",
+        number = com.absolutex.model.IssueNumber.parse("1"),
+        pageCount = 2,
+    )
+
+    @Test
+    fun `no metadata is written when none is given`() {
+        val names = readBack(writeToBytes(pagesOf(2))).map { it.name }
+        assertEquals(listOf("001.jpg", "002.jpg"), names)
+    }
+
+    /** First, so a reader streaming the archive meets the metadata before the pages. */
+    @Test
+    fun `ComicInfo is written first, ahead of the pages`() {
+        val names = readBack(cbzWith(info)).map { it.name }
+        assertEquals(listOf("ComicInfo.xml", "001.jpg", "002.jpg"), names)
+    }
+
+    /**
+     * Markup compresses and images do not, which is the whole reason the pages are STORED. Pinning
+     * the method keeps a later "make everything consistent" tidy-up from silently storing the XML
+     * — or, worse, deflating the images.
+     */
+    @Test
+    fun `ComicInfo is deflated while the pages stay stored`() {
+        val entries = readBack(cbzWith(info)).associateBy { it.name }
+        assertEquals(ZipEntry.DEFLATED.toLong(), entries.getValue("ComicInfo.xml").method.toLong())
+        assertEquals(ZipEntry.STORED.toLong(), entries.getValue("001.jpg").method.toLong())
+    }
+
+    @Test
+    fun `the metadata in the archive parses back to what went in`() {
+        val xml = readBack(cbzWith(info)).first { it.name == "ComicInfo.xml" }.body.toString(Charsets.UTF_8)
+        assertEquals(info, ComicInfoParser.parse(xml))
+    }
+
+    /** An archive carrying metadata must still export identically twice on one device. */
+    @Test
+    fun `an archive with metadata is still reproducible`() {
+        assertArrayEquals(cbzWith(info), cbzWith(info))
+    }
+
+    private fun cbzWith(info: com.absolutex.model.ComicInfo): ByteArray =
+        ByteArrayOutputStream().also { writeCbz(pagesOf(2), it, info) }.toByteArray()
+}

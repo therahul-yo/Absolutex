@@ -1,5 +1,6 @@
 package com.absolutex.source
 
+import com.absolutex.model.ComicInfo
 import java.io.OutputStream
 import java.nio.file.attribute.FileTime
 import java.util.zip.CRC32
@@ -73,10 +74,22 @@ fun cbzEntryName(index: Int, pageCount: Int, originalName: String): String {
  * unfinished and no central directory written, which is deliberate: a CBZ that silently skipped
  * the pages it could not read would be a quietly wrong book rather than a failed export.
  *
+ * [comicInfo], when given, is written first as ComicInfo.xml so the export keeps the book's
+ * series, number and page metadata instead of handing back an archive of anonymous images.
+ *
  * @throws java.io.IOException if a page cannot be read or [out] cannot be written.
  */
-fun writeCbz(pages: List<CbzPage>, out: OutputStream) {
+fun writeCbz(pages: List<CbzPage>, out: OutputStream, comicInfo: ComicInfo? = null) {
     val zip = ZipOutputStream(out)
+    // First, so a reader streaming the archive has the book's metadata before its pages, and
+    // deflated, unlike them: ComicInfo.xml is markup and genuinely compresses, which is the same
+    // reasoning that keeps the images stored.
+    comicInfo?.let { info ->
+        val xml = writeComicInfoXml(info).toByteArray(Charsets.UTF_8)
+        zip.putNextEntry(deflatedEntry(COMIC_INFO_ENTRY))
+        zip.write(xml)
+        zip.closeEntry()
+    }
     pages.forEachIndexed { index, page ->
         val bytes = page.open().use { it.readBytes() }
         zip.putNextEntry(storedEntry(cbzEntryName(index, pages.size, page.entryName), bytes))
@@ -93,5 +106,11 @@ private fun storedEntry(name: String, bytes: ByteArray): ZipEntry = ZipEntry(nam
     size = bytes.size.toLong()
     compressedSize = bytes.size.toLong()
     crc = CRC32().apply { update(bytes) }.value
+    setLastModifiedTime(FIXED_ENTRY_TIME)
+}
+
+/** Deflated and self-describing: unlike a STORED entry, the sizes and CRC follow the data. */
+private fun deflatedEntry(name: String): ZipEntry = ZipEntry(name).apply {
+    method = ZipEntry.DEFLATED
     setLastModifiedTime(FIXED_ENTRY_TIME)
 }
