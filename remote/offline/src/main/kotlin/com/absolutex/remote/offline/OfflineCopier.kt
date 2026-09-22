@@ -99,6 +99,13 @@ class OfflineCopier(private val chunkBytes: Int = DEFAULT_CHUNK_BYTES) {
                 copied += chunk.size.toLong()
                 onProgress(copied, total)
             }
+            // The rename in publish() is atomic against process death, not against power loss:
+            // it moves the inode, and the data pages behind it may still be dirty. Without this,
+            // a battery dying after the rename leaves a destination of exactly the right length
+            // with a torn tail — which copy() then trusts as Complete on every later run, since
+            // it checks length alone. Flushing before the .part is closed is what makes the
+            // "never a plausible-looking truncated archive" promise hold on a phone.
+            out.channel.force(true)
         }
         return copied
     }
