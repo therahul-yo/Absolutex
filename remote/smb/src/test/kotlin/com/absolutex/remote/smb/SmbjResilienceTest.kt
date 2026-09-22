@@ -2,6 +2,7 @@ package com.absolutex.remote.smb
 
 import com.absolutex.remote.core.CredentialExpiredException
 import com.absolutex.remote.core.TransportAuthException
+import com.absolutex.remote.core.TransportPermanentException
 import com.absolutex.remote.core.TransientExhaustedException
 import com.hierynomus.mssmb2.SMB2MessageCommandCode
 import com.hierynomus.mssmb2.SMBApiException
@@ -81,7 +82,7 @@ class SmbjResilienceTest {
         }
     }
 
-    private fun transport(connection: ScriptedConnection, connects: AtomicInteger): SmbjTransport {
+    private fun transport(connection: SmbConnection, connects: AtomicInteger): SmbjTransport {
         val connector = object : SmbConnector {
             override fun connect(password: CharArray): SmbConnection {
                 connects.incrementAndGet()
@@ -177,6 +178,35 @@ class SmbjResilienceTest {
         assertEquals(2, connects.get())
     }
 
+    @Test fun `replaced file between attempts fails closed, never spliced`() {
+        // Proves the identity pin: size 16 pinned, first read fails transient, the
+        // re-stat sees size 8 → permanent before any second transfer runs. Without
+        // the recheck the retry would silently serve the new version's bytes.
+        val big = ScriptedHandle(ByteArray(16) { it.toByte() })
+        val flakyBig = object : RemoteFileHandle {
+            override val length: Long get() = 16L
+            override fun read(buffer: ByteArray, fileOffset: Long, bufferOffset: Int, length: Int): Int =
+                throw SocketException("connection reset")
+            override fun close() = Unit
+        }
+        val small = ScriptedHandle(ByteArray(8) { it.toByte() })
+        var opens = 0
+        val connection = object : SmbConnection {
+            override fun openFile(remotePath: String): RemoteFileHandle {
+                opens++
+                return if (opens == 2) flakyBig else if (opens < 2) big else small
+            }
+            override fun close() = Unit
+        }
+        val connects = AtomicInteger(0)
+        val failure = failsWith<TransportPermanentException> {
+            transport(connection, connects).readAt("books/b.cbz", 0, 8)
+        }
+        assertTrue(failure.message?.contains("changed") == true)
+        assertEquals(2, connects.get())
+        assertEquals(3, opens)
+    }
+
     @Test fun `missing file never retried and typed as not found`() {
         // Proves definitive failures skip the loop: the old reconnect-once would dial
         // twice here; now a missing object costs one attempt and a typed error.
@@ -270,7 +300,9 @@ class SmbjResilienceTest {
 
     @Test fun `interrupted read keeps its shape and never retries`() {
         // Proves cancellation is not transient: an interrupted read must surface
-        // immediately (one connect) instead of sleeping through backoff.
+        // immediately (one connect) instead of sleeping through backoff. The identity
+        // stat runs before the read, so the interrupt maps at the stat — same
+        // IOException contract, same single attempt.
         val connection = ScriptedConnection(ScriptedHandle(ByteArray(8)), script = {
             throw InterruptedException("interrupted during read")
         })
@@ -279,7 +311,7 @@ class SmbjResilienceTest {
             transport(connection, connects).readAt("books/b.cbz", 0, 8)
             throw AssertionError("expected IOException")
         } catch (expected: IOException) {
-            assertTrue(expected.message?.contains("smb read failed") == true)
+            assertTrue(expected.message?.contains("smb stat failed") == true)
         }
         assertEquals(1, connects.get())
     }

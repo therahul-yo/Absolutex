@@ -5,13 +5,13 @@ import com.absolutex.remote.core.RetryPolicy
 import com.absolutex.remote.core.TransportAuthException
 import com.absolutex.remote.core.TransportInvalidator
 import com.absolutex.remote.core.TransportPermanentException
-import com.absolutex.remote.core.TransientExhaustedException
 import com.absolutex.remote.core.TransientTransportException
-import com.absolutex.remote.core.isTransient
+import com.absolutex.remote.core.withBoundedRetry
 import java.io.Closeable
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.InputStream
+import kotlinx.coroutines.runBlocking
 import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPReply
@@ -62,7 +62,7 @@ class CommonsNetFtpTransport(
     private val retryPolicy: RetryPolicy = RetryPolicy()
 
     override fun sizeBytes(path: String): Long = synchronized(lock) {
-        retrying("stat") { live ->
+        retrying { live ->
             // MLST first, LIST fallback: some servers implement only one of the two listings.
             val direct = runCatching { live.mlistFile(path) }.getOrNull()
             val listed = direct ?: runCatching { live.listFiles(path).firstOrNull() }.getOrNull()
@@ -76,14 +76,27 @@ class CommonsNetFtpTransport(
         require(offset >= MIN_OFFSET) { "negative FTP offset: $offset" }
         require(length >= MIN_LENGTH) { "negative FTP length: $length" }
         if (length == EMPTY_LENGTH) return@synchronized ByteArray(EMPTY_LENGTH)
-        return@synchronized retrying("read") { live -> transfer(live, path, offset, length) }
+        // Identity pinned on first attempt, rechecked after every reconnect: same path,
+        // replaced file between attempts, must fail closed — two versions spliced into
+        // one page would corrupt silently, which is worse than failing.
+        var identity: Long? = null
+        fun checkIdentity() {
+            val size = sizeBytes(path)
+            val baseline = identity
+            if (baseline == null) identity = size
+            else if (size != baseline) throw TransportPermanentException("ftp file changed during read: $path")
+        }
+        return@synchronized retrying { live ->
+            checkIdentity()
+            transfer(live, path, offset, length)
+        }
     }
 
     /** Logs out and disconnects. Safe to call more than once. */
     override fun close() = synchronized(lock) { drop() }
 
     override fun listDir(path: String): List<FtpEntry> = synchronized(lock) {
-        retrying("list") { live ->
+        retrying { live ->
             // LIST, not MLSD: probed against the in-process server, MLSD answers a missing
             // path with 226 and an empty listing — indistinguishable from an empty folder —
             // while LIST answers 450, which is detectable below. Encoding edge cases in LIST
@@ -99,32 +112,24 @@ class CommonsNetFtpTransport(
     }
 
     /**
-     * One bounded retry loop for every op above. Failures drop the control connection
-     * (a failed transfer leaves it desynced; the next attempt reconnects instead of
-     * speaking mid-transfer to a confused server); only transient failures earn
-     * another attempt, and exhaustion surfaces as [TransientExhaustedException] with
-     * the last failure as cause and earlier attempts suppressed in order.
+     * One bounded retry loop for every op above, via [withBoundedRetry] — the shared
+     * suspend loop, bridged here because this transport is blocking by design (same
+     * runBlocking posture as the SMB transport: this worker thread, real-time waits,
+     * cancellation via socket teardown on close). Failures drop the control
+     * connection (a failed transfer leaves it desynced; the next attempt reconnects
+     * instead of speaking mid-transfer to a confused server).
      */
-    private fun <T> retrying(opName: String, op: (FTPClient) -> T): T {
-        val prior = ArrayList<IOException>(retryPolicy.maxAttempts)
-        var attempt = 0
-        while (true) {
-            attempt++
-            try {
-                return op(connected())
-            } catch (e: IOException) {
-                drop()
-                if (!isTransient(e)) {
-                    prior.forEach(e::addSuppressed)
-                    throw e
-                }
-                if (attempt >= retryPolicy.maxAttempts) {
-                    throw TransientExhaustedException("ftp $opName failed after $attempt attempts", e)
-                        .also { exhausted -> prior.forEach(exhausted::addSuppressed) }
-                }
-                prior += e
-                retryPolicy.sleepBeforeRetry(attempt)
+    private fun <T> retrying(op: (FTPClient) -> T): T {
+        // Drop on any failing exit, not just retries: a connection that just failed
+        // is never cached for the next call, which would otherwise burn one attempt
+        // of its own budget rediscovering the death.
+        try {
+            return runBlocking {
+                withBoundedRetry(retryPolicy, onRetry = { _, _ -> drop() }) { op(connected()) }
             }
+        } catch (e: IOException) {
+            drop()
+            throw e
         }
     }
 

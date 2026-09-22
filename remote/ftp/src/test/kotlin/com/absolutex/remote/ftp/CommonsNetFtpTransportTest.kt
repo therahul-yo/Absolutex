@@ -1,5 +1,6 @@
 package com.absolutex.remote.ftp
 
+import com.absolutex.remote.core.TransportPermanentException
 import java.io.IOException
 import java.io.InputStream
 import org.apache.commons.net.ftp.FTPClient
@@ -8,6 +9,8 @@ import org.apache.commons.net.ftp.FTPSClient
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class CommonsNetFtpTransportTest {
@@ -72,9 +75,12 @@ class CommonsNetFtpTransportTest {
         override fun mlistFile(path: String): FTPFile {
             val file = FTPFile()
             file.name = path
-            file.setSize(bytes.size.toLong())
+            // Scripted sizes for the replace-mid-read test: when empty, the real size.
+            file.setSize(if (reportedSizes.isEmpty()) bytes.size.toLong() else reportedSizes.removeFirst())
             return file
         }
+
+        val reportedSizes = ArrayDeque<Long>()
     }
 
     private class FakeFtpsClient(bytes: ByteArray, chunk: Int) : FTPSClient() {
@@ -155,6 +161,23 @@ class CommonsNetFtpTransportTest {
             thrown = expected
         }
         assertNotNull(thrown)
+    }
+
+    @Test fun `replaced file between attempts fails closed, never spliced`() {
+        // Proves the identity pin: size A pinned, first transfer fails transient, the
+        // re-stat sees size B → permanent before any second transfer runs. Without the
+        // recheck the retry would silently serve B's bytes for A's book.
+        val client = FakeFtpClient(payload, 64).apply {
+            reportedSizes.addAll(listOf(payload.size.toLong(), payload.size - 100L))
+        }
+        val live = transport(client)
+        try {
+            live.readAt("/b.cbz", 4000, 500)
+            fail("expected TransportPermanentException")
+        } catch (expected: TransportPermanentException) {
+            assertTrue(expected.message?.contains("changed") == true)
+        }
+        assertEquals(1, client.retrieveCalls)
     }
 
     @Test fun `failed transfer reconnects on the next call`() {

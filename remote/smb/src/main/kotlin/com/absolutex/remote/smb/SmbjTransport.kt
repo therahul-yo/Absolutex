@@ -7,7 +7,7 @@ import com.absolutex.remote.core.TransportInvalidator
 import com.absolutex.remote.core.TransportPermanentException
 import com.absolutex.remote.core.TransientExhaustedException
 import com.absolutex.remote.core.TransientTransportException
-import com.absolutex.remote.core.isTransient
+import com.absolutex.remote.core.withBoundedRetry
 import com.hierynomus.msdtyp.AccessMask
 import com.hierynomus.mserref.NtStatus
 import com.hierynomus.mssmb2.SMB2CreateDisposition
@@ -22,6 +22,7 @@ import java.io.IOException
 import java.security.GeneralSecurityException
 import java.util.EnumSet
 import javax.net.ssl.SSLException
+import kotlinx.coroutines.runBlocking
 
 /**
  * SMBJ-backed [SmbTransport]. SMB3 only by default (3.0 through 3.1.1): SMB 2.1 has no
@@ -217,7 +218,29 @@ class SmbjTransport(
         require(offset >= 0) { "negative offset: $offset" }
         require(length >= 0) { "negative length: $length" }
         if (length == 0) return ByteArray(0)
+        // Identity pinned on first attempt, rechecked after every reconnect: same path,
+        // replaced file between attempts, must fail closed — two versions spliced into
+        // one page would corrupt silently, which is worse than failing. Size catches
+        // replace-with-different-size; same-size swaps need content hashing, out of scope.
+        var identity: Long? = null
+        fun checkIdentity(share: SmbConnection) {
+            // An interrupt keeps its exact mapped shape like a read interrupt does
+            // (never transient, never retried); anything else classifies naturally —
+            // a transient stat blip earns another attempt through the shared loop.
+            val size = try {
+                smbReadLength(share, remotePath, credentialAlias) {
+                    synchronized(guard) { staleCredentials = true }
+                }
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw IOException("smb stat failed", e)
+            }
+            val baseline = identity
+            if (baseline == null) identity = size
+            else if (size != baseline) throw TransportPermanentException("smb file changed during read: $remotePath")
+        }
         return reconnecting { share ->
+            checkIdentity(share)
             smbReadOnce(share, remotePath, offset, length, credentialAlias) {
                 synchronized(guard) { staleCredentials = true }
             }
@@ -225,53 +248,26 @@ class SmbjTransport(
     }
 
     /**
-     * One revalidation with backoff — then the failure propagates, typed. The failure
-     * may be a dead share, in which case the retry reconnects; auth, rotation and
-     * definitive failures never reach the retry (see the class KDoc). The second
-     * failure carries the first as suppressed context when it propagates as-is, or
-     * the exhaustion error carries the first with the second as cause — no loops, no
-     * storms, no lost evidence. An establish failure is not retried at all: there is
-     * no share to drop and the retry could only re-hit the latch.
+     * One bounded retry loop for every op above, via [withBoundedRetry] — the shared
+     * suspend loop, bridged here because this transport is blocking by design.
+     * runBlocking stays on this worker thread (never Main; callers arrive off it):
+     * delay() runs on real time, and cancellation arrives the way it does for every
+     * blocking call here — the next socket op fails once close() tears the session
+     * down. No dispatcher switch: the pool thread stays the pool thread.
      */
-    private inline fun <T> reconnecting(op: (SmbConnection) -> T): T {
-        val share = connectedShare()
+    private inline fun <T> reconnecting(
+        crossinline op: (SmbConnection) -> T,
+    ): T = runBlocking {
+        var share = connectedShare()
         try {
-            return op(share)
-        } catch (first: IOException) {
-            if (!isTransient(first)) {
-                // Rotation killed the session even though nothing will retry it: drop
-                // it so the next read reconnects (and re-reports) instead of reading
-                // from a dead session. Anything else leaves a healthy share alone.
-                if (first is CredentialExpiredException) dropForReconnect(share)
-                throw first
-            }
-            dropForReconnect(share)
-            // Backoff before the single reconnect: a rebooting NAS answers instantly
-            // with reset/refused, and hammering it buys nothing. Interruptible, so a
-            // book closed mid-backoff stops here instead of sleeping through it.
-            retryPolicy.sleepBeforeRetry(FIRST_RETRY)
-            try {
-                return op(connectedShare())
-            } catch (second: IOException) {
-                throw mappedReconnectFailure(second, first)
-            }
+            withBoundedRetry(retryPolicy, onRetry = { _, _ ->
+                dropForReconnect(share)
+                share = connectedShare()
+            }) { op(share) }
+        } catch (e: IOException) {
+            if (e is CredentialExpiredException) dropForReconnect(share)
+            throw e
         }
-    }
-
-    /**
-     * Types the second failure with the first suppressed onto it: a definitive second
-     * failure propagates itself (the file simply vanished), otherwise exhaustion.
-     * Separate function because the retry loop already spends the throw budget.
-     */
-    private fun mappedReconnectFailure(second: IOException, first: IOException): IOException {
-        if (!isTransient(second)) {
-            second.addSuppressed(first)
-            throw second
-        }
-        throw TransientExhaustedException(
-            "smb transport failed after $RECONNECT_ATTEMPTS attempts",
-            second,
-        ).also { exhausted -> exhausted.addSuppressed(first) }
     }
 
     // SMBJ's failure surface is unchecked by design: Share.receive rethrows a dead socket as
@@ -309,9 +305,6 @@ class SmbjTransport(
 
         /** Reconnect-once ceiling, preserved: one initial try plus one reconnect. */
         private const val RECONNECT_ATTEMPTS = 2
-
-        /** 1-based failed attempt scheduled before the single reconnect. */
-        private const val FIRST_RETRY = 1
     }
 
     /**
