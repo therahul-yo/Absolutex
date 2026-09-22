@@ -17,5 +17,9 @@
   "20_epub_named_cbz.cbz": "f08df4c522b3bdc1db8fdb07a5802f99606296726e935187f1312997de790b75",
   "21_epub_rtl.epub": "37d985186daa2e817ea8e87781529ca761ee96819893ddf2e450264726720843",
   "22_tar.cbt": "cf52a63e91b1e2007b40dfae3c25b1b5906707b1b5bef68e400f42706d1f4c8e",
-  "23_cbz_with_pdf_inside.cbz": "fb83ad7913f2e7146ea639b17ca159deddfa5080f8b5367d2beee0b9d4b75574"
+  "23_cbz_with_pdf_inside.cbz": "fb83ad7913f2e7146ea639b17ca159deddfa5080f8b5367d2beee0b9d4b75574",
+  "24_comicinfo_malformed.cbz": "6e45e6eb907804d4d74af2bc61856be07c3aa9e2487d286f88dc1f4a016eacd6",
+  "25_comicinfo_oversized.cbz": "7875fe34b84641687a704fd182726f763fbbf6f6d486808a1afc9575b1e9f997",
+  "26_comicinfo_corrupt_entry.cbz": "b5bf49327bf8a389058814b2c3f9a8a087329ef66adc0e174d6d7fb46f6ee2f3",
+  "27_comicinfo_two_sidecars.cbz": "262a1a949e2c226427debd1a74e8bd53359625b8f026f2ce3a7991e417a4cb00"
 }
