@@ -35,6 +35,9 @@ internal class FakeRangeHttp(
     var shortReadBytes = 1
 
     val rangesSeen = mutableListOf<String>()
+
+    /** URLs the client actually requested, so a per-request supplier can be told from a fixed one. */
+    val urlsSeen = mutableListOf<String>()
     val headersSeen = mutableListOf<Map<String, String>>()
     val bodies = mutableListOf<ServedStream>()
 
@@ -63,6 +66,7 @@ internal class FakeRangeHttp(
         headers: Map<String, String>,
     ): HttpStreamResponse {
         headersSeen += headers
+        urlsSeen += url
         val range = headers[RANGE].orEmpty()
         rangesSeen += range
         return when {
