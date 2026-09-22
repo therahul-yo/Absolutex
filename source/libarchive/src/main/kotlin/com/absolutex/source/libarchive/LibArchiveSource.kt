@@ -175,16 +175,20 @@ class LibArchiveSource private constructor(
             encrypted: Boolean,
             password: ByteArray?,
         ): PageReadability? = openFd().use { probeFd ->
-            val probePassword = password?.copyOf() ?: password
             // A wrong or rejected password fails closed here, before any page is read, rather
-            // than mid-session on some later page.
+            // than mid-session on some later page. The probe is called for that effect alone:
+            // the native side throws WrongPasswordException / PasswordRequiredException for a
+            // password diagnostic, so a *null* return means the entry could not be read with a
+            // password that is fine — a torn CRC or a truncated entry. That must not refuse the
+            // book: §2 degrades, and the readability pass below is what counts such a page as
+            // unreadable while the other 199 still open. The passphrase is passed through
+            // uncopied; copy_passphrase in the JNI takes its own copy and wipes it on every
+            // exit, so a second Kotlin-side copy would only be one more plaintext array to
+            // forget to clear.
             if (encrypted) {
                 val firstOrdinal = ordinals.getOrNull(0) ?: -1
                 if (firstOrdinal >= 0) {
-                    val probeBytes = LibArchive.nativeExtract(probeFd.fd, firstOrdinal, probePassword)
-                    if (probeBytes == null) {
-                        throw IOException("Archive password rejected or entry unreadable")
-                    }
+                    LibArchive.nativeExtract(probeFd.fd, firstOrdinal, password)
                 }
             }
             PageReadability.inspect(ordinals.toList(), info?.pageCount) { ordinal ->

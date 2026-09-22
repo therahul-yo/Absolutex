@@ -584,14 +584,6 @@ private suspend fun CoroutineScope.applyCacheSizePref(appPrefs: AppPrefsSource, 
  * ceiling, and this needs nothing from it but [opener] and [uri].
  */
 /**
- * Closes a book source without ever blocking Main.
- *
- * A remote close is network I/O (see [sourceIsRemote]), so it goes to the pool the
- * transports already block on; a local close stays inline, because moving a PDF close to
- * another thread would race in-flight renders for no benefit. NonCancellable: a cancelled
- * or superseded open must still close what it opened.
- */
-/**
  * The payload-recovery notice for a freshly opened source, or null when it reported none.
  *
  * Top-level, like [closeSource] below, and for the same reason: inlined at the call site the
@@ -602,6 +594,14 @@ private suspend fun CoroutineScope.applyCacheSizePref(appPrefs: AppPrefsSource, 
 private fun recoveryNoticeFor(context: Context, source: Closeable): String? =
     (source as? ComicSource)?.pageReadability?.let { context.recoveryNotice(it) }
 
+/**
+ * Closes a book source without ever blocking Main.
+ *
+ * A remote close is network I/O (see [sourceIsRemote]), so it goes to the pool the
+ * transports already block on; a local close stays inline, because moving a PDF close to
+ * another thread would race in-flight renders for no benefit. NonCancellable: a cancelled
+ * or superseded open must still close what it opened.
+ */
 private suspend fun closeSource(handle: Closeable?, remote: Boolean) {
     if (handle == null) return
     if (remote) {
