@@ -16,8 +16,12 @@ and no amount of format knowledge changes it.
 An Android app's private storage lives under `/data/data/<package>/`, owned by that app's own UID
 with `0700` permissions. Absolutex runs as a different UID. We cannot open their database, their
 preferences, or their cache — not with SAF, not with `MANAGE_EXTERNAL_STORAGE`, not with any
-permission a Play-distributed app can hold. Only root or ADB can cross that boundary, and §1 rules
-out touching the user's phone with adb at all.
+permission a Play-distributed app can hold.
+
+Only **root** crosses that boundary. Not adb: `run-as` works only on a *debuggable* build, which a
+Play-store release of CDisplayEx is not, and `adb backup` is deprecated and honours the app's own
+`allowBackup`. So the usual "just pull it over adb" escape hatch is not one here — and §1 rules out
+touching the user's phone with adb regardless.
 
 So **there is no direct migration path.** Whatever we build has to be handed to us by the user,
 which leaves exactly three shapes:
