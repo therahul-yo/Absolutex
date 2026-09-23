@@ -23,7 +23,7 @@ destinations. A parallel scanner with a filesystem watcher keeps it live, and th
 thumbnail pipeline, a settings surface, and remote modules for SMB, FTP/FTPS and Komga/Kavita
 progress sync, wired into the app.
 
-**Built but not yet connected.** Three features are merged, tested and unreachable, which is
+**Built but not yet connected.** Five features are merged, tested and unreachable, which is
 worth stating plainly rather than leaving for someone to discover:
 
 - **Progress sync is inert.** `SyncController.onAppStart` and `onAppBackgrounded` fire from the
@@ -35,6 +35,21 @@ worth stating plainly rather than leaving for someone to discover:
   `openBook` has no `ContainerFormat.EPUB` branch to route to it.
 - **Remote covers are never fetched.** `TransportCoverFetcher` and `FtpCovers` exist; no screen
   mints the `ThumbRequest` that would drive them.
+- **No cloud account can be added.** `:remote:cloud` holds the PKCE flow, the token endpoint, the
+  per-account token store, OneDrive over Graph and Dropbox over its v2 API, all range-reading so a
+  300 MB book opens without transferring 300 MB. Nothing constructs any of it: no screen offers a
+  cloud provider, and no `ComicSource` resolves to one.
+- **No book can be taken offline.** `:remote:offline` copies a remote book to disk atomically,
+  resumes an interrupted copy and reads the result back through `FileRangeTransport`. Nothing
+  calls it, and there is no registry recording that a copy exists, so a local copy could not be
+  preferred over the network even if one were made.
+
+Those last two are a step further from reachable than the other three, and the distinction
+matters when estimating the work: **no module depends on `:remote:cloud` or `:remote:offline`.**
+They are in `settings.gradle.kts`, so they compile and their tests run on every PR, but they are
+not on the app's dependency graph and contribute nothing to the APK. Connecting them is a build
+edge plus wiring, not only a call site — and the offline registry needs storage, which means an
+`AbsolutexDatabase` migration on a schema other lanes are actively changing.
 
 Folder browsing over a remote share is in review (#50), and the settings row that finally opens
 the servers list is #98. The roadmap names the pull request for each. See [Roadmap](#roadmap).
