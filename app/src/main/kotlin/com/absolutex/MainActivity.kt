@@ -229,7 +229,9 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
         // The settings row is the only way in to the remote servers list: the transports, the
         // list and the form all shipped before anything navigated to them. The route name is the
         // host's to know, which is why the callback is supplied here rather than in :feature:settings.
-        settingsDestination(onOpenRemote = { nav.navigate(REMOTE_LIST_ROUTE) })
+        // onAddLocation is the same picker the library's empty state uses. Settings is the only
+        // place a SECOND folder can be added: that empty state renders only with zero locations.
+        settingsDestination({ nav.navigate(REMOTE_LIST_ROUTE) }, { folderPicker.launch(null) })
         remoteDestinations(nav)
     }
     // After the NavHost: effects run in composition order, so the graph is set by the time this

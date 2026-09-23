@@ -75,6 +75,8 @@
     <string name="settings_upscaler_lanczos">Lanczos</string>
 
     <!-- §5.3 remote: the way in to the servers list. -->
+    <string name="settings_add_location_title">Add a folder</string>
+    <string name="settings_add_location_desc">Choose a folder for the library to scan</string>
     <string name="settings_group_remote">Remote</string>
     <string name="settings_remote_title">Remote servers</string>
     <string name="settings_remote_desc">SMB, FTP and sync servers to read from</string>
