@@ -1,6 +1,7 @@
 package com.absolutex.remote.cloud
 
 import com.absolutex.remote.core.AUTHORIZATION
+import com.absolutex.remote.core.HTTP_UNAUTHORIZED
 
 /**
  * One signed-in cloud account's live token, refreshed when the provider stops accepting it.
@@ -44,7 +45,9 @@ class CloudSession(
     private var generation: Long = 0
 
     /**
-     * Runs [call] with an Authorization header, refreshing once if the provider rejects it.
+     * Runs [call] with an Authorization header, refreshing once if [call] throws
+     * [ReauthRequiredException]. A provider call that *returns* a 401 must go through
+     * [asAuthorizedRequest] instead, or the refusal never reaches the refresh.
      *
      * Exactly one retry: a token minted seconds ago and still refused means the grant itself is
      * gone, and asking again would only spend rate limit on a question already answered.
@@ -58,6 +61,32 @@ class CloudSession(
             // "never signed in on this device" and "token refused" take one route, not two.
             refreshUnlessOvertaken(before, rejected)
             call(authorizationHeaders())
+        }
+    }
+
+    /**
+     * This session as an [AuthorizedRequest] — the way to hand an account to a provider.
+     *
+     * **Not `AuthorizedRequest(session::withAccessToken)`, though that compiles and reads as
+     * right.** [withAccessToken] refreshes when its call *throws* [ReauthRequiredException], and
+     * [com.absolutex.remote.core.HttpCall.request] does not throw on a refused token: it returns
+     * a 401 response. Composed directly, the refusal sails past the refresh untouched, so every
+     * account stops working at its first access-token expiry — about an hour in — and stays
+     * broken until the user signs out. Each half passes its own tests; only the join is wrong.
+     * This turns the 401 into the refusal the refresh is waiting for.
+     *
+     * **401 only, never 403.** RFC 6750 answers an expired or revoked token with 401; a 403 is
+     * insufficient scope, a permission, or — on Google — a rate limit, none of which a new token
+     * fixes. Refreshing on those would spend a *rotating* refresh token for nothing, which is the
+     * one thing the single flight below exists to avoid.
+     */
+    fun asAuthorizedRequest(): AuthorizedRequest = AuthorizedRequest { call ->
+        withAccessToken { headers ->
+            call(headers).also { response ->
+                if (response.code == HTTP_UNAUTHORIZED) {
+                    throw ReauthRequiredException("sign-in required: the access token was refused")
+                }
+            }
         }
     }
 

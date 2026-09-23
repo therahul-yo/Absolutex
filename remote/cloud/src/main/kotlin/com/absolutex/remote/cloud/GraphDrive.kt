@@ -49,8 +49,10 @@ interface GraphParser {
  *
  * Injected rather than taken as a concrete session for the same reason the JSON parse is: it is
  * the only thing [GraphDrive] needs from an account, and depending on the whole token lifecycle
- * would tie this file to it. A signed-in account supplies `CloudSession::withAccessToken`; these
- * tests supply a fixed header and never touch a token endpoint at all.
+ * would tie this file to it. A signed-in account supplies [CloudSession.asAuthorizedRequest] —
+ * **not** `CloudSession::withAccessToken` directly, which compiles but never refreshes on a 401
+ * response; see the adapter for why. These tests supply a fixed header and never touch a token
+ * endpoint; `ProviderRefreshTest` is where the two are composed for real.
  */
 fun interface AuthorizedRequest {
     fun request(call: (headers: Map<String, String>) -> HttpResponse): HttpResponse
