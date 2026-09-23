@@ -23,11 +23,21 @@ destinations. A parallel scanner with a filesystem watcher keeps it live, and th
 thumbnail pipeline, a settings surface, and remote modules for SMB, FTP/FTPS and Komga/Kavita
 progress sync, wired into the app.
 
-**Not yet built:** a way in to the remote servers from the UI. Their destinations are registered
-and their transports ship, but nothing navigates to them yet — see the `TODO` in
-`feature/remote/.../RemoteNav.kt`. Folder browsing over a remote share, offline copies and cloud
-accounts are in review rather than merged; the roadmap names the pull request for each.
-See [Roadmap](#roadmap).
+**Built but not yet connected.** Three features are merged, tested and unreachable, which is
+worth stating plainly rather than leaving for someone to discover:
+
+- **Progress sync is inert.** `SyncController.onAppStart` and `onAppBackgrounded` fire from the
+  app shell, but `onBookOpened`, `onPageSettled` and `onBookClosed` have no callers anywhere, so
+  the controller never learns which book is open — and `onAppBackgrounded` takes no book id
+  precisely because it expects to have been told. Nothing is pushed to or pulled from Komga or
+  Kavita today.
+- **EPUB does not open.** `:source:epub` parses and renders fixed-layout comic EPUBs, and
+  `openBook` has no `ContainerFormat.EPUB` branch to route to it.
+- **Remote covers are never fetched.** `TransportCoverFetcher` and `FtpCovers` exist; no screen
+  mints the `ThumbRequest` that would drive them.
+
+Folder browsing over a remote share is in review (#50), and the settings row that finally opens
+the servers list is #98. The roadmap names the pull request for each. See [Roadmap](#roadmap).
 
 ## Platform floor
 
@@ -250,10 +260,10 @@ permission monitoring* is on **and the phone has been rebooted since**.
 |---|---|---|
 | 1 | Audit, licensing gates, platform decisions | done |
 | 2 | Scaffold + CBZ/CBR vertical slice | done; page turn measured (see above) |
-| 3 | Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | tiles, colour (#22), upscaling (#24), crop (#25) and auto background (#26) done; prefetch engine in review (#77) |
+| 3 | Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | tiles, colour (#22), upscaling (#24), crop (#25) and auto background (#26) done; prefetch engine in review (#77). `PageCanvas` still takes no `cropEnabled` — see its `TODO(lead)` |
 | 4 | Library: parallel scanner, metadata, home, browse, search | done, and the launch destination; live updates merged (#63) |
 | 5 | Reader depth: layouts, flows, transitions, bookmarks, TOC, input devices | done, transitions and per-book overrides included |
-| 6 | Formats: 7z, TAR, PDFium, image folders, full codec set | archives, PDF and image folders (#76) open in the reader; recovery, encryption and indexed extraction in review (#39) |
+| 6 | Formats: 7z, TAR, PDFium, image folders, full codec set | archives, PDF, image folders (#76) and recovery/encryption/indexed extraction (#39) all open in the reader; `:source:epub` (#90) is built but **not yet dispatched** by `openBook` |
 | 7 | Settings surface | done and reachable from the library |
-| 8 | Remote: SMB streaming, FTP, Komga/Kavita sync | transports and sync merged and wired into the app; browse UI in review (#50), and nothing navigates to the servers list yet |
+| 8 | Remote: SMB streaming, FTP, Komga/Kavita sync | transports merged and reachable — the settings row that opens the servers list is #98. Sync is merged but **inert**: `SyncController.onAppStart`/`onAppBackgrounded` fire, but `onBookOpened`/`onPageSettled`/`onBookClosed` have no callers, so the controller never learns a book is open and nothing is pushed or pulled. Browse UI in review (#50). See the `TODO(lead)`s in `SyncController.kt` |
 | 9 | NPU upscaling R&D (§4 M6); release polish: licence, signing, launcher icon, baseline profiles | R&D done and the verdict is **no** — see [`docs/npu-sr-report.md`](docs/npu-sr-report.md); Apache-2.0 (#70), signing config, licences screen and launcher icon (#56) done |
