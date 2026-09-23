@@ -56,6 +56,125 @@ class HttpRangeTransportTest {
         assertEquals("each range is still one request", 2, fake.urlsSeen.size)
     }
 
+    // --- a refused url is offered back to the supplier ------------------------------------
+
+    @Test fun `a refused url is replaced once and the range then succeeds`() {
+        // The gap a TTL cannot close: a url revoked, or given a shorter life than the timer
+        // assumes, is refused while the cache still believes in it. Nothing on this request
+        // carries an account credential, so a 401 here can only mean the url is dead.
+        val fake = server()
+        val urls = Urls()
+        fake.refuses = { if (it == urls.first) HTTP_UNAUTHORIZED else null }
+        val bytes = HttpRangeTransport(fake, urls::get, FILE_BYTES.toLong()).readAt(0, 16)
+
+        assertTrue(bytes.contentEquals(content.copyOfRange(0, 16)))
+        assertEquals(listOf(urls.first, urls.current), fake.urlsSeen)
+        assertEquals("the refused response must not be left on the wire", 0, fake.openBodies)
+    }
+
+    @Test fun `a 403 replaces the url too, not only a 401`() {
+        // Graph answers an expired pre-authenticated url with either, depending on the storage
+        // front end. Handling one and not the other would make the fix a coin toss.
+        val fake = server()
+        val urls = Urls()
+        fake.refuses = { if (it == urls.first) HTTP_FORBIDDEN else null }
+        val bytes = HttpRangeTransport(fake, urls::get, FILE_BYTES.toLong()).readAt(0, 16)
+
+        assertTrue(bytes.contentEquals(content.copyOfRange(0, 16)))
+        assertEquals(2, fake.urlsSeen.size)
+    }
+
+    @Test fun `the supplier is told which url was refused, not merely that something failed`() {
+        // Naming it is what makes the supplier's re-resolution single-flight: a loser whose url
+        // is no longer the held one takes the winner's instead of fetching another.
+        val fake = server()
+        val urls = Urls()
+        val asked = mutableListOf<String?>()
+        fake.refuses = { if (it == urls.first) HTTP_UNAUTHORIZED else null }
+        val supplier = { refused: String? ->
+            asked += refused
+            urls.get(refused)
+        }
+        HttpRangeTransport(fake, supplier, FILE_BYTES.toLong()).readAt(0, 16)
+
+        assertEquals(listOf(null, urls.first, null), asked)
+    }
+
+    @Test fun `a supplier with nothing newer leaves the refusal exactly as it was`() {
+        // The gate. This transport never asks *why* a request was refused, only whether another
+        // url exists — so a fixed url, or one whose headers carry a bearer token the server has
+        // genuinely rejected, still costs exactly one attempt and still says sign in again.
+        val fake = server()
+        fake.refuses = { HTTP_UNAUTHORIZED }
+        try {
+            transportOver(fake).readAt(0, 16)
+            fail("expected ReauthRequiredException")
+        } catch (expected: ReauthRequiredException) {
+            assertTrue(expected.message?.contains("sign-in required") == true)
+        }
+        assertEquals("a stable url must not be retried", 1, fake.urlsSeen.size)
+        assertEquals(0, fake.openBodies)
+    }
+
+    @Test fun `a second refusal gives up instead of re-resolving for ever`() {
+        // A supplier that answers every refusal with a brand new url — which a re-resolving one
+        // does — would turn a permanently refused file into an unbounded loop of metadata calls.
+        val fake = server()
+        val urls = Urls()
+        fake.refuses = { HTTP_UNAUTHORIZED }
+        try {
+            HttpRangeTransport(fake, urls::get, FILE_BYTES.toLong()).readAt(0, 16)
+            fail("expected ReauthRequiredException")
+        } catch (expected: ReauthRequiredException) {
+            assertTrue(expected.message?.contains("sign-in required") == true)
+        }
+        assertEquals("one re-resolution per range, not a loop", 2, fake.urlsSeen.size)
+        assertEquals(0, fake.openBodies)
+    }
+
+    @Test fun `a supplier that fails while re-resolving still closes the refused response`() {
+        // Re-resolving is a network call of its own and can fail on its own. The refusal's body
+        // is in hand when the supplier is asked, and nothing above openRange would close it, so
+        // asking before closing would leak the connection every failed metadata call.
+        val fake = server()
+        fake.refuses = { HTTP_UNAUTHORIZED }
+        val supplier = { refused: String? ->
+            if (refused == null) "https://cloud.example/book.cbz" else throw IOException("metadata call failed")
+        }
+        try {
+            HttpRangeTransport(fake, supplier, FILE_BYTES.toLong()).readAt(0, 16)
+            fail("expected IOException")
+        } catch (expected: IOException) {
+            assertTrue(expected.message?.contains("metadata call failed") == true)
+        }
+        assertEquals("the refusal's body outlived the failed re-resolution", 0, fake.openBodies)
+    }
+
+    /**
+     * A url supplier shaped like `CachedDownloadUrl`: it replaces its url only when the refused
+     * one is the one it still holds, so the "different url means retry" gate is exercised
+     * against the real policy rather than against a counter that always increments.
+     */
+    private class Urls {
+        private var issued = 1
+        val first = "https://cloud.example/book-1.cbz"
+        val current: String get() = "https://cloud.example/book-$issued.cbz"
+
+        fun get(refused: String?): String {
+            if (refused == current) issued++
+            // The cap is the test's own, not the transport's. Without it an unbounded loop
+            // shows up as an OutOfMemoryError minutes later, which is a true failure by
+            // accident of heap size rather than a legible one; two urls is already one more
+            // than a correct read needs.
+            check(issued <= MAX_ISSUED) { "the transport re-resolved without bound: $issued urls" }
+            return current
+        }
+
+        private companion object {
+            const val MAX_ISSUED = 4
+        }
+    }
+
     // --- honours Range ------------------------------------------------------------------
 
     @Test fun `a ranged read returns exactly those bytes`() {
@@ -356,5 +475,7 @@ class HttpRangeTransportTest {
     private companion object {
         const val FILE_BYTES = 4096
         const val AWAIT_SECONDS = 5L
+        const val HTTP_UNAUTHORIZED = 401
+        const val HTTP_FORBIDDEN = 403
     }
 }

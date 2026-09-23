@@ -21,6 +21,9 @@ class GraphDriveTest {
 
         val sent = mutableListOf<Sent>()
         val ranged = mutableListOf<Sent>()
+
+        /** The status to refuse a ranged url with, or null to serve it. Per-url on purpose. */
+        var refuses: (String) -> Int? = { null }
         private val bodies = ArrayDeque<HttpResponse>()
 
         fun enqueue(code: Int, body: String = "{}", headers: Map<String, List<String>> = emptyMap()) {
@@ -50,6 +53,8 @@ class GraphDriveTest {
             headers: Map<String, String>,
         ): HttpStreamResponse {
             ranged += Sent(url, headers)
+            val refusal = refuses(url)
+            if (refusal != null) return HttpStreamResponse(refusal, ByteArrayInputStream(ByteArray(0)))
             return HttpStreamResponse(
                 code = 206,
                 stream = ByteArrayInputStream(ByteArray(4)),
@@ -218,6 +223,29 @@ class GraphDriveTest {
         assertEquals("re-resolution costs exactly one extra metadata call", 2, http.sent.size)
     }
 
+    @Test fun `a download url refused before its ttl is re-resolved, not reported as a sign-in`() {
+        // The clock never moves here, so the cache believes its first url is fresh for the whole
+        // read — the only thing that can produce a second url is the refusal itself. And that
+        // refusal cannot be about the account: the ranged request carries no Authorization
+        // header at all, so there is no account credential on it to reject.
+        var issued = 0
+        val http = FakeGraph().apply { enqueue(200); enqueue(200) }
+        http.refuses = { if (it.endsWith("d1")) UNAUTHORIZED else null }
+        val parser = object : GraphParser {
+            override fun page(body: String) = DrivePage(emptyList(), null)
+            override fun item(body: String) =
+                DriveItem("id", "a.cbz", 4, isFolder = false, downloadUrl = "https://storage.example/d${++issued}")
+            override fun errorCode(body: String): String? = null
+        }
+        val drive = GraphDrive(http, authorized, parser, BASE, urlTtlMillis = TTL, clock = { 0L }) { }
+
+        drive.open("/Comics/a.cbz").use { it.readAt(0, 4) }
+
+        assertEquals("the refused url must be replaced, not re-presented",
+            listOf("https://storage.example/d1", "https://storage.example/d2"), http.ranged.map { it.url })
+        assertEquals("the replacement costs one metadata call, not a reopened book", 2, http.sent.size)
+    }
+
     @Test fun `opening a folder is refused rather than range-read`() {
         val http = FakeGraph().apply { enqueue(200) }
         val parser = FakeParser(item = DriveItem("id", "Comics", 0, isFolder = true, downloadUrl = null))
@@ -294,5 +322,6 @@ class GraphDriveTest {
         const val BASE = "https://graph.microsoft.com/v1.0"
         const val DOWNLOAD = "https://storage.example/download?pre=authenticated"
         const val TTL = 120_000L
+        const val UNAUTHORIZED = 401
     }
 }

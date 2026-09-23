@@ -78,10 +78,18 @@ fun interface AuthorizedRequest {
  * costs a user-visible, wrong sign-in prompt, while too short costs one cheap metadata GET —
  * about thirty an hour, against the hundreds of ranged reads happening anyway.
  *
- * **What this still does not cover, stated rather than implied:** a URL that dies *before* its
- * TTL — revoked, or Graph shortening the lifetime — is still refused, and the transport still
- * reports that as [ReauthRequiredException]. Closing that needs the transport to distinguish
- * "this URL is stale" from "this account is refused", which it deliberately cannot see.
+ * **A URL that dies before its TTL is caught too, because of what this URL is.** Revocation, or
+ * Graph simply shortening the lifetime, refuses a URL the timer still believes in. The transport
+ * asks again naming the URL it was refused on, and that is enough here: this URL is fetched with
+ * **no** `Authorization` header at all, so a 401/403 on it cannot mean the account was refused —
+ * there is no account credential on the request to refuse. On the pre-authenticated path a
+ * refusal means a dead URL and nothing else.
+ *
+ * **The same lock makes that single-flight for free.** A refusal re-resolves only when the named
+ * URL is still the one held, so N concurrent reads all refused on the same URL cause one metadata
+ * call: the winner replaces it, and every loser names a URL that is no longer current and is
+ * handed the winner's. That is the compare-and-swap in `CloudSession`'s refresh generation, on a
+ * string instead of a counter.
  */
 internal class CachedDownloadUrl(
     initial: String,
@@ -93,10 +101,17 @@ internal class CachedDownloadUrl(
     private var url: String = initial
     private var freshUntil: Long = clock() + ttlMillis
 
-    fun get(): String = synchronized(guard) {
-        if (clock() < freshUntil) return url
-        url = resolve()
-        freshUntil = clock() + ttlMillis
+    /**
+     * The URL to use now, re-resolved when the TTL has passed or when [refused] is still the one
+     * held. [refused] is null for an ordinary ask and carries the URL the server just rejected
+     * otherwise — naming it, rather than an argument-less `invalidate()`, is what keeps a late
+     * loser from throwing away the replacement a winner has already fetched.
+     */
+    fun get(refused: String? = null): String = synchronized(guard) {
+        if (clock() >= freshUntil || refused == url) {
+            url = resolve()
+            freshUntil = clock() + ttlMillis
+        }
         url
     }
 }
@@ -124,7 +139,7 @@ class GraphDrive(
     private val parser: GraphParser,
     private val baseUrl: String = GRAPH_BASE,
     private val urlTtlMillis: Long = DOWNLOAD_URL_TTL_MS,
-    private val clock: () -> Long = System::currentTimeMillis,
+    private val clock: () -> Long = ::monotonicMillis,
     private val sleeper: (Long) -> Unit = Thread::sleep,
 ) {
 
@@ -264,3 +279,23 @@ class GraphDrive(
         }
     }
 }
+
+/**
+ * Milliseconds from a monotonic source, for timing a download URL out.
+ *
+ * **Not the wall clock.** `System.currentTimeMillis` can jump *backwards* — an NTP correction, a
+ * user setting the date, a device with no RTC catching up after boot — and a backwards jump
+ * extends freshness, which is the one direction a TTL cannot survive: the URL stays "fresh"
+ * exactly while it is dying. Forwards is harmless here, because an early re-resolution costs one
+ * cheap metadata GET.
+ *
+ * **Android callers must inject `SystemClock::elapsedRealtime` instead.** `System.nanoTime` is
+ * monotonic but does not advance across deep sleep, so a book left open on a sleeping device sees
+ * far less time pass than really did. Since [CachedDownloadUrl] now also re-resolves on a refusal,
+ * that costs one refused request rather than a wrong sign-in prompt — but the clock that counts
+ * sleep is still the right one, and `:remote:cloud` is plain Kotlin/JVM and cannot name it here.
+ * This is the wiring M6 has to get right; the parameter exists so it can.
+ */
+internal fun monotonicMillis(): Long = System.nanoTime() / NANOS_PER_MILLI
+
+private const val NANOS_PER_MILLI = 1_000_000L
