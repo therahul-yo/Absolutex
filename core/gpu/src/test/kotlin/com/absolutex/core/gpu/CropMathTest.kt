@@ -143,4 +143,31 @@ class CropMathTest {
     fun `full rect covers the image`() {
         assertEquals(CropRect(0, 0, 100, 140), CropRect.full(100, 140))
     }
+
+    /** Real bitmap fixture (Android Bitmap.createBitmap), not a synthetic IntArray. */
+    @Test
+    fun `real bitmap page with white margins is cropped`() {
+        val w = 200
+        val h = 200
+        val margin = 15
+        val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        val pixels = IntArray(w * h) { white }
+        val content = striped(w - 2 * margin, h - 2 * margin)
+        for (y in 0 until h - 2 * margin) {
+            content.copyInto(pixels, (y + margin) * w + margin, y * (w - 2 * margin), (y + 1) * (w - 2 * margin))
+        }
+        bmp.setPixels(pixels, 0, w, 0, 0, w, h)
+        val crop = CropMath.detect(pixels, w, h)
+        assertEquals(CropRect(margin, margin, w - margin, h - margin), crop)
+    }
+
+    /** A full-bleed real bitmap: detection fails safely and the full page renders. */
+    @Test
+    fun `failed detection on full-bleed bitmap still renders full page`() {
+        val w = 120
+        val h = 120
+        val fullBleed = IntArray(w * h) { i -> striped(w, h)[i] }
+        val result = CropMath.detect(fullBleed, w, h)
+        assertTrue("no crop for full-bleed page", result == null)
+    }
 }
