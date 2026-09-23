@@ -13,12 +13,9 @@ const val REMOTE_FORM_ROUTE = "remote/form?serverId={serverId}"
 
 /**
  * Remote servers destination for the app-level NavHost. Wired in MainActivity next to
- * `settingsDestination()`; the settings row that navigates to [REMOTE_LIST_ROUTE] is
- * Agent03's screen to add:
- *
- * TODO(agent3): add a "Remote servers" row to the settings screen navigating to
- * `REMOTE_LIST_ROUTE` ("remote"). The list and form destinations below own everything
- * past that navigation; back stays the host's concern.
+ * `settingsDestination()`, which carries the "Remote servers" row that navigates here — the
+ * host supplies that route because only the host knows the graph. The list and form
+ * destinations below own everything past that navigation; back stays the host's concern.
  */
 fun NavGraphBuilder.remoteDestination(
     onOpenForm: (String?) -> Unit = {},

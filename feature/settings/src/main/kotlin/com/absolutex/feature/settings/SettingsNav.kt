@@ -12,9 +12,10 @@ const val SETTINGS_ROUTE = "settings"
  * Handoff for the lead: attach from the app graph with
  * `settingsDestination()` inside the NavHost builder — no arguments, no result contract. The
  * screen reads its own ViewModel via Hilt and previews the theme it configures, so there is
- * nothing to pass in. Back navigation is the host's concern: this destination pushes nothing
- * and pops nothing itself.
+ * nothing to pass in beyond [onOpenRemote], which the host supplies because only the host knows
+ * the graph the remote list lives in. Back navigation is the host's concern: this destination
+ * pushes nothing and pops nothing itself.
  */
-fun NavGraphBuilder.settingsDestination() {
-    composable(SETTINGS_ROUTE) { SettingsScreen() }
+fun NavGraphBuilder.settingsDestination(onOpenRemote: () -> Unit = {}) {
+    composable(SETTINGS_ROUTE) { SettingsScreen(onOpenRemote = onOpenRemote) }
 }

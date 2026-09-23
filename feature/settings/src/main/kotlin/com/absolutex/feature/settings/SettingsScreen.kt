@@ -41,6 +41,7 @@ import com.absolutex.model.ReadingFlow
 
 @Composable
 fun SettingsScreen(
+    onOpenRemote: () -> Unit = {},
     modifier: Modifier = Modifier,
     vm: SettingsViewModel = hiltViewModel(),
 ) {
@@ -71,6 +72,7 @@ fun SettingsScreen(
                 onCacheSize = vm::setCacheSize,
                 onRendering = vm::updateRendering,
             ),
+            onOpenRemote = onOpenRemote,
             modifier = modifier,
         )
     }
@@ -83,6 +85,7 @@ fun SettingsContent(
     reader: ReaderPrefs,
     rendering: RenderingPrefs,
     actions: SettingsActions,
+    onOpenRemote: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Scaffold(
@@ -122,6 +125,10 @@ fun SettingsContent(
                 labelRes = ::upscalerLabelRes,
                 descriptionRes = R.string.settings_upscaler_desc,
             )
+            Spacer(Modifier.height(8.dp))
+
+            GroupHeader(R.string.settings_group_remote)
+            RemoteServersRow(onOpen = onOpenRemote)
             Spacer(Modifier.height(8.dp))
 
             GroupHeader(R.string.settings_group_about)

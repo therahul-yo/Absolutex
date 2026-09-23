@@ -24,6 +24,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.ui.AbsolutexTheme
 import com.absolutex.feature.library.LibraryRoute
+import com.absolutex.feature.remote.REMOTE_LIST_ROUTE
 import com.absolutex.feature.remote.remoteDestination
 import com.absolutex.feature.settings.settingsDestination
 import androidx.navigation.NavGraphBuilder
@@ -220,7 +221,10 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
             // ViewModel would throw that head start away and open the book a second time.
             if (uri != null) ReaderDestination(uri, readerVm, vm, nav)
         }
-        settingsDestination()
+        // The settings row is the only way in to the remote servers list: the transports, the
+        // list and the form all shipped before anything navigated to them. The route name is the
+        // host's to know, which is why the callback is supplied here rather than in :feature:settings.
+        settingsDestination(onOpenRemote = { nav.navigate(REMOTE_LIST_ROUTE) })
         remoteDestinations(nav)
     }
     // After the NavHost: effects run in composition order, so the graph is set by the time this
