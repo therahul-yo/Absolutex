@@ -8,6 +8,7 @@ import com.absolutex.remote.core.HttpBytesResponse
 import com.absolutex.remote.core.HttpCall
 import com.absolutex.remote.core.HttpResponse
 import com.absolutex.remote.core.HttpStreamResponse
+import com.absolutex.remote.core.InMemoryCredentialStore
 import com.absolutex.remote.sync.ConnectionResult
 import com.absolutex.remote.sync.KavitaConnectionProbe
 import com.absolutex.remote.sync.KomgaConnectionProbe
@@ -20,7 +21,6 @@ import com.absolutex.remote.sync.SmbServer
 import com.absolutex.remote.sync.SyncController
 import com.absolutex.remote.sync.SyncQueue
 import com.absolutex.remote.sync.SyncSecrets
-import com.absolutex.remote.sync.InMemoryCredentialStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi

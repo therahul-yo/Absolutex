@@ -51,6 +51,16 @@ object RemoteModule {
     fun browseHistoryFile(@ApplicationContext context: Context): DataStore<Preferences> =
         context.browseHistoryFile
 
+    /**
+     * Network-change monitor: one callback for the app, watched per book (see
+     * [RemoteBackendResolver]). Inert until `:feature:remote`'s own manifest permission
+     * resolves — books still open without it.
+     */
+    @Provides
+    @Singleton
+    fun networkMonitor(@ApplicationContext context: Context): RemoteNetworkMonitor =
+        RemoteNetworkMonitor(context)
+
     @Provides
     @Singleton
     fun bookOpener(resolver: RemoteBackendResolver): RemoteBookOpener {

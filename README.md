@@ -15,12 +15,44 @@ grid mirrored for RTL, immersive chrome with a seek bar, a thumbnail strip, book
 of contents, page export, keyboard, gamepad and volume-key control, and progress that resumes
 the last book on launch.
 
-**Around it:** a library scanner with a filesystem watcher, a library screen, a settings surface,
-a thumbnail pipeline, and remote modules for SMB, FTP/FTPS and Komga/Kavita progress sync.
+It also has page transitions, per-book reading flow and layout overrides, an AGSL colour
+pipeline with GPU crop, Mitchell/Lanczos upscaling and an automatic background colour.
 
-**Not yet built:** the AGSL colour pipeline, GPU crop and auto background colour; transitions;
-the library as the app's home screen (it still opens a file picker); remote sources reachable
-from the UI. See [Roadmap](#roadmap).
+**Around it:** the library is the app's home screen, with the reader and settings as
+destinations. A parallel scanner with a filesystem watcher keeps it live, and there is a
+thumbnail pipeline, a settings surface, and remote modules for SMB, FTP/FTPS and Komga/Kavita
+progress sync, wired into the app.
+
+**Built but not yet connected.** Five features are merged, tested and unreachable, which is
+worth stating plainly rather than leaving for someone to discover:
+
+- **Progress sync is inert.** `SyncController.onAppStart` and `onAppBackgrounded` fire from the
+  app shell, but `onBookOpened`, `onPageSettled` and `onBookClosed` have no callers anywhere, so
+  the controller never learns which book is open — and `onAppBackgrounded` takes no book id
+  precisely because it expects to have been told. Nothing is pushed to or pulled from Komga or
+  Kavita today.
+- **EPUB does not open.** `:source:epub` parses and renders fixed-layout comic EPUBs, and
+  `openBook` has no `ContainerFormat.EPUB` branch to route to it.
+- **Remote covers are never fetched.** `TransportCoverFetcher` and `FtpCovers` exist; no screen
+  mints the `ThumbRequest` that would drive them.
+- **No cloud account can be added.** `:remote:cloud` holds the PKCE flow, the token endpoint, the
+  per-account token store, OneDrive over Graph and Dropbox over its v2 API, all range-reading so a
+  300 MB book opens without transferring 300 MB. Nothing constructs any of it: no screen offers a
+  cloud provider, and no `ComicSource` resolves to one.
+- **No book can be taken offline.** `:remote:offline` copies a remote book to disk atomically,
+  resumes an interrupted copy and reads the result back through `FileRangeTransport`. Nothing
+  calls it, and there is no registry recording that a copy exists, so a local copy could not be
+  preferred over the network even if one were made.
+
+Those last two are a step further from reachable than the other three, and the distinction
+matters when estimating the work: **no module depends on `:remote:cloud` or `:remote:offline`.**
+They are in `settings.gradle.kts`, so they compile and their tests run on every PR, but they are
+not on the app's dependency graph and contribute nothing to the APK. Connecting them is a build
+edge plus wiring, not only a call site — and the offline registry needs storage, which means an
+`AbsolutexDatabase` migration on a schema other lanes are actively changing.
+
+Folder browsing over a remote share is in review (#50), and the settings row that finally opens
+the servers list is #98. The roadmap names the pull request for each. See [Roadmap](#roadmap).
 
 ## Platform floor
 
@@ -242,11 +274,11 @@ permission monitoring* is on **and the phone has been rebooted since**.
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Audit, licensing gates, platform decisions | done |
-| 2 | Scaffold + CBZ/CBR vertical slice | working; page turn measured (see above) |
-| 3 | Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | tiles done; colour and crop next |
-| 4 | Library: parallel scanner, metadata, home, browse, search | scanner, watcher and screen done; not yet the home screen |
-| 5 | Reader depth: layouts, flows, transitions, bookmarks, TOC, input devices | done except transitions and per-book overrides |
-| 6 | Formats: 7z, TAR, PDFium, image folders, full codec set | archives and PDF done; image folders open in the library only |
-| 7 | Settings surface | done, not yet reachable from the app shell |
-| 8 | Remote: SMB streaming, FTP, Komga/Kavita sync | FTP and sync modules merged; SMB in review; no UI yet |
-| 9 | NPU upscaling R&D, release polish | |
+| 2 | Scaffold + CBZ/CBR vertical slice | done; page turn measured (see above) |
+| 3 | Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | tiles, colour (#22), upscaling (#24), crop (#25) and auto background (#26) done; prefetch engine in review (#77). `PageCanvas` still takes no `cropEnabled` — see its `TODO(lead)` |
+| 4 | Library: parallel scanner, metadata, home, browse, search | done, and the launch destination; live updates merged (#63) |
+| 5 | Reader depth: layouts, flows, transitions, bookmarks, TOC, input devices | done, transitions and per-book overrides included |
+| 6 | Formats: 7z, TAR, PDFium, image folders, full codec set | archives, PDF, image folders (#76) and recovery/encryption/indexed extraction (#39) all open in the reader; `:source:epub` (#90) is built but **not yet dispatched** by `openBook` |
+| 7 | Settings surface | done and reachable from the library |
+| 8 | Remote: SMB streaming, FTP, Komga/Kavita sync | transports merged and reachable — the settings row that opens the servers list is #98. Sync is merged but **inert**: `SyncController.onAppStart`/`onAppBackgrounded` fire, but `onBookOpened`/`onPageSettled`/`onBookClosed` have no callers, so the controller never learns a book is open and nothing is pushed or pulled. Browse UI in review (#50). See the `TODO(lead)`s in `SyncController.kt` |
+| 9 | NPU upscaling R&D (§4 M6); release polish: licence, signing, launcher icon, baseline profiles | R&D done and the verdict is **no** — see [`docs/npu-sr-report.md`](docs/npu-sr-report.md); Apache-2.0 (#70), signing config, licences screen and launcher icon (#56) done |

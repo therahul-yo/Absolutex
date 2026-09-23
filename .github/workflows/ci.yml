@@ -76,6 +76,16 @@ jobs:
       - name: Translations are well-formed
         run: python3 tools/check-translations.py
 
+      # Room writes schemas/<db>/<version>.json at compile time and DatabaseSchemaTest reads
+      # them back, both inside the same build — so the test passes on a schema the compiler
+      # wrote seconds earlier whether or not it is committed. Version 6 merged with 6.json
+      # absent from the branch and every check green. An exported schema that regenerates on
+      # every build records nothing: edit the entity later and it is rewritten in place, and
+      # the migration into it is validated against what the entity says now rather than what
+      # shipped. No test inside the build can catch this, because the build creates the file.
+      - name: Exported Room schemas are committed
+        run: python3 tools/check-schemas.py
+
       - name: No module dropped by accident
         if: github.event_name == 'pull_request'
         env:

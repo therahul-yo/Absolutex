@@ -33,9 +33,15 @@ data class FtpEntry(val name: String, val isDirectory: Boolean, val sizeBytes: L
 /**
  * Binds this path-based transport to one file for the shared streaming stack: the same
  * [com.absolutex.remote.core.SeekableReader] serves SMB and FTP once each path has an adapter.
+ *
+ * The bound file also forwards [com.absolutex.remote.core.TransportInvalidator] when the
+ * delegate implements it (CommonsNetFtpTransport does), so network-change monitoring
+ * reaches the live session through the file handle the book owns.
  */
-fun FtpTransport.bind(path: String): com.absolutex.remote.core.RangeTransport =
-    object : com.absolutex.remote.core.RangeTransport {
+fun FtpTransport.bind(path: String): com.absolutex.remote.core.RangeTransport {
+    val invalidator = this as? com.absolutex.remote.core.TransportInvalidator
+    return object : com.absolutex.remote.core.RangeTransport,
+        com.absolutex.remote.core.TransportInvalidator {
         override fun sizeBytes(): Long = this@bind.sizeBytes(path)
 
         override fun readAt(offset: Long, length: Int): ByteArray =
@@ -43,4 +49,9 @@ fun FtpTransport.bind(path: String): com.absolutex.remote.core.RangeTransport =
 
         // Forwarded: the opener closes the bound file, and the session must die with it.
         override fun close() = this@bind.close()
+
+        override fun invalidate() {
+            invalidator?.invalidate()
+        }
     }
+}

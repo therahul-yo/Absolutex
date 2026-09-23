@@ -43,12 +43,33 @@ class ReauthRequiredException(message: String) : IOException(message)
  *
  * **Secrets.** Auth arrives from [headers], read per request so a refreshed token is picked up
  * without rebuilding the transport. Nothing here logs, no header value is ever put in a message,
- * and no token is ever placed in [url] — messages carry the status and the range, never the
+ * and no token is ever placed in a message — those carry the status and the range, never the
  * credential and never the URL.
+ *
+ * **[url] is a supplier for the same reason [headers] is.** Some providers hand out a
+ * short-lived, pre-authenticated download URL rather than a stable one — Microsoft Graph's
+ * `@microsoft.graph.downloadUrl` is the case that forced this — and a transport that resolved
+ * once at construction would keep presenting a dead URL for the rest of a long read. Since the
+ * refusal arrives as 401/403, that would surface as [ReauthRequiredException] and tell the user
+ * to sign in again when their token was never the problem.
+ *
+ * Asking for a URL per request inverts that: this class stops knowing that URLs expire at all,
+ * and whoever supplies them owns the policy. "Resolve once at construction" was never true here
+ * anyway — one transport makes many requests — so the supplier only makes the existing shape
+ * honest. A stable URL costs `{ url }` at the call site.
+ *
+ * **A refused URL is offered back to the supplier once, and the answer decides.** A timer cannot
+ * catch a URL revoked early, so on a 401/403 the supplier is asked again *naming the URL that was
+ * refused*, and the range is retried only if a **different** URL comes back. That gate is what
+ * keeps this class out of the business of interpreting refusals, which is the coupling a
+ * re-resolving decorator could not avoid: it never asks whether the URL or the account was
+ * rejected, only whether another URL exists. A supplier with nothing newer hands the same string
+ * straight back and the refusal stands unchanged — so `{ url }` still means exactly one attempt,
+ * and a transport whose [headers] carry a bearer token cannot be talked into a second one.
  */
 class HttpRangeTransport(
     private val http: HttpCall,
-    private val url: String,
+    private val url: (refused: String?) -> String,
     knownSizeBytes: Long? = null,
     private val headers: () -> Map<String, String> = ::emptyMap,
     private val sleeper: (Long) -> Unit = Thread::sleep,
@@ -158,13 +179,29 @@ class HttpRangeTransport(
     private fun openRange(offset: Long, length: Int): HttpStreamResponse {
         val range = "bytes=$offset-${offset + length - 1}"
         var attempt = 0
+        var mayReresolve = true
         while (true) {
             ensureOpen()
             calls.incrementAndGet()
-            val response = http.requestStream(GET, url, headers() + (RANGE to range))
+            // Resolved per request, not per transport: a supplier that re-resolves an expired
+            // URL takes effect on the next range without the book being reopened.
+            val current = url(null)
+            val response = http.requestStream(GET, current, headers() + (RANGE to range))
             val retryMs = rateLimitDelayOrNull(response)
             if (retryMs == null) {
-                return abandonedUnlessPartial(response, range)
+                if (!mayReresolve || !isRefusal(response.code)) {
+                    return abandonedUnlessPartial(response, range)
+                }
+                // Closed before the supplier is asked, never after: re-resolving is a network
+                // call of its own and may throw, and this function must never throw while still
+                // holding a body — nothing above it would close one.
+                response.close()
+                // Once only. A supplier that answers every refusal with a brand new URL — which
+                // a re-resolving one does — would otherwise make a permanently refused file an
+                // unbounded loop of metadata calls.
+                mayReresolve = false
+                if (url(current) == current) throw failureFor(response.code, range)
+                continue
             }
             response.close()
             attempt++
@@ -227,6 +264,14 @@ class HttpRangeTransport(
 
     private companion object {
         const val GET = "GET"
+
+        /**
+         * The statuses a URL can be refused with. Naming them here rather than inside the loop
+         * keeps this class at ten methods, one under detekt's ceiling, which is the budget
+         * whoever extends it next has to work in.
+         */
+        fun isRefusal(code: Int): Boolean = code == HTTP_UNAUTHORIZED || code == HTTP_FORBIDDEN
+
         const val HTTP_RANGE_NOT_SATISFIABLE = 416
         const val HTTP_TOO_MANY_REQUESTS = 429
         const val HTTP_UNAVAILABLE = 503

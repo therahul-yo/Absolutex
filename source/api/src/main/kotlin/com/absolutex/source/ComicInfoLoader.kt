@@ -16,15 +16,21 @@ object ComicInfoLoader {
      * @param rawNames every entry name in raw archive order, so index == archive ordinal —
      *   including the entries [EntryFilter.isPage] would reject, because ComicInfo.xml is one
      *   of them.
-     * @param extract asks for one entry's bytes by raw ordinal and may return null (unreadable).
+     * @param extract asks for one entry's bytes by raw ordinal. It may return null, and it may
+     *   throw — a corrupt or truncated entry, a wrong passphrase and a dead transport all surface
+     *   that way — and either answer means the same thing here: no metadata.
      * @return the parsed [ComicInfo], or null when the archive carries none, the entry cannot be
      *   read, or the XML is malformed — the same "degrade, never crash" rule as the parser.
+     *
+     * The guard around [extract] lives here rather than at each call site because that is the one
+     * place every caller routes through. A caller that forgets it turns an unreadable sidecar into
+     * a failed book open, which is the whole defect this loader exists to prevent.
      */
     inline fun from(rawNames: List<String>, extract: (ordinal: Int) -> Pair<Int, ByteArray>?): ComicInfo? {
         val ordinal = rawNames.indexOfFirst { isComicInfoName(it) }
         if (ordinal < 0) return null
-        val bytes = extract(ordinal)?.second ?: return null
-        return ComicInfoParser.parse(bytes.inputStream())
+        val bytes = runCatching { extract(ordinal) }.getOrNull()?.second ?: return null
+        return runCatching { ComicInfoParser.parse(bytes.inputStream()) }.getOrNull()
     }
 
     /**

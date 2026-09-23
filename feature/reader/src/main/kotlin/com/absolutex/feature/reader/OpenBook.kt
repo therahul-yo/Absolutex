@@ -9,6 +9,8 @@ import com.absolutex.model.BookIdentity
 import com.absolutex.source.ContainerFormat
 import com.absolutex.source.EntryFilter
 import com.absolutex.source.FormatSniffer
+import com.absolutex.source.folder.FolderComicSource
+import com.absolutex.source.folder.FolderEntry
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import com.absolutex.source.libarchive.LibArchiveSource
@@ -27,6 +29,10 @@ import java.io.IOException
  * header read the inline check did.
  */
 internal fun Context.openBook(uri: Uri): Closeable {
+    // Folders are asked about first: a folder is not a container with an unfamiliar header, it
+    // has no header at all and no descriptor worth opening. See [folderPages] for the cost.
+    val folder = folderPages(uri)
+    if (folder != null) return FolderComicSource.open(folder)
     val head = ParcelFileDescriptor.AutoCloseInputStream(openDescriptor(uri))
         .use { it.readNBytes(FormatSniffer.HEADER_BYTES) }
     if (FormatSniffer.detect(head) != ContainerFormat.PDF) {
@@ -79,17 +85,43 @@ internal fun Context.identityOf(uri: Uri): String = when (uri.scheme) {
 }
 
 private fun fileIdentity(file: File, uri: Uri): String {
-    val size = if (file.isDirectory) folderPageBytes(file) else file.length()
+    val size = if (file.isDirectory) filePages(file).sumOf { it.sizeBytes } else file.length()
     return BookIdentity.ofOrFallback(file.name, size, uri.toString())
 }
 
-/** A folder book's size, exactly as [LibraryScanner] sums it: its immediate image pages, not sub-folders. */
-private fun folderPageBytes(dir: File): Long =
+/**
+ * A folder book's pages, or null when [uri] is not a folder at all.
+ *
+ * One definition, two readers: the book's identity is the sum of these entries' sizes and its
+ * page list is these same entries in natural order (see [FolderComicSource]). Selecting them
+ * twice, in two places, is how a folder book's saved position stops matching its shelf entry.
+ *
+ * Cost, since this now runs before every open: on a file path it is one `isDirectory` stat. On
+ * SAF it is one `getType` call, and the child walk below runs only once that answers yes — so an
+ * ordinary container pays a single extra provider round trip, not a listing. A provider that
+ * answers null degrades to exactly the previous behaviour: not a folder, open it as a container.
+ *
+ * Any directory opens, including one [LibraryScanner] would not have listed as a book because it
+ * holds sub-folders. That difference is deliberate: the scanner decides what belongs on a shelf,
+ * this decides how to read what the user asked for, and opening its immediate pages beats the
+ * failure a directory used to produce here.
+ */
+private fun Context.folderPages(uri: Uri): List<FolderEntry>? = when (uri.scheme) {
+    "file", null -> uri.path?.let(::File)?.takeIf { it.isDirectory }?.let(::filePages)
+    else -> if (contentResolver.getType(uri) == DocumentsContract.Document.MIME_TYPE_DIR) {
+        documentFolderPages(uri)
+    } else {
+        null
+    }
+}
+
+/** Exactly what [LibraryScanner] selected when it found the folder: its immediate image children. */
+private fun filePages(dir: File): List<FolderEntry> =
     dir.listFiles()
         ?.filterNot { LibraryScanner.shouldSkip(it, includeHidden = false) }
         ?.filter { it.isFile && EntryFilter.isPage(it.name) }
-        ?.sumOf { it.length() }
-        ?: 0L
+        ?.map { page -> FolderEntry(page.name, page.length()) { page.inputStream() } }
+        .orEmpty()
 
 private fun Context.documentIdentity(uri: Uri): String = contentResolver.query(
     uri,
@@ -102,16 +134,26 @@ private fun Context.documentIdentity(uri: Uri): String = contentResolver.query(
     val name = c.getColumnIndex(OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let(c::getString)
     val mime = c.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE).takeIf { it >= 0 }?.let(c::getString)
     val size = if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
-        documentFolderPageBytes(uri)
+        documentFolderPages(uri).sumOf { it.sizeBytes }
     } else {
         c.getColumnIndex(OpenableColumns.SIZE).takeIf { it >= 0 && !c.isNull(it) }?.let(c::getLong)
     }
     BookIdentity.ofOrFallback(name, size, uri.toString())
 } ?: uri.toString()
 
-/** [folderPageBytes], for a SAF folder document — its children by the same [ContentResolverTree] a scan uses. */
-private fun Context.documentFolderPageBytes(documentUri: Uri): Long =
+/**
+ * [filePages], for a SAF folder document — its children by the same [ContentResolverTree] a scan uses.
+ *
+ * Each entry's opener captures this [Context] for as long as the book stays open, so it must be
+ * the application context — which is what `ContextBookOpener` is constructed with.
+ */
+private fun Context.documentFolderPages(documentUri: Uri): List<FolderEntry> =
     ContentResolverTree(this).children(documentUri.toString())
         .filterNot { LibraryScanner.shouldSkip(it.name, it.isDirectory, includeHidden = false) }
         .filter { !it.isDirectory && EntryFilter.isPage(it.name) }
-        .sumOf { it.sizeBytes }
+        .map { page ->
+            FolderEntry(page.name, page.sizeBytes) {
+                // Generic message: the raw Uri must not reach the UI (see openDescriptor).
+                contentResolver.openInputStream(Uri.parse(page.uri)) ?: throw IOException("page is unreadable")
+            }
+        }

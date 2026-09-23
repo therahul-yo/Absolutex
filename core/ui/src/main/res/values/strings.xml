@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Title of the in-app language picker. -->
+    <string name="language_title">Language</string>
+    <!-- The default choice: the app follows the language chosen for the device. Listed first
+         and always present, whatever translations ship. -->
+    <string name="language_system_default">System default</string>
+</resources>

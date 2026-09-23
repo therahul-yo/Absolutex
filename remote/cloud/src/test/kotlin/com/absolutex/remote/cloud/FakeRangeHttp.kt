@@ -28,6 +28,13 @@ internal class FakeRangeHttp(
     var retryAfterHeader: String? = null
     var unauthorized = false
 
+    /**
+     * The status to refuse a given url with, or null to serve it normally. Per-url rather than a
+     * flag so a supplier that re-resolves can be told from one that cannot: the interesting case
+     * is exactly the one where the first url is dead and the second is not.
+     */
+    var refuses: (String) -> Int? = { null }
+
     /** Bytes handed to the client before a BREAKS_MID_STREAM body throws. */
     var breakAfterBytes = 1
 
@@ -35,6 +42,9 @@ internal class FakeRangeHttp(
     var shortReadBytes = 1
 
     val rangesSeen = mutableListOf<String>()
+
+    /** URLs the client actually requested, so a per-request supplier can be told from a fixed one. */
+    val urlsSeen = mutableListOf<String>()
     val headersSeen = mutableListOf<Map<String, String>>()
     val bodies = mutableListOf<ServedStream>()
 
@@ -63,10 +73,13 @@ internal class FakeRangeHttp(
         headers: Map<String, String>,
     ): HttpStreamResponse {
         headersSeen += headers
+        urlsSeen += url
         val range = headers[RANGE].orEmpty()
         rangesSeen += range
+        val refusal = refuses(url)
         return when {
             unauthorized -> bodiless(HTTP_UNAUTHORIZED)
+            refusal != null -> bodiless(refusal)
             rateLimitsRemaining > 0 -> rateLimited()
             mode == Mode.IGNORES_RANGE -> wholeFile()
             else -> partial(range)
@@ -102,8 +115,15 @@ internal class FakeRangeHttp(
         return HttpStreamResponse(HTTP_PARTIAL, body, head)
     }
 
-    private fun bodiless(code: Int): HttpStreamResponse =
-        HttpStreamResponse(code, InputStream.nullInputStream())
+    /**
+     * A status with an empty but *tracked* body. A refusal still arrives on a connection, so it
+     * has to be counted by [openBodies] — otherwise a leaked 401 response is invisible here.
+     */
+    private fun bodiless(code: Int): HttpStreamResponse {
+        val body = ServedStream(0, 0, -1)
+        bodies += body
+        return HttpStreamResponse(code, body)
+    }
 
     private fun parseRange(range: String): Pair<Long, Long> {
         val spec = range.removePrefix("bytes=")

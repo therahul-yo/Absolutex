@@ -1,5 +1,6 @@
 package com.absolutex.remote.sync
 
+import com.absolutex.remote.core.InMemoryCredentialStore
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test

@@ -1,6 +1,7 @@
 package com.absolutex.feature.settings
 
 import android.content.pm.PackageManager
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
@@ -27,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import com.absolutex.core.ui.A11y
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -176,6 +178,29 @@ fun AboutRow(modifier: Modifier = Modifier) {
         },
         supportingContent = { Text(info.versionName ?: "") },
         modifier = modifier,
+    )
+}
+
+/**
+ * The way in to the remote servers list (§5.3).
+ *
+ * The transports, the list and the form have all shipped; until this row existed nothing in the
+ * app navigated to them, so the whole remote feature was unreachable from the UI.
+ *
+ * `clickable(role = Role.Button)` rather than a bare click: a row that navigates is a button to
+ * a screen reader, and without the role TalkBack announces it as plain text with no hint that it
+ * does anything. The 48 dp floor is [A11y.MinTouchTarget] — a ListItem is tall enough by default
+ * with supporting text, but the floor is what keeps that true at small font scales.
+ */
+@Composable
+fun RemoteServersRow(onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    ListItem(
+        headlineContent = { Text(stringResource(R.string.settings_remote_title)) },
+        supportingContent = { Text(stringResource(R.string.settings_remote_desc)) },
+        modifier = modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = A11y.MinTouchTarget)
+            .clickable(role = Role.Button, onClick = onOpen),
     )
 }
 

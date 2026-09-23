@@ -16,9 +16,11 @@ import com.absolutex.remote.core.parseRemoteUri
 import com.absolutex.remote.core.RemoteBookOpener
 import com.absolutex.remote.core.RemoteOpenResult
 import com.absolutex.source.ComicSource
+import com.absolutex.source.PageReadability
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -324,7 +326,17 @@ class ReaderViewModelTest {
         vm.open(remoteUri("second.cbz"))
         advanceUntilIdle()
 
-        val closingThread = withTimeout(10_000) { remote.opened.first().closedOn.await() }
+        val closing = remote.opened.first().closedOn
+        // withTimeout inside runTest bounds VIRTUAL time, not the wall clock: the moment this
+        // coroutine parks on await() the test scheduler has nothing runnable, so it advances
+        // straight to the deadline and the extract pool gets ~0 real milliseconds to answer.
+        // The test then passed only when the pool happened to finish first — measured, the 10 s
+        // bound fired after 3 ms of wall clock. Dispatchers.Default is not a Delay, so withTimeout
+        // falls back to DefaultDelay and the bound becomes real milliseconds, which is what a
+        // handoff to a real thread needs.
+        val closingThread = withContext(Dispatchers.Default) {
+            withTimeout(CLOSE_TIMEOUT_MS) { closing.await() }
+        }
         // The close runs on the pool, then the open coroutine resumes on Main; let that
         // resumption land before the test ends, or teardown resets Main underneath it.
         advanceUntilIdle()
@@ -337,8 +349,41 @@ class ReaderViewModelTest {
         )
     }
 
+    @Test fun `recovery notice does not change pagination and clears on the next book`() = test {
+        val damaged = object : ComicSource {
+            override val pages = List(14) { Page(it, "page$it.png") }
+            override val pageReadability = PageReadability(13, 20)
+            override fun openPage(index: Int): InputStream = ByteArrayInputStream(ByteArray(0))
+            override fun close() = Unit
+        }
+        val vm = vm(object : BookOpener {
+            override suspend fun open(uri: Uri): Pair<Closeable, String> =
+                (if (uri.lastPathSegment == "damaged") damaged else FakeComicSource("normal")) to uri.toString()
+        })
+        vm.open(uri("damaged"))
+        advanceUntilIdle()
+        assertEquals(14, vm.ui.value.pageCount)
+        assertEquals("13 of 20 pages readable", vm.ui.value.recoveryNotice)
+        vm.open(uri("normal"))
+        assertEquals(null, vm.ui.value.recoveryNotice)
+        advanceUntilIdle()
+        assertEquals(1, vm.ui.value.pageCount)
+        assertEquals(null, vm.ui.value.recoveryNotice)
+    }
+
+    @Test fun `recovery notice never invents a missing total`() = test {
+        val context: Context = ApplicationProvider.getApplicationContext()
+        assertEquals(
+            "13 pages readable (total unknown)",
+            context.recoveryNotice(PageReadability(13, null)),
+        )
+    }
+
     private companion object {
         const val TOTAL_RAM_BYTES = 4L * 1024 * 1024 * 1024
+
+        /** Real milliseconds now, so it is a genuine bound rather than a virtual-clock no-op. */
+        const val CLOSE_TIMEOUT_MS = 10_000L
     }
 }
 

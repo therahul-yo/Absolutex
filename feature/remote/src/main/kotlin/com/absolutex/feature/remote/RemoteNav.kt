@@ -28,15 +28,11 @@ fun browseRoute(serverId: String, path: String? = null): String {
 
 /**
  * Remote servers destination for the app-level NavHost. Wired in MainActivity next to
- * `settingsDestination()`; the settings row that navigates to [REMOTE_LIST_ROUTE] is
- * Agent03's screen to add:
- *
- * TODO(agent3): add a "Remote servers" row to the settings screen navigating to
- * `REMOTE_LIST_ROUTE` ("remote"). The list and form destinations below own everything
- * past that navigation; back stays the host's concern.
+ * `settingsDestination()`, which carries the "Remote servers" row that navigates here — the
+ * host supplies that route because only the host knows the graph. The list and form
+ * destinations below own everything past that navigation; back stays the host's concern.
  *
  * Browse opens a book by navigating the host to `"reader/" + Uri.encode(remoteUri)` —
- * that `absolutex-remote://` routing in the reader is lead/reader-remote-routing, so
  * pass an `onOpenBook` that does exactly that navigate and nothing else.
  */
 fun NavGraphBuilder.remoteDestination(

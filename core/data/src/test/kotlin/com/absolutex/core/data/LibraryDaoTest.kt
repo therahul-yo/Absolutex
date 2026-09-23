@@ -7,6 +7,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -129,12 +130,22 @@ class LibraryDaoTest {
         assertEquals(listOf(1.0, 3.0), dao.booksInSeries("Batman").map { it.issue })
     }
 
+    @Test fun `a rescan keeps addedAt and the favourite flag the user set`() = runTest {
+        dao.upsertAll(listOf(book("/a/Batman 001.cbz").copy(addedAt = 111, isFavorite = true)))
+        // A scan re-derives every column from disk, so it carries addedAt 0 and isFavorite false.
+        dao.upsertPreservingAddedAt(listOf(book("/a/Batman 001.cbz", size = 999, scan = 2)))
+        val row = dao.observeAll().first().single()
+        assertEquals(111L, row.addedAt)
+        assertTrue("a rescan must not clear a favourite", row.isFavorite)
+        assertEquals(999L, row.sizeBytes)
+    }
+
     @Test fun `reading progress and library live in one database`() = runTest {
         // The library is regenerable by rescanning; progress is not. Both must coexist.
         db.progressDao().upsert(ReadingProgress("book-1", 12, 45, 1_700_000_000_000))
         dao.upsertAll(listOf(book("/a/Batman 001.cbz")))
         assertEquals(12, db.progressDao().get("book-1")!!.pageIndex)
-        assertEquals(1, dao.count())
+        assertEquals(1, dao.observeAll().first().size)
         assertNull(db.progressDao().get("missing"))
     }
 }

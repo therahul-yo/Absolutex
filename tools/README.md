@@ -5,6 +5,7 @@
 | `make-corpus.py` | Generates the §8 hostile test corpus. Below. |
 | `check-strings.py` | Fails on **new** hardcoded user-visible strings in the UI modules. Pure stdlib, no Gradle, no SDK. Below. |
 | `check-translations.py` | Fails on a *present* translation that disagrees with English — placeholders, plural forms, stale keys — and on a locale shipping without a named reviewer. Pure stdlib. Below. |
+| `check-schemas.py` | Fails when a Room `@Database` version's exported schema is missing or, more usefully, present on disk but never committed. Pure stdlib plus `git`. Below. |
 | `check-apk-size.py` | Breaks the release APK down by category and fails on a size regression. Run by CI; see `.github/workflows/README.md`. |
 | `check-startup-budget.py` | Enforces the §3 300 ms P90 cold-start budget against Macrobenchmark JSON. Macrobenchmark has no assertion API, so the gate lives here. |
 | `run-benchmark.sh` | Drives the Macrobenchmarks through `am instrument`, keeping the app installed so the staged corpus survives between runs. |
@@ -28,9 +29,46 @@ fixture that exercises the line, not a shrug.
 actually changes behaviour for the input at hand. Writing one that does not is easy, and it
 looks exactly like a gap in coverage.
 
+**A fixture the subject produced is not evidence.** `DatabaseSchemaTest` asserts that
+`schemas/<db>/<version>.json` exists and has the right indices. It passed on a branch where
+that file was not committed at all, because Room's compiler had written it into the directory
+the test reads, seconds earlier in the same build. The assertion was real, the fixture was
+real, and together they proved nothing about the repository — only that the build had just
+run. Whenever a test reads a file, ask *who wrote it and when*: if the answer is "this build,
+a moment ago", the test is checking the compiler, not the tree. That class of hole cannot be
+closed from inside the build, which is why `check-schemas.py` is a gate here instead.
+
 And when checking a gate's exit code from a shell, remember `$?` after a pipeline is the *last*
 command's status. `tool | grep foo; echo $?` reports grep's verdict, not the tool's, so a gate
 that correctly exited 1 reads as 0. Use `${PIPESTATUS[0]}`, or run it without the pipe.
+
+## What a no-SDK harness cannot see
+
+Some of this repository can be built and tested without the Android SDK — the plain
+Kotlin/JVM modules with `kotlinc` from Maven Central, detekt with `detekt-cli`, and every
+Python gate here. That is enough to land real work from a machine that cannot reach
+`dl.google.com`, and it is how several of these tools were written. It is not the gate, and the
+gap is not evenly distributed: it is widest exactly where a module does something **for the
+first time**.
+
+Twice now a change has passed everything runnable off-SDK and still failed on a real Gradle
+build, both times for the same underlying reason — the harness supplies by hand what the build
+would have had to be told to provide:
+
+- **`:core:ui` had no test dependencies at all.** Its first test compiled locally because the
+  harness puts `junit.jar` on the classpath itself. Under Gradle it did not compile: the module
+  needed `testImplementation(libs.junit)`.
+- **`feature/library` had no `testOptions { unitTests { isIncludeAndroidResources = true } }`.**
+  Its first test that resolved a string threw `Resources$NotFoundException`, because Robolectric
+  cannot see a library module's own resources without it. Five sibling modules already set it;
+  that module had simply never needed it.
+
+The rule worth carrying: **the first test in a module that does something new is usually a
+build-configuration change, not just a test.** First test at all, first test to read a resource,
+first test to need a database or a coroutine dispatcher — each is a line in `build.gradle.kts`
+that the modules which already do it have and this one does not. Before pushing such a test from
+an SDK-free environment, compare that module's `build.gradle.kts` against a sibling that already
+does the same thing, and say plainly in the report that it has not been compiled.
 
 ## `check-strings.py` — no new hardcoded strings (i18n milestone 1)
 
@@ -183,6 +221,85 @@ are skipped rather than guessed at.
   count differs between locales is a real bug and would need its own rule.
 - **Nothing checks whether a translation is any good.** This proves structure, never meaning.
   That is what the milestone 5 review status is for, and no gate substitutes for it.
+## `check-schemas.py` — exported Room schemas are committed
+
+Room writes `schemas/<database fqn>/<version>.json` at compile time, into the directory
+`room.schemaLocation` names (`$projectDir/schemas` in every module here). `DatabaseSchemaTest`
+reads those files back. Both halves run inside the same Gradle invocation, so the test finds a
+schema the compiler wrote seconds earlier **whether or not git has ever seen it**. Version 6
+merged with `6.json` absent from the branch and all four checks green; the assertion that
+"`6.json` was exported at all" passed because the build had just exported it.
+
+Committing the file is not tidiness. An exported schema regenerated on every build records
+nothing: edit the entity later and the file is rewritten in place, so the migration *into* that
+version is validated against whatever the entity says now rather than against what shipped to a
+device. The schema has to be a fixed point for the migration to be checked against one. Once it
+is committed, rewriting it also shows up as a diff on a tracked file, which a reviewer can see
+on a pull request that claimed only to add a field.
+
+### What it checks
+
+For every `@Database(version = N)` in the tree:
+
+- **A.** a schema file exists for every version `1..N`
+- **B.** every one of those is **tracked by git** — `git ls-files`, not `os.path.exists`, which
+  is the only one of the four that CI cannot otherwise see
+- **C.** the file for version `N` declares `"version": N` inside it, so a bump that never
+  re-exported is caught rather than silently validated against the previous schema
+- **D.** no schema file *above* `N` is left behind, which is what a reverted bump looks like
+
+Scanning no `@Database` at all exits 2 rather than 0, on the same principle as
+`check-strings.py`: a gate that inspected nothing has not passed.
+
+### Deliberately not checked
+
+**That the exported entity list matches `entities = [...]` in the annotation.** After a rewrite
+the two agree, so the comparison cannot see the failure this gate exists for — and it would
+fail loudly on a legitimate rename. B is what catches it.
+
+**That a tracked schema is unmodified in the working tree.** Regenerating during development is
+normal and expected; the commit is the checkpoint, not the edit.
+
+### Known gaps
+
+- **Hand-written `Migration` objects are not verified.** The gate says a schema for each
+  version is committed, not that a path exists from each version to the next. `autoMigrations`
+  could be parsed for contiguity, but migrations registered through `addMigrations` are
+  ordinary code the gate cannot see, so a contiguity check would fail on legitimate trees.
+- **One `@Database` per file.** Two in one source file, and only the first is parsed. Nothing
+  in this repository does that; if something ever does, the gate under-reports rather than
+  crashing, which is the wrong direction — worth revisiting then.
+- **The self-test shells out to `git`.** It builds real repositories in a temp directory,
+  because the one assertion that matters cannot be faked with a fixture tree: stubbing
+  `git ls-files` would let the gate pass with the bug in it.
+
+## Benign encrypted-archive regression
+
+Run `sh tools/test-archive-password.sh` on macOS with JDK 21 and Homebrew libarchive.
+It decodes the checked-in `source/libarchive/src/androidTest/assets/encrypted-zipcrypto.cbz.b64`
+into build output, checks SHA-256, and exercises the real JNI bridge under `-Xcheck:jni`:
+password required, wrong password, correct PNG and ComicInfo payloads, no password reuse
+between native calls, and an ordinary ZIP regression. Android instrumentation bundles the
+same asset; no device-side corpus staging is required. `sh tools/test-archive-recovery.sh`
+continues to verify slice A against the already-generated `build/corpus/11_truncated.cbz`.
+
+The tiny fixture was authored here using `/usr/bin/zip -X -0 -P corpus-only` over `001.png`
+(a 1×1 PNG) and `ComicInfo.xml` (series `Encrypted fixture`, PageCount 1), each with a fixed
+2000-01-01 mtime. **`corpus-only` is a public, nonsecret test password.** Info-ZIP generates
+random encryption headers, so rerunning zip is not byte-deterministic. Instead the frozen
+base64 seed is decoded deterministically; the resulting archive's pinned SHA-256 is
+`c685663840fc953c7c4e0b70e324400317d97130b4707d3a779cc2afa9c3848b`.
+No third-party comic, exploit or malformed payload is included.
+
+Capability limits: the Android build supports traditional ZIP/ZipCrypto decryption through
+libarchive, not WinZip AES (no crypto backend is added). Upstream libarchive 3.8.9 does not
+support encrypted RAR4/RAR5 or 7z decryption. Known unsupported diagnostics have their own
+exception; CRC/data errors are not falsely labelled wrong passwords. The host's crypto
+capabilities may differ. Encrypted entries are validated at open, so this path costs a full
+payload read; ordinary archive listing/recovery behavior is unchanged. No cache or parallel
+extraction changes are included. Password bytes are held only by the live encrypted source,
+cleared at close/failed open, and copied briefly per native call. libarchive frees its own
+internal copies; secure erasure of all library/JVM memory cannot be guaranteed.
 
 ## `make-corpus.py` — the hostile test corpus (spec §8)
 
@@ -219,6 +336,16 @@ irreproducible and the `--check` gate worthless.
 | `15_rar5.cbr` | RAR5. |
 | `16_avif.cbz` | AVIF pages — what a modern scanner actually emits. |
 | `17_huge_2gb.cbz` | ~2.25 GiB, with real pages on **both sides** of the 2³¹-byte offset. |
+| `18_comicinfo_behind_junk.cbz` | `ComicInfo.xml` at a non-zero raw ordinal, behind junk, nested and mixed-case. |
+| `19_fixed_layout.epub` | A conforming fixed-layout EPUB: `mimetype` first and STORED, SVG page images, hrefs climbing `../` out of `text/` into `img/`. |
+| `20_epub_named_cbz.cbz` | **Byte-identical to `19`**, wearing `.cbz`. Anything that tells them apart is reading the name, not the content. |
+| `21_epub_rtl.epub` | The same book declaring `page-progression-direction="rtl"` — how a manga EPUB says which way it reads. |
+| `22_tar.cbt` | A real TAR: its magic sits at offset **257**, not at the start, so a sniffer reading only the first bytes misses it. |
+| `23_cbz_with_pdf_inside.cbz` | A CBZ **storing a real PDF**, so `%PDF-` lands inside the first kibibyte. Searching for it before establishing the container hands a ZIP to PDFium. |
+| `24_comicinfo_malformed.cbz` | A sidecar that is not valid XML. The metadata is lost; the book is not. |
+| `25_comicinfo_oversized.cbz` | A sidecar past the 1 MiB parser cap — 1.5 MiB inflated from 5 KB, in an 8 KB file. |
+| `26_comicinfo_corrupt_entry.cbz` | A sidecar whose deflate stream is corrupt, so **extraction** fails rather than parsing. |
+| `27_comicinfo_two_sidecars.cbz` | A root sidecar and a nested one disagreeing; raw archive order decides which wins. |
 
 Two of those deserve an explanation.
 
@@ -228,6 +355,30 @@ wraps: reads below the line succeed, reads above it return garbage. Pages `tail0
 sit past the boundary specifically so that a truncated offset fails loudly. The bulk of the
 file is `STORED` filler under `filler/*.bin` — free to produce, and `EntryFilter` rejecting
 it by extension is itself worth asserting.
+
+**The four ComicInfo cases — why the sidecar needs its own row.** `01` already carries a
+well-formed sidecar at the archive root and `18` carries a nested, mixed-case one at a non-zero
+raw ordinal, so what was missing was every way a sidecar goes *wrong*. `24` cannot be parsed,
+`25` is refused by the 1 MiB cap before parsing is attempted, and `26` cannot be extracted at
+all — a distinction that matters, because that last one is the path a reader takes when the
+sidecar is damaged rather than merely wrong, and a loader that turns it into a thrown exception
+stops the book opening with pages that are perfectly readable. `27` pins the tie-break between
+two sidecars, which is a property of entry order rather than path depth.
+
+Verified against the production `ComicInfoLoader`: `24`, `25` and `26` each yield null metadata
+with all six pages intact, and `27` resolves to the root sidecar.
+
+**`20_epub_named_cbz.cbz` — why a duplicate earns its place.** It is the same bytes as `19`
+under a different name, and that is the entire test: a reader that opens one and not the other is
+dispatching on the extension. Two cases sharing a digest is the point, exactly as `03`/`04`/`05`
+already do.
+
+**`23_cbz_with_pdf_inside.cbz` — the case that was a live bug.** Until the magic-byte sniffer
+landed, `openBook()` searched the whole first kibibyte for `%PDF-` *before* establishing what the
+container was, so this file was handed to PDFium — which cannot open a ZIP — and the book failed.
+It is `STORED` rather than deflated so the magic genuinely is in those bytes. Pinned here so the
+ordering (structured signatures at fixed offsets first, the PDF scan last) cannot regress
+unnoticed.
 
 **`12_giant_page.cbz` — why the file is only 11 KB.** The giant page is a diagonal ramp, so
 it deflates to almost nothing. That is on purpose: the stress this case applies is the
@@ -251,13 +402,13 @@ RAR5 through a clean-room implementation, so the reader carries no licence probl
 
 ### Reproducibility
 
-`corpus-expected-sha256.json` pins the digests of the 13 always-generated, pure-Python
+`corpus-expected-sha256.json` pins the digests of the 23 always-generated, pure-Python
 cases. `--check` regenerates and compares, which is how CI notices that a refactor quietly
 changed the corpus. The external-tool cases are not pinned (their encoders differ between
 versions) and neither is `17_huge_2gb.cbz` (opt-in).
 
-`03`, `04` and `05` share a digest — same bytes, three different extension spellings. That
-is the point of those cases.
+`03`, `04` and `05` share a digest — same bytes, three different extension spellings — and so
+do `19` and `20`. That is the point of those cases.
 
 Determinism comes from: an explicit xorshift64\* PRNG rather than `random`; a fixed DOS
 timestamp, `create_system` and `external_attr` on every ZIP entry; and a pinned zlib level.

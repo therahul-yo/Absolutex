@@ -42,6 +42,7 @@ import os
 import shutil
 import struct
 import subprocess
+import tarfile
 import sys
 import zipfile
 import zlib
@@ -500,6 +501,182 @@ def case_comicinfo_deep(out: Path) -> None:
             zf.writestr(zinfo(name), blob)
 
 
+def _epub_bytes(rtl: bool = False) -> bytes:
+    """A conforming fixed-layout EPUB, in memory.
+
+    OCF requires the ``mimetype`` entry first and STORED, which is the whole reason an EPUB is
+    identifiable from its first 58 bytes. Written here with that shape on purpose, so a sniffer
+    that skips the compression method or the entry order is caught rather than flattered.
+
+    Kindle Comic Creator's markup: the page wrapped in <svg><image xlink:href> so it scales to
+    the viewport. The href climbs out of text/ into img/, which is the path-resolution case a
+    reader gets wrong first.
+    """
+    import io
+
+    direction = ' page-progression-direction="rtl"' if rtl else ""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", allowZip64=True) as zf:
+        zf.writestr(zinfo("mimetype", zipfile.ZIP_STORED), b"application/epub+zip")
+        zf.writestr(zinfo("META-INF/container.xml"),
+                    '<?xml version="1.0"?>\n'
+                    '<container version="1.0" '
+                    'xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                    '<rootfiles><rootfile full-path="OEBPS/content.opf" '
+                    'media-type="application/oebps-package+xml"/></rootfiles></container>')
+        items, refs = [], []
+        for i in range(1, 5):
+            items.append('<item id="p%d" href="text/p%d.xhtml" media-type="application/xhtml+xml"/>'
+                         '<item id="i%d" href="img/p%d.png" media-type="image/png"/>' % (i, i, i, i))
+            refs.append('<itemref idref="p%d"/>' % i)
+        zf.writestr(zinfo("OEBPS/content.opf"),
+                    '<?xml version="1.0" encoding="utf-8"?>\n'
+                    '<package xmlns="http://www.idpf.org/2007/opf" version="3.0">'
+                    '<metadata/><manifest>%s</manifest><spine%s>%s</spine></package>'
+                    % ("".join(items), direction, "".join(refs)))
+        for i in range(1, 5):
+            zf.writestr(zinfo("OEBPS/text/p%d.xhtml" % i),
+                        '<html xmlns:xlink="http://www.w3.org/1999/xlink"><body>'
+                        '<svg viewBox="0 0 1240 1754"><image xlink:href="../img/p%d.png"/></svg>'
+                        '</body></html>' % i)
+            zf.writestr(zinfo("OEBPS/img/p%d.png" % i), page_png(i - 1))
+    return buf.getvalue()
+
+
+def case_epub(out: Path) -> None:
+    """A fixed-layout EPUB, and the same bytes wearing a .cbz suffix.
+
+    The pair is the point: they are byte-identical, so anything that tells them apart is reading
+    the name rather than the content. The RTL variant carries
+    ``page-progression-direction="rtl"``, which is how a manga EPUB says which way it reads.
+    """
+    (out / "19_fixed_layout.epub").write_bytes(_epub_bytes())
+    (out / "20_epub_named_cbz.cbz").write_bytes(_epub_bytes())
+    (out / "21_epub_rtl.epub").write_bytes(_epub_bytes(rtl=True))
+
+
+def case_tar(out: Path) -> None:
+    """A real TAR wearing .cbt, whose magic sits at offset 257 rather than at the start.
+
+    Every field that would otherwise carry this machine's identity is pinned, because tarfile
+    defaults to the current uid/gid/mtime and would make the corpus irreproducible.
+    """
+    import io
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w", format=tarfile.USTAR_FORMAT) as tf:
+        for i in range(1, 5):
+            blob = page_png(i - 1)
+            info = tarfile.TarInfo("page%03d.png" % i)
+            info.size = len(blob)
+            info.mtime = 978307200            # 2001-01-01T00:00:00Z, matching ZIP_EPOCH
+            info.mode = 0o644
+            info.uid = info.gid = 0
+            info.uname = info.gname = ""
+            tf.addfile(info, io.BytesIO(blob))
+    (out / "22_tar.cbt").write_bytes(buf.getvalue())
+
+
+def case_cbz_holding_a_pdf(out: Path) -> None:
+    """A CBZ that stores a real PDF, which is the misroute case §6's sniffer exists to fix.
+
+    "%PDF-" lands inside the first kibibyte, so a reader that searches for the PDF magic before
+    establishing the container hands a ZIP to the PDF engine and the book fails to open. STORED,
+    so the magic really is in those bytes rather than behind a deflate stream.
+    """
+    # try/finally, not unlink-on-success: if build_pdf_with_outline throws, a stray file is
+    # left in the output directory where a later --check finds something it did not generate.
+    # (Review note on #79. case_truncated and case_giant_page have the same shape; left alone
+    # here so this change stays the sidecar cases plus the one fix that was asked for.)
+    pdf = out / ".tmp_bonus.pdf"
+    try:
+        build_pdf_with_outline(pdf)
+        entries = [("bonus.pdf", pdf.read_bytes())] + pages(4)
+    finally:
+        pdf.unlink(missing_ok=True)
+    path = out / "23_cbz_with_pdf_inside.cbz"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", allowZip64=True) as zf:
+        for name, blob in entries:
+            zf.writestr(zinfo(name, zipfile.ZIP_STORED), blob)
+
+
+def case_comicinfo_malformed(out: Path) -> None:
+    """A sidecar that is not valid XML. The metadata is lost; the book is not.
+
+    `01_basic_ltr.cbz` already covers a well-formed sidecar at the archive root, and
+    `18_comicinfo_behind_junk.cbz` covers a nested, mixed-case one at a non-zero raw ordinal.
+    What none of them covered is a sidecar the parser cannot read, which is the whole of
+    ComicInfoParser's degrade-never-crash contract.
+    """
+    entries = pages(6)
+    build_cbz(out / "24_comicinfo_malformed.cbz", entries,
+              comic_info='<?xml version="1.0"?>\n<ComicInfo><Series>Truncated at the')
+
+
+def case_comicinfo_oversized(out: Path) -> None:
+    """A sidecar past the 1 MiB parser cap, compressing to almost nothing.
+
+    This is the shape the cap exists for: a few KB on disk that inflates into a DOM large
+    enough to exhaust memory. OutOfMemoryError is an Error, not an Exception, so it escapes
+    the "return null, never throw" contract entirely — refusing the input is the only reliable
+    answer, and this case is how a reader that stops refusing gets caught.
+    """
+    filler = "<Notes>%s</Notes>" % ("A" * 64)
+    oversized = ('<?xml version="1.0"?>\n<ComicInfo><Series>Oversized</Series>%s</ComicInfo>'
+                 % (filler * 20000))
+    assert len(oversized) > 1024 * 1024, len(oversized)
+    build_cbz(out / "25_comicinfo_oversized.cbz", pages(6), comic_info=oversized)
+
+
+def case_comicinfo_corrupt_entry(out: Path) -> None:
+    """A sidecar whose compressed bytes are corrupt, so extracting it FAILS.
+
+    The three cases above all reach the parser. This one does not: libarchive cannot inflate
+    the entry at all, so the loader's extract step is what fails rather than the parse.
+
+    That distinction is the point. It is the path a reader takes when the sidecar is damaged
+    rather than merely wrong, it runs on every open because the sidecar is always looked for,
+    and a loader that turns that failure into a thrown exception stops the book opening at all
+    — pages that are perfectly readable included. Keeping the case in the corpus rather than in
+    one PR's test file means every format path is held to it, not just the one being changed
+    the day it was written.
+    """
+    name = "ComicInfo.xml"
+    good = out / ".tmp_corrupt_sidecar.cbz"
+    try:
+        build_cbz(good, pages(6), comic_info=COMIC_INFO.format(count=6, manga="No"))
+        blob = bytearray(good.read_bytes())
+    finally:
+        good.unlink(missing_ok=True)
+
+    # The sidecar is written first, so its local header sits at offset 0 and its deflate
+    # stream begins right after the name. Corrupting bytes inside that stream leaves every
+    # other entry, and the central directory, perfectly intact.
+    data_at = 30 + len(name)
+    assert blob[:4] == b"PK\x03\x04", blob[:4]
+    assert bytes(blob[30:data_at]) == name.encode("ascii"), bytes(blob[30:data_at])
+    for i in range(data_at + 4, data_at + 24):
+        blob[i] ^= 0xFF
+    (out / "26_comicinfo_corrupt_entry.cbz").write_bytes(bytes(blob))
+
+
+def case_comicinfo_two_sidecars(out: Path) -> None:
+    """A root sidecar and a nested one, disagreeing on purpose.
+
+    The loader takes the FIRST match in raw archive order, so which one wins is a property of
+    the entry order rather than of the path depth. Two writers really do leave both behind —
+    the original at the root, a re-zipper's copy under its own folder — and without a case the
+    tie-break is only an implementation detail nobody chose.
+    """
+    root = COMIC_INFO.format(count=6, manga="No").replace(
+        "<Series>Absolutex Corpus</Series>", "<Series>Root sidecar wins</Series>")
+    nested = COMIC_INFO.format(count=99, manga="YesAndRightToLeft").replace(
+        "<Series>Absolutex Corpus</Series>", "<Series>Nested sidecar loses</Series>")
+    entries = pages(6) + [("scan/ComicInfo.xml", nested.encode("utf-8"))]
+    build_cbz(out / "27_comicinfo_two_sidecars.cbz", entries, comic_info=root)
+
+
 def case_huge(out: Path) -> None:
     """~2.1 GiB CBZ with real pages on both sides of the 2^31 byte offset.
 
@@ -556,6 +733,13 @@ CASES: list[tuple[str, Callable[[Path], None], bool]] = [
     ("giant_page",     case_giant_page,     True),
     ("comicinfo_deep", case_comicinfo_deep, True),
     ("pdf_outline",    case_pdf_outline,    True),
+    ("epub",           case_epub,           True),
+    ("tar",            case_tar,            True),
+    ("cbz_with_pdf",   case_cbz_holding_a_pdf, True),
+    ("comicinfo_malformed",    case_comicinfo_malformed,     True),
+    ("comicinfo_oversized",    case_comicinfo_oversized,     True),
+    ("comicinfo_corrupt",      case_comicinfo_corrupt_entry, True),
+    ("comicinfo_two_sidecars", case_comicinfo_two_sidecars,  True),
     ("solid_7z",      case_solid_7z,       False),
     ("rar5",          case_rar5,           False),
     ("avif",          case_avif,           False),
@@ -569,6 +753,10 @@ REPRODUCIBLE_FILES = [
     "05_upper.CB7", "06_zip_named_cbr.cbr", "07_deep_nesting.cbz", "08_nonascii_rtl.cbz",
     "09_two_pages.cbz", "10_junk_entries.cbz", "11_truncated.cbz", "12_giant_page.cbz",
     "18_comicinfo_behind_junk.cbz", "13_outline.pdf",
+    "19_fixed_layout.epub", "20_epub_named_cbz.cbz", "21_epub_rtl.epub",
+    "22_tar.cbt", "23_cbz_with_pdf_inside.cbz",
+    "24_comicinfo_malformed.cbz", "25_comicinfo_oversized.cbz",
+    "26_comicinfo_corrupt_entry.cbz", "27_comicinfo_two_sidecars.cbz",
 ]
 
 

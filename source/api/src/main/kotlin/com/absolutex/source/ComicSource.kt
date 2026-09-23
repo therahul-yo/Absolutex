@@ -10,7 +10,11 @@ import java.io.InputStream
  * threads at once — the decode pipeline fans pages out across the big cores (§3).
  */
 interface ComicSource : Closeable {
+    /** Discovered page slots in reading order, including any unreadable slots. */
     val pages: List<Page>
+
+    /** Recovery-only payload report; null means unverified, NOT that every page is readable. */
+    val pageReadability: PageReadability? get() = null
 
     /** Random-access read of one page. Callers own the stream. */
     fun openPage(index: Int): InputStream

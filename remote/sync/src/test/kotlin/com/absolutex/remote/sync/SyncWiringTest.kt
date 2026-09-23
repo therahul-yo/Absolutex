@@ -9,6 +9,7 @@ import com.absolutex.remote.core.HttpCall
 import com.absolutex.remote.core.HttpResponse
 import com.absolutex.remote.core.HttpStreamResponse
 import com.absolutex.remote.core.HttpUrlConnectionCall
+import com.absolutex.remote.core.InMemoryCredentialStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job

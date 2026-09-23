@@ -87,7 +87,41 @@ static int private_fd(int fd) {
     return dup(fd);
 }
 
-static struct archive *open_fd(int fd, int *dup_out) {
+/* Only fixed messages cross JNI: never expose a password or libarchive's input-derived text. */
+static void throw_named(JNIEnv *env, const char *type, const char *message) {
+    if ((*env)->ExceptionCheck(env)) return;
+    jclass cls = (*env)->FindClass(env, type);
+    if (cls == NULL) return;
+    (*env)->ThrowNew(env, cls, message);
+    (*env)->DeleteLocalRef(env, cls);
+}
+
+#define PASSWORD_REQUIRED "com/absolutex/source/libarchive/PasswordRequiredException"
+#define WRONG_PASSWORD "com/absolutex/source/libarchive/WrongPasswordException"
+#define UNSUPPORTED_ENCRYPTION "com/absolutex/source/libarchive/UnsupportedEncryptionException"
+
+/* libarchive has no typed password error code. Match its known fixed diagnostics narrowly;
+   a CRC/data failure is NOT evidence of a wrong password and stays an IO/recovery failure. */
+static void password_error(JNIEnv *env, struct archive *a) {
+    const char *s = errstr(a);
+    if (strstr(s, "encryption support unavailable") ||
+        strstr(s, "encrypted data is not currently supported") ||
+        strstr(s, "encrypted, but currently not supported") ||
+        strstr(s, "Decryption is unsupported") ||
+        strstr(s, "Crypto codec not supported yet") ||
+        strstr(s, "Unsupported encryption format version:") ||
+        strcmp(s, "Encrypted file is unsupported") == 0 ||
+        strcmp(s, "Encryption is not supported") == 0) {
+        throw_named(env, UNSUPPORTED_ENCRYPTION, "Archive encryption is not supported by this build");
+    } else if (strcmp(s, "Passphrase required for this entry") == 0) {
+        throw_named(env, PASSWORD_REQUIRED, "Archive password required");
+    } else if (strcmp(s, "Incorrect passphrase") == 0 ||
+               strcmp(s, "Too many incorrect passphrases") == 0) {
+        throw_named(env, WRONG_PASSWORD, "Archive password rejected");
+    }
+}
+
+static struct archive *open_fd(JNIEnv *env, int fd, int *dup_out, const char *passphrase) {
     int dfd = private_fd(fd);
     if (dfd < 0) return NULL;
     /* A pipe cannot seek; libarchive then uses its streaming readers, so this is not fatal. */
@@ -112,8 +146,14 @@ static struct archive *open_fd(int fd, int *dup_out) {
     archive_read_support_filter_zstd(a);
     archive_read_support_filter_lz4(a);
 
+    if (passphrase != NULL && archive_read_add_passphrase(a, passphrase) != ARCHIVE_OK) {
+        throw_named(env, "java/io/IOException", "Could not register archive password");
+        archive_read_free(a);
+        close(dfd);
+        return NULL;
+    }
     if (archive_read_open_fd(a, dfd, BLOCK_SIZE) != ARCHIVE_OK) {
-        LOGE("open_fd: %s", errstr(a));
+        password_error(env, a);
         archive_read_free(a);
         close(dfd);
         return NULL;
@@ -184,12 +224,22 @@ static const char *entry_name(struct archive_entry *e) {
  * A truncated archive yields the entries read before the failure rather than nothing — the
  * brief requires degrading to "N of M readable", never crashing.
  */
+static jbyteArray read_entry(JNIEnv *env, struct archive *a, struct archive_entry *e);
+
 static jobjectArray
-list_impl(JNIEnv *env, jclass clazz, jint fd) {
+list_impl(JNIEnv *env, jclass clazz, jint fd, jbooleanArray complete,
+          jbooleanArray encrypted, const char *passphrase) {
     (void) clazz;
-    if (fd < 0) return NULL;
+    if (fd < 0 || complete == NULL || (*env)->GetArrayLength(env, complete) != 1) return NULL;
+    if (encrypted == NULL || (*env)->GetArrayLength(env, encrypted) != 1) return NULL;
+    jboolean found_encrypted = JNI_FALSE;
+    (*env)->SetBooleanArrayRegion(env, encrypted, 0, 1, &found_encrypted);
+    if ((*env)->ExceptionCheck(env)) return NULL;
+    jboolean finished = JNI_FALSE;
+    (*env)->SetBooleanArrayRegion(env, complete, 0, 1, &finished);
+    if ((*env)->ExceptionCheck(env)) return NULL;
     int dfd = -1;
-    struct archive *a = open_fd(fd, &dfd);
+    struct archive *a = open_fd(env, fd, &dfd, passphrase);
     if (a == NULL) return NULL;
 
     size_t cap = 64, n = 0;
@@ -199,6 +249,15 @@ list_impl(JNIEnv *env, jclass clazz, jint fd) {
     struct archive_entry *entry;
     int r;
     while (header_ok(r = archive_read_next_header(a, &entry))) {
+        if (archive_entry_is_encrypted(entry) > 0) {
+            found_encrypted = JNI_TRUE;
+            if (passphrase == NULL) {
+                throw_named(env, PASSWORD_REQUIRED, "Archive password required");
+                break;
+            }
+            /* Single password probe deferred to Kotlin: nativeList only tracks the flag.
+               The Kotlin side performs one nativeExtract call to verify the password. */
+        }
         if (!is_ordinal_entry(entry)) continue;
         if (n >= MAX_ENTRIES) {
             LOGE("nativeList: too many entries (>= %d), truncating list", MAX_ENTRIES);
@@ -216,10 +275,15 @@ list_impl(JNIEnv *env, jclass clazz, jint fd) {
         if (copy == NULL) break;
         names[n++] = copy;
     }
-    if (r != ARCHIVE_EOF && !header_ok(r)) {
-        LOGE("nativeList stopped early after %zu entries: %s", n, errstr(a));
-    }
+    if (archive_read_has_encrypted_entries(a) > 0) found_encrypted = JNI_TRUE;
+    if (r != ARCHIVE_EOF && !header_ok(r)) password_error(env, a);
     close_archive(a, dfd);
+    if ((*env)->ExceptionCheck(env)) goto fail;
+    (*env)->SetBooleanArrayRegion(env, encrypted, 0, 1, &found_encrypted);
+    if ((*env)->ExceptionCheck(env)) goto fail;
+    finished = r == ARCHIVE_EOF ? JNI_TRUE : JNI_FALSE;
+    (*env)->SetBooleanArrayRegion(env, complete, 0, 1, &finished);
+    if ((*env)->ExceptionCheck(env)) goto fail;
 
     /* n <= MAX_ENTRIES (20000) < INT_MAX, so the (jsize) casts below cannot overflow;
        the explicit check is defense in depth against future cap changes. */
@@ -322,13 +386,23 @@ static jbyteArray read_entry(JNIEnv *env, struct archive *a, struct archive_entr
             /* Fail closed: a mid-entry WARN/error means the bytes may be corrupt (bad
                CRC, truncated data). Returning partial bytes would surface a torn page
                — or hostile content — as valid; NULL maps to a generic error upstream. */
-            LOGE("read failed after %zu bytes: %s", len, errstr(a));
+            password_error(env, a);
             free(buf);
             return NULL;
         }
         len += (size_t) got;
     }
 
+    /* Encrypted entries must reach the authentication/CRC trailer, not just their declared
+       byte count. Some readers report final validation on the next read. */
+    if (sized && (la_int64_t) len == declared && archive_entry_is_encrypted(e) > 0) {
+        char extra;
+        if (archive_read_data(a, &extra, 1) != 0) {
+            password_error(env, a);
+            free(buf);
+            return NULL;
+        }
+    }
     if (sized && (la_int64_t) len != declared) {
         LOGE("short read: %zu of %lld bytes: %s", len, (long long) declared, errstr(a));
         free(buf);
@@ -372,12 +446,12 @@ static jbyteArray read_entry(JNIEnv *env, struct archive *a, struct archive_entr
  */
 static jbyteArray
 extract_impl(JNIEnv *env, jclass clazz,
-                                                              jint fd, jint ordinal) {
+             jint fd, jint ordinal, const char *passphrase) {
     (void) clazz;
     if (fd < 0 || ordinal < 0) return NULL;
 
     int dfd = -1;
-    struct archive *a = open_fd(fd, &dfd);
+    struct archive *a = open_fd(env, fd, &dfd, passphrase);
     if (a == NULL) return NULL;
 
     jbyteArray result = NULL;
@@ -387,30 +461,71 @@ extract_impl(JNIEnv *env, jclass clazz,
     while (header_ok(r = archive_read_next_header(a, &entry))) {
         if (!is_ordinal_entry(entry)) continue;
         if (++seen != ordinal) continue;
-        result = read_entry(env, a, entry);
+        if (archive_entry_is_encrypted(entry) > 0 && passphrase == NULL) {
+            throw_named(env, PASSWORD_REQUIRED, "Archive password required");
+        } else {
+            result = read_entry(env, a, entry);
+        }
         break;
     }
     if (seen < ordinal && r != ARCHIVE_EOF) {
-        LOGE("nativeExtract: archive ended before ordinal %d: %s", ordinal, errstr(a));
+        password_error(env, a);
     }
 
     close_archive(a, dfd);
     return result;
 }
 
+/* Copy standard UTF-8, not JNI Modified UTF-8 (non-BMP passwords must round-trip).
+   The bridge's copy is scrubbed on every exit. libarchive owns its internal copy until free. */
+static void wipe_free(char *s) {
+    if (s == NULL) return;
+    size_t n = strlen(s);
+    volatile char *p = s;
+    while (n--) *p++ = 0;
+    free(s);
+}
+
+static char *copy_passphrase(JNIEnv *env, jbyteArray bytes) {
+    if (bytes == NULL) return NULL;
+    jsize n = (*env)->GetArrayLength(env, bytes);
+    char *s = calloc((size_t) n + 1, 1);
+    if (s == NULL) {
+        throw_named(env, "java/lang/OutOfMemoryError", "Archive password allocation failed");
+        return NULL;
+    }
+    (*env)->GetByteArrayRegion(env, bytes, 0, n, (jbyte *) s);
+    if ((*env)->ExceptionCheck(env)) { wipe_free(s); return NULL; }
+    if (n == 0 || memchr(s, 0, (size_t) n) != NULL) {
+        volatile char *p = s;
+        for (jsize i = 0; i < n; i++) p[i] = 0;
+        free(s);
+        throw_named(env, "java/lang/IllegalArgumentException", "Password must be nonempty and contain no NUL");
+        return NULL;
+    }
+    return s;
+}
+
 JNIEXPORT jobjectArray JNICALL
-Java_com_absolutex_source_libarchive_LibArchive_nativeList(JNIEnv *env, jclass clazz, jint fd) {
+Java_com_absolutex_source_libarchive_LibArchive_nativeList(JNIEnv *env, jclass clazz, jint fd,
+        jbooleanArray complete, jbooleanArray encrypted, jbyteArray password) {
+    char *passphrase = copy_passphrase(env, password);
+    if ((*env)->ExceptionCheck(env)) return NULL;
     locale_t prev = enter_utf8();
-    jobjectArray r = list_impl(env, clazz, fd);
+    jobjectArray r = list_impl(env, clazz, fd, complete, encrypted, passphrase);
     leave_utf8(prev);
+    wipe_free(passphrase);
     return r;
 }
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_absolutex_source_libarchive_LibArchive_nativeExtract(JNIEnv *env, jclass clazz,
-                                                              jint fd, jint ordinal) {
+        jint fd, jint ordinal, jbyteArray password) {
+    char *passphrase = copy_passphrase(env, password);
+    if ((*env)->ExceptionCheck(env)) return NULL;
     locale_t prev = enter_utf8();
-    jbyteArray r = extract_impl(env, clazz, fd, ordinal);
+    jbyteArray r = extract_impl(env, clazz, fd, ordinal, passphrase);
     leave_utf8(prev);
+    wipe_free(passphrase);
     return r;
 }

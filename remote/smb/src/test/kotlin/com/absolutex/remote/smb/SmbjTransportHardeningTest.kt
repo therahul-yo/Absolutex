@@ -7,6 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import java.io.IOException
+import java.net.SocketException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -173,7 +174,9 @@ class SmbjTransportHardeningTest {
             if (call == 1) {
                 assertTrue(c2Ready.await(10, TimeUnit.SECONDS))
             }
-            throw IOException("stale share")
+            // Dead-socket shape (typed reset): these tests pin teardown mechanics —
+            // identity-matched drops and out-of-lock closes — not classification.
+            throw SocketException("stale share")
         })
         val c2 = ScriptedConnection(ScriptedHandle(bytes))
         var connects = 0
@@ -213,7 +216,7 @@ class SmbjTransportHardeningTest {
         // up to the socket timeout, and no other reader may wait on the lock behind it.
         val c1 = ScriptedConnection(
             ScriptedHandle(bytes),
-            script = { throw IOException("dead share") },
+            script = { throw SocketException("dead share") },
             onClose = {
                 closeEntered.countDown()
                 assertTrue(releaseClose.await(10, TimeUnit.SECONDS))
@@ -251,7 +254,7 @@ class SmbjTransportHardeningTest {
         val releaseClose = CountDownLatch(1)
         val c1 = ScriptedConnection(
             ScriptedHandle(bytes),
-            script = { throw IOException("dead share") },
+            script = { throw SocketException("dead share") },
             onClose = {
                 closeEntered.countDown()
                 assertTrue(releaseClose.await(10, TimeUnit.SECONDS))

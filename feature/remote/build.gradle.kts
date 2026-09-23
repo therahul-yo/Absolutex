@@ -53,6 +53,8 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
+    // Direct: Robolectric tests take the application context explicitly.
+    testImplementation(libs.androidx.test.core)
     testImplementation(libs.kotlinx.coroutines.test)
     // Real in-process FTP server for the probe's behavioural mapping (same trio the
     // :remote:ftp module's own wire tests use). Test-only, off the release classpath.

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- RemoteNetworkMonitor registers the default-network callback so a Wi-Fi to
+         cellular or VPN change drops stale SMB/FTP sessions instead of burning the
+         full socket timeout. Normal (non-runtime) permission, granted at install;
+         without it the monitor degrades to inert watching. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+</manifest>
