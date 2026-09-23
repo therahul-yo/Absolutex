@@ -37,9 +37,22 @@ class FtpConnectionProbe @Inject constructor() {
 /**
  * Totally-ordered mapping: the transport's own failure messages first (same release train,
  * so the prefixes are versioned together), then the shared connectivity/TLS rules.
+ *
+ * Messages are matched through the cause chain, not just the outer error: bounded retry
+ * wraps exhaustion in TransientExhaustedException (cause = last attempt), and a missing
+ * path must still read as NotFound from inside that wrapper.
  */
 internal fun mapFtpFailure(e: IOException): ConnectionResult = when {
-    e.message?.startsWith("FTP login refused") == true -> ConnectionResult.AuthFailed
-    e.message?.startsWith("cannot list FTP path") == true -> ConnectionResult.NotFound
+    mentions(e, "FTP login refused") -> ConnectionResult.AuthFailed
+    mentions(e, "cannot list FTP path") -> ConnectionResult.NotFound
     else -> mapProbeFailure(e)
+}
+
+private fun mentions(error: Throwable, prefix: String): Boolean {
+    var cause: Throwable? = error
+    while (cause != null) {
+        if (cause.message?.startsWith(prefix) == true) return true
+        cause = cause.cause
+    }
+    return false
 }

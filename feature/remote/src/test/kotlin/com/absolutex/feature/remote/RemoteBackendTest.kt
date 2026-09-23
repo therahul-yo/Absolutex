@@ -165,7 +165,7 @@ class RemoteBackendTest {
         produceFile = { File(tmp.root, name) },
     )
 
-    private suspend fun seeded(): Triple<RemoteServers, SyncSecrets, RemoteBackendResolver> {
+    private suspend fun seeded(): Seeded {
         val servers = RemoteServers(dataStore("remote.preferences_pb"))
         val secrets = SyncSecrets(InMemoryCredentialStore())
         servers.save(SmbServer("smb", "nas", "comics", "/books", 445, "u"))
@@ -173,9 +173,17 @@ class RemoteBackendTest {
         servers.save(FtpServer("ftp", "nas", 21, "/pub", "u", useTls = false))
         secrets.saveFtpPassword("ftp", "pw".toCharArray())
         servers.save(KomgaServer("komga", "https://k.lan", username = "u"))
-        val resolver = RemoteBackendResolver(servers, SmbBookBackend(secrets), FtpBookBackend(secrets))
-        return Triple(servers, secrets, resolver)
+        val monitor = RemoteNetworkMonitor(androidx.test.core.app.ApplicationProvider.getApplicationContext())
+        val resolver = RemoteBackendResolver(servers, SmbBookBackend(secrets), FtpBookBackend(secrets), monitor)
+        return Seeded(servers, secrets, resolver, monitor)
     }
+
+    private data class Seeded(
+        val servers: RemoteServers,
+        val secrets: SyncSecrets,
+        val resolver: RemoteBackendResolver,
+        val monitor: RemoteNetworkMonitor,
+    )
 
     @Test fun `dot-dot paths degrade to IOException, never crash`() {
         val smb = SmbServer("s", "nas", "comics", "/books", 445, "u")
@@ -208,15 +216,33 @@ class RemoteBackendTest {
     }
 
     @Test fun `resolver builds both transports without dialling`() = runTest {
-        val (_, _, resolver) = seeded()
+        val resolver = seeded().resolver
         val smb = resolver.transportFor("smb", "/books/b.cbz")
         smb.close()
         val ftp = resolver.transportFor("ftp", "/pub/b.cbz")
         ftp.close()
     }
 
+    @Test fun `resolver watches each book until it closes`() = runTest {
+        // Proves the watch lifetime binds to the book session: one watched transport
+        // per open book, and closing the book unwatches — the monitor never retains
+        // a closed book's session.
+        val seeded = seeded()
+        val resolver = seeded.resolver
+        val monitor = seeded.monitor
+        assertEquals(0, monitor.watchedCount())
+        val smb = resolver.transportFor("smb", "/books/b.cbz")
+        assertEquals(1, monitor.watchedCount())
+        val ftp = resolver.transportFor("ftp", "/pub/b.cbz")
+        assertEquals(2, monitor.watchedCount())
+        smb.close()
+        assertEquals(1, monitor.watchedCount())
+        ftp.close()
+        assertEquals(0, monitor.watchedCount())
+    }
+
     @Test fun `resolver rejects unknown sync and secretless servers`() = runTest {
-        val (_, _, resolver) = seeded()
+        val resolver = seeded().resolver
         try {
             resolver.transportFor("nope", "/b.cbz")
             throw AssertionError("expected IOException")
@@ -232,7 +258,8 @@ class RemoteBackendTest {
         val servers = RemoteServers(dataStore("other.preferences_pb"))
         val secrets = SyncSecrets(InMemoryCredentialStore())
         servers.save(SmbServer("nopw", "nas", "comics", "/b", 445, "u"))
-        val bare = RemoteBackendResolver(servers, SmbBookBackend(secrets), FtpBookBackend(secrets))
+        val bareMonitor = RemoteNetworkMonitor(androidx.test.core.app.ApplicationProvider.getApplicationContext())
+        val bare = RemoteBackendResolver(servers, SmbBookBackend(secrets), FtpBookBackend(secrets), bareMonitor)
         try {
             bare.transportFor("nopw", "/b/b.cbz")
             throw AssertionError("expected IOException")

@@ -5,6 +5,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import java.io.IOException
+import java.net.SocketException
 
 /**
  * Transport failure policy without a network: a fake connector counts every logon attempt,
@@ -122,7 +123,9 @@ class SmbjTransportTest {
         var opens = 0
         val connection = FakeConnection(FakeHandle(bytes)) {
             opens++
-            if (opens == 1) throw IOException("connection lost")
+            // Dead-socket shape (typed reset, as production read failures arrive):
+            // this test pins the reconnect mechanics, not failure classification.
+            if (opens == 1) throw SocketException("connection reset")
         }
         val connector = FakeConnector(failures = 0, connection = connection)
         val transport = transport(connector)
@@ -132,7 +135,9 @@ class SmbjTransportTest {
     }
 
     @Test fun `a second failure propagates instead of looping`() {
-        val connection = FakeConnection(FakeHandle(ByteArray(0))) { throw IOException("server gone") }
+        // Same dead-socket shape as above: persistent transient failures reconnect
+        // once, then the exhaustion error propagates with the first suppressed.
+        val connection = FakeConnection(FakeHandle(ByteArray(0))) { throw SocketException("server gone") }
         val connector = FakeConnector(failures = 0, connection = connection)
         val transport = transport(connector)
         try {

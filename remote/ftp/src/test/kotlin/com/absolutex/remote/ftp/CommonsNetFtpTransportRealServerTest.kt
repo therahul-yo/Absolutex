@@ -100,7 +100,10 @@ class CommonsNetFtpTransportRealServerTest {
             transport.listDir("/nope")
             throw AssertionError("expected IOException")
         } catch (expected: java.io.IOException) {
-            assertTrue(expected.message?.contains("cannot list") == true)
+            // The server's 450 is transient, so the missing path burns the retry budget
+            // first: exhaustion outside, the "cannot list" verdict as its cause.
+            assertTrue(expected is com.absolutex.remote.core.TransientExhaustedException)
+            assertTrue(expected.cause?.message?.contains("cannot list") == true)
         }
     }
 

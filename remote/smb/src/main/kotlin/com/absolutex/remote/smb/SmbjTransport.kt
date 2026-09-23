@@ -1,14 +1,27 @@
 package com.absolutex.remote.smb
 
+import com.absolutex.remote.core.CredentialExpiredException
+import com.absolutex.remote.core.RetryPolicy
+import com.absolutex.remote.core.TransportAuthException
+import com.absolutex.remote.core.TransportInvalidator
+import com.absolutex.remote.core.TransportPermanentException
+import com.absolutex.remote.core.TransientExhaustedException
+import com.absolutex.remote.core.TransientTransportException
+import com.absolutex.remote.core.withBoundedRetryBlocking
 import com.hierynomus.msdtyp.AccessMask
+import com.hierynomus.mserref.NtStatus
 import com.hierynomus.mssmb2.SMB2CreateDisposition
 import com.hierynomus.mssmb2.SMB2ShareAccess
+import com.hierynomus.mssmb2.SMBApiException
 import com.hierynomus.smbj.SMBClient
 import com.hierynomus.smbj.auth.AuthenticationContext
+import com.hierynomus.smbj.session.SMB2GuestSigningRequiredException
 import com.hierynomus.smbj.share.DiskShare
+import java.io.FileNotFoundException
 import java.io.IOException
 import java.security.GeneralSecurityException
 import java.util.EnumSet
+import javax.net.ssl.SSLException
 
 /**
  * SMBJ-backed [SmbTransport]. SMB3 only by default (3.0 through 3.1.1): SMB 2.1 has no
@@ -29,19 +42,43 @@ import java.util.EnumSet
  *
  * Blocking by design (SMBJ is a blocking API) — callers must stay off the main thread,
  * same as local archive extraction on DecodeDispatchers.extract.
+ *
+ * Phase F resilience, underneath the policies above (locks, latch and single-flight
+ * are unchanged):
+ *
+ * - Bounded retry with backoff around reads and stats, transient failures only
+ *   ([isTransient]): a dead share drops, waits once, and reconnects — the
+ *   reconnect-once ceiling is preserved as a bound of two attempts. Auth refusal,
+ *   credential rotation and definitive failures (missing file, denied, malformed)
+ *   never enter the loop: retrying a refused password locks NAS accounts.
+ * - Failures are typed ([TransportAuthException], [CredentialExpiredException],
+ *   [TransportPermanentException], [TransientExhaustedException]) so the reader can
+ *   rely on them by type; exhaustion carries the last failure as cause with the
+ *   first suppressed, preserving the old second-carries-first evidence shape.
+ * - [invalidate] drops a network-changed session without latching, so a Wi-Fi roam
+ *   reconnects on the next read instead of waiting out the socket timeout.
  */
 class SmbjTransport(
     private val location: SmbLocation,
     private val credentials: SmbCredentialStore,
     private val credentialAlias: String,
     private val connector: SmbConnector = SmbjConnector(location),
-) : SmbTransport {
+    private val retryPolicy: RetryPolicy = RetryPolicy(maxAttempts = RECONNECT_ATTEMPTS),
+) : SmbTransport, TransportInvalidator {
 
     private val guard = Any()
     private var connection: SmbConnection? = null
     private var authFailure: IOException? = null
     private var closed = false
     private var establishTask: EstablishTask? = null
+
+    /**
+     * Set when an established session is refused with logon-failure: the password
+     * changed on the NAS mid-session. The next connect failing the same way then
+     * surfaces as rotation (sign in again) rather than a first-time bad password —
+     * cleared on any successful logon, so a corrected password heals the transport.
+     */
+    private var staleCredentials = false
 
     private fun connectedShare(): SmbConnection {
         while (true) {
@@ -82,13 +119,17 @@ class SmbjTransport(
         try {
             password = storedPassword()
             installEstablished(connector.connect(password))
+            synchronized(guard) { staleCredentials = false }
         } catch (e: IOException) {
+            val typed = mapConnectFailure(e, location.host, credentialAlias) {
+                synchronized(guard) { staleCredentials }
+            }
             synchronized(guard) {
                 if (authFailure == null) {
-                    authFailure = e
+                    authFailure = typed
                 }
             }
-            throw e
+            throw typed
         } finally {
             password?.fill(Char.MIN_VALUE)
             synchronized(guard) {
@@ -166,7 +207,9 @@ class SmbjTransport(
 
     override fun sizeBytes(remotePath: String): Long {
         return reconnecting { share ->
-            readLength(share, remotePath)
+            smbReadLength(share, remotePath, credentialAlias) {
+                synchronized(guard) { staleCredentials = true }
+            }
         }
     }
 
@@ -174,71 +217,58 @@ class SmbjTransport(
         require(offset >= 0) { "negative offset: $offset" }
         require(length >= 0) { "negative length: $length" }
         if (length == 0) return ByteArray(0)
-        return reconnecting { share -> readOnce(share, remotePath, offset, length) }
+        // Identity pinned on first attempt, rechecked after every reconnect: same path,
+        // replaced file between attempts, must fail closed — two versions spliced into
+        // one page would corrupt silently, which is worse than failing. Size catches
+        // replace-with-different-size; same-size swaps need content hashing, out of scope.
+        var identity: Long? = null
+        fun checkIdentity(share: SmbConnection) {
+            // An interrupt keeps its exact mapped shape like a read interrupt does
+            // (never transient, never retried); anything else classifies naturally —
+            // a transient stat blip earns another attempt through the shared loop.
+            val size = try {
+                smbReadLength(share, remotePath, credentialAlias) {
+                    synchronized(guard) { staleCredentials = true }
+                }
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw IOException("smb stat failed", e)
+            }
+            val baseline = identity
+            if (baseline == null) identity = size
+            else if (size != baseline) throw TransportPermanentException("smb file changed during read: $remotePath")
+        }
+        return reconnecting { share ->
+            checkIdentity(share)
+            smbReadOnce(share, remotePath, offset, length, credentialAlias) {
+                synchronized(guard) { staleCredentials = true }
+            }
+        }
     }
 
     /**
-     * One revalidation: the failure may be a dead share, in which case the retry reconnects;
-     * if it was the logon, the retry rethrows the remembered error instead of logging on
-     * again. The second failure always propagates, carrying the first as suppressed context —
-     * no loops, no storms, no lost evidence. An establish failure is not retried at all:
-     * there is no share to drop and the retry could only re-hit the latch.
+     * One bounded retry loop for every op above, via [withBoundedRetryBlocking] — the
+     * shared blocking loop for blocking transports (this one never leaves its worker
+     * thread; cancellation arrives when close() tears the session and the next socket
+     * op fails, and an interrupt mid-backoff ends the exchange with its flag restored).
      */
-    private inline fun <T> reconnecting(op: (SmbConnection) -> T): T {
-        val share = connectedShare()
+    private inline fun <T> reconnecting(
+        crossinline op: (SmbConnection) -> T,
+    ): T {
+        var share = connectedShare()
         try {
-            return op(share)
-        } catch (first: IOException) {
-            dropForReconnect(share)
-            try {
-                return op(connectedShare())
-            } catch (second: IOException) {
-                second.addSuppressed(first)
-                throw second
-            }
+            return withBoundedRetryBlocking(retryPolicy, onRetry = { _, _ ->
+                dropForReconnect(share)
+                share = connectedShare()
+            }) { op(share) }
+        } catch (e: IOException) {
+            if (e is CredentialExpiredException) dropForReconnect(share)
+            throw e
         }
     }
 
     // SMBJ's failure surface is unchecked by design: Share.receive rethrows a dead socket as
     // SMBRuntimeException and an invalidated session or server-closed file as SMBApiException,
-    // both RuntimeException. The seam promises IOException, and the retry above only sees
-    // IOException — so the unchecked surface is wrapped here, where the SMBJ calls happen.
-    @Suppress("TooGenericExceptionCaught")
-    private fun readLength(share: SmbConnection, remotePath: String): Long {
-        try {
-            share.openFile(remotePath).use { return it.length }
-        } catch (e: IOException) {
-            throw e
-        } catch (e: RuntimeException) {
-            throw IOException("smb stat failed", e)
-        }
-    }
-
-    @Suppress("TooGenericExceptionCaught")
-    private fun readOnce(share: SmbConnection, remotePath: String, offset: Long, length: Int): ByteArray {
-        try {
-            // Fresh handle per call, so concurrent readers never share a file offset.
-            share.openFile(remotePath).use { file ->
-                val out = ByteArray(length)
-                var done = 0
-                // File.read may return fewer bytes than asked — one call is not the range.
-                while (done < length) {
-                    val got = file.read(out, offset + done, done, length - done)
-                    if (got <= 0) throw IOException("short read at $offset ($done of $length bytes)")
-                    done += got
-                }
-                return out
-            }
-        } catch (e: Exception) {
-            // Genuine IOExceptions pass through unwrapped, so the suppressed chains stay
-            // clean; anything else is the unchecked surface above, wrapped for the retry.
-            if (e is InterruptedException) {
-                Thread.currentThread().interrupt()
-            }
-            throw e as? IOException ?: IOException("smb read failed", e)
-        }
-    }
-
     override fun close() {
         // Swap under the lock, close outside it — same teardown rule as dropForReconnect:
         // another thread's blocked teardown never stalls this call, and this call never
@@ -252,8 +282,26 @@ class SmbjTransport(
         }
     }
 
+    /**
+     * Network-change hook ([TransportInvalidator]): drops the live session without
+     * touching the auth latch, so the next read reconnects with the same credentials
+     * instead of waiting out the socket timeout. Never throws; the close runs outside
+     * the guard like every other teardown here.
+     */
+    override fun invalidate() {
+        val stale = synchronized(guard) {
+            connection.also { connection = null }
+        }
+        if (stale != null) {
+            runCatching { stale.close() }
+        }
+    }
+
     companion object {
         internal const val AUTH_LATCH_MESSAGE = "smb authentication failed"
+
+        /** Reconnect-once ceiling, preserved: one initial try plus one reconnect. */
+        private const val RECONNECT_ATTEMPTS = 2
     }
 
     /**
