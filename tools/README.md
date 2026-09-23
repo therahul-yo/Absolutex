@@ -5,6 +5,7 @@
 | `make-corpus.py` | Generates the §8 hostile test corpus. Below. |
 | `check-strings.py` | Fails on **new** hardcoded user-visible strings in the UI modules. Pure stdlib, no Gradle, no SDK. Below. |
 | `check-translations.py` | Fails on a *present* translation that disagrees with English — placeholders, plural forms, stale keys — and on a locale shipping without a named reviewer. Pure stdlib. Below. |
+| `check-schemas.py` | Fails when a Room `@Database` version's exported schema is missing or, more usefully, present on disk but never committed. Pure stdlib plus `git`. Below. |
 | `check-apk-size.py` | Breaks the release APK down by category and fails on a size regression. Run by CI; see `.github/workflows/README.md`. |
 | `check-startup-budget.py` | Enforces the §3 300 ms P90 cold-start budget against Macrobenchmark JSON. Macrobenchmark has no assertion API, so the gate lives here. |
 | `run-benchmark.sh` | Drives the Macrobenchmarks through `am instrument`, keeping the app installed so the staged corpus survives between runs. |
@@ -28,9 +29,19 @@ fixture that exercises the line, not a shrug.
 actually changes behaviour for the input at hand. Writing one that does not is easy, and it
 looks exactly like a gap in coverage.
 
+**A fixture the subject produced is not evidence.** `DatabaseSchemaTest` asserts that
+`schemas/<db>/<version>.json` exists and has the right indices. It passed on a branch where
+that file was not committed at all, because Room's compiler had written it into the directory
+the test reads, seconds earlier in the same build. The assertion was real, the fixture was
+real, and together they proved nothing about the repository — only that the build had just
+run. Whenever a test reads a file, ask *who wrote it and when*: if the answer is "this build,
+a moment ago", the test is checking the compiler, not the tree. That class of hole cannot be
+closed from inside the build, which is why `check-schemas.py` is a gate here instead.
+
 And when checking a gate's exit code from a shell, remember `$?` after a pipeline is the *last*
 command's status. `tool | grep foo; echo $?` reports grep's verdict, not the tool's, so a gate
 that correctly exited 1 reads as 0. Use `${PIPESTATUS[0]}`, or run it without the pipe.
+
 ## What a no-SDK harness cannot see
 
 Some of this repository can be built and tested without the Android SDK — the plain
@@ -210,6 +221,58 @@ are skipped rather than guessed at.
   count differs between locales is a real bug and would need its own rule.
 - **Nothing checks whether a translation is any good.** This proves structure, never meaning.
   That is what the milestone 5 review status is for, and no gate substitutes for it.
+## `check-schemas.py` — exported Room schemas are committed
+
+Room writes `schemas/<database fqn>/<version>.json` at compile time, into the directory
+`room.schemaLocation` names (`$projectDir/schemas` in every module here). `DatabaseSchemaTest`
+reads those files back. Both halves run inside the same Gradle invocation, so the test finds a
+schema the compiler wrote seconds earlier **whether or not git has ever seen it**. Version 6
+merged with `6.json` absent from the branch and all four checks green; the assertion that
+"`6.json` was exported at all" passed because the build had just exported it.
+
+Committing the file is not tidiness. An exported schema regenerated on every build records
+nothing: edit the entity later and the file is rewritten in place, so the migration *into* that
+version is validated against whatever the entity says now rather than against what shipped to a
+device. The schema has to be a fixed point for the migration to be checked against one. Once it
+is committed, rewriting it also shows up as a diff on a tracked file, which a reviewer can see
+on a pull request that claimed only to add a field.
+
+### What it checks
+
+For every `@Database(version = N)` in the tree:
+
+- **A.** a schema file exists for every version `1..N`
+- **B.** every one of those is **tracked by git** — `git ls-files`, not `os.path.exists`, which
+  is the only one of the four that CI cannot otherwise see
+- **C.** the file for version `N` declares `"version": N` inside it, so a bump that never
+  re-exported is caught rather than silently validated against the previous schema
+- **D.** no schema file *above* `N` is left behind, which is what a reverted bump looks like
+
+Scanning no `@Database` at all exits 2 rather than 0, on the same principle as
+`check-strings.py`: a gate that inspected nothing has not passed.
+
+### Deliberately not checked
+
+**That the exported entity list matches `entities = [...]` in the annotation.** After a rewrite
+the two agree, so the comparison cannot see the failure this gate exists for — and it would
+fail loudly on a legitimate rename. B is what catches it.
+
+**That a tracked schema is unmodified in the working tree.** Regenerating during development is
+normal and expected; the commit is the checkpoint, not the edit.
+
+### Known gaps
+
+- **Hand-written `Migration` objects are not verified.** The gate says a schema for each
+  version is committed, not that a path exists from each version to the next. `autoMigrations`
+  could be parsed for contiguity, but migrations registered through `addMigrations` are
+  ordinary code the gate cannot see, so a contiguity check would fail on legitimate trees.
+- **One `@Database` per file.** Two in one source file, and only the first is parsed. Nothing
+  in this repository does that; if something ever does, the gate under-reports rather than
+  crashing, which is the wrong direction — worth revisiting then.
+- **The self-test shells out to `git`.** It builds real repositories in a temp directory,
+  because the one assertion that matters cannot be faked with a fixture tree: stubbing
+  `git ls-files` would let the gate pass with the bug in it.
+
 ## Benign encrypted-archive regression
 
 Run `sh tools/test-archive-password.sh` on macOS with JDK 21 and Homebrew libarchive.
