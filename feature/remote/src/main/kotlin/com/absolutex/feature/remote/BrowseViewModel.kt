@@ -76,13 +76,7 @@ class BrowseViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            val root = rootOrFallback()
-            val restored = savedStateHandle.get<String>(KEY_PATH)?.let(Uri::decode)
-            val remembered = if (restored == null) history.lastDir(serverId) else null
-            // Either start path can lie outside the record root: the handle survives
-            // a root narrowing (process death between edit and browse), and so can
-            // the remembered folder. Clamp both into the root; the root itself stays.
-            load(listOfNotNull(restored, remembered).firstOrNull { isWithinRoot(it, root) } ?: root)
+            start(restored = savedStateHandle.get<String>(KEY_PATH)?.let(Uri::decode))
         }
     }
 
@@ -113,9 +107,9 @@ class BrowseViewModel @Inject constructor(
         return true
     }
 
-    /** Re-lists the current folder after a failure. */
+    /** Re-lists the current folder after a failure, re-resolving a root that may have healed. */
     fun retry() {
-        currentPath()?.let(::load)
+        viewModelScope.launch { start() }
     }
 
     /**
@@ -191,10 +185,30 @@ class BrowseViewModel @Inject constructor(
         }
     }
 
-    private suspend fun rootOrFallback(): String =
+    /**
+     * Resolves where browsing starts, then loads it. Three honest states for the
+     * root: known (clamp the restored/remembered path into it), known-"/" (everything
+     * absolute is inside), and unknown — a failed probe loads NOTHING, because a path
+     * cannot be validated against a root nobody has. The failure surfaces with retry
+     * instead, which re-resolves from scratch.
+     */
+    private suspend fun start(restored: String? = null) {
+        val root = rootOrNull() ?: run {
+            _state.value = BrowseState.Failed(restored ?: ROOT_PATH)
+            return
+        }
+        rootCache = root
+        val remembered = if (restored == null) history.lastDir(serverId) else null
+        // Either start path can lie outside the record root: the handle survives
+        // a root narrowing (process death between edit and browse), and so can
+        // the remembered folder. Clamp both into the root; the root itself stays.
+        load(listOfNotNull(restored, remembered).firstOrNull { isWithinRoot(it, root) } ?: root)
+    }
+
+    private suspend fun rootOrNull(): String? =
         com.absolutex.core.data.runCatchingCancellable {
             withContext(Dispatchers.IO) { browser.rootPath(serverId) }
-        }.getOrNull()?.also { rootCache = it } ?: ROOT_PATH
+        }.getOrNull()
 
     /**
      * True when [path] is the root or lives under it. The root itself is absolute;

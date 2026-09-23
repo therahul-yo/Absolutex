@@ -59,10 +59,17 @@ class BrowseViewModelTest {
         var root: String = "/books",
         var tree: Map<String, List<RemoteEntry>> = emptyMap(),
         var failures: Int = 0,
+        var rootFailures: Int = 0,
     ) : RemoteBrowser {
         val listed = ArrayList<String>()
 
-        override suspend fun rootPath(serverId: String): String = root
+        override suspend fun rootPath(serverId: String): String {
+            if (rootFailures > 0) {
+                rootFailures--
+                throw IOException("root probe failed")
+            }
+            return root
+        }
 
         override suspend fun listDir(serverId: String, path: String): List<RemoteEntry> {
             listed.add(path)
@@ -262,6 +269,22 @@ class BrowseViewModelTest {
         assertEquals("/books", contentAt(restored, "/books").path)
         val sibling = viewModel(handle(path = "/books2"), browser)
         assertEquals("/books", contentAt(sibling, "/books").path)
+    }
+
+    @Test fun `failed root probe loads nothing and retries when the server wakes`() = runTest {
+        // The clamp cannot validate against an unknown root, so a failed probe loads
+        // nothing at all — no listing attempt escapes — and retry re-resolves first.
+        // Without the three-states shape this opens "/" unclamped once the hiccup clears.
+        val browser = FakeBrowser(
+            rootFailures = 1,
+            tree = mapOf("/books" to dir("/books", "a.cbz")),
+        )
+        val vm = viewModel(handle(), browser)
+        val failed = vm.state.first { it is BrowseState.Failed } as BrowseState.Failed
+        assertTrue(browser.listed.isEmpty())
+        vm.retry()
+        assertEquals("/books", contentAt(vm, "/books").path)
+        assertTrue(failed.path.isNotEmpty())
     }
 
     @Test fun `history round-trips per server and rejects hostile paths`() = runTest {
