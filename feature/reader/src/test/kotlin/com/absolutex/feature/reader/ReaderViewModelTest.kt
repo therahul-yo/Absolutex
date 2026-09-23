@@ -450,6 +450,66 @@ class ReaderViewModelTest {
     private fun genericError(): String =
         ApplicationProvider.getApplicationContext<Context>().getString(R.string.reader_open_failed)
 
+    // ---- M10: mutation-pinned wiring tests (driving the real production lambda) ----------
+
+    @Test fun `a page that throws OutOfMemoryError fires the host OOM shed without crashing`() = test {
+        // Pins the CRITICAL wiring fix: the production decode lambda MUST route through the
+        // classifier so an OutOfMemoryError (Error, not RuntimeException — propagates through
+        // pageImage's catch) becomes DecodeOutcome.OutOfMemory. This test exercises the REAL
+        // production lambda — it never names DecodeClassifier, because naming it is what lets
+        // a test pass while production doesn't use it (the defect class as the bug, one level up).
+        val oom = OutOfMemoryError("synthetic decode failure")
+        val shedFired = CompletableDeferred<Unit>()
+
+        val opener = object : BookOpener {
+            override suspend fun open(uri: Uri): Pair<Closeable, String> {
+                val src = object : ComicSource {
+                    override val pages = (0 until 10).map { Page(it, "p$it.jpg") }
+                    override fun openPage(index: Int): InputStream = throw oom
+                    override fun close() = Unit
+                }
+                return src to uri.toString()
+            }
+        }
+        val vm = vm(opener)
+        vm.prefetch.onOutOfMemory = { shedFired.complete(Unit) }
+
+        // Open the book (10 pages). After open, settledPage = 0.
+        vm.open(uri("oom-book"))
+        advanceUntilIdle()
+        assertEquals("book must open successfully", 10, vm.ui.value.pageCount)
+
+        // Settle on page 1 to trigger a prefetch window (page 0 would early-return).
+        vm.onPageChanged(1)
+
+        // Engine decodes on DecodeDispatchers.decode (real pool) — await with real-time bound.
+        val fired = withContext(Dispatchers.Default) {
+            withTimeout(10_000) { shedFired.await(); true }
+        }
+        assertTrue("the host shed must fire when a page throws OOM", fired)
+    }
+
+    @Test fun `a book switch resets the running-max estimate`() = test {
+        // Pins the HIGH fix. maxPageBytes is a running-max-of-decoded-pages for the CURRENT
+        // book. It only ever grows. Without the reset in open(), a double-page spread in book A
+        // would permanently shrink prefetch depth in every book after.
+        //
+        // We expose the estimate directly (same internal-test seam as `prefetch`) — not through
+        // residentBytes, which stays 0 when an empty ByteArrayInputStream decodes to a
+        // no-dimension page and is rejected as unreadable before onDecoded runs.
+        val vm = vm(FakeBookOpener())
+        val seed = vm.maxPageBytes.get()
+
+        // Open book A and simulate a double-page spread landing (inflating the estimate).
+        vm.open(uri("book-a"))
+        advanceUntilIdle()
+        vm.maxPageBytes.set(seed * 4)
+
+        // Switch to book B — the estimate must reset to the seed.
+        vm.open(uri("book-b"))
+        advanceUntilIdle()
+        assertEquals("maxPageBytes must reset to the seed on book switch", seed, vm.maxPageBytes.get())
+    }
     private companion object {
         const val TOTAL_RAM_BYTES = 4L * 1024 * 1024 * 1024
 

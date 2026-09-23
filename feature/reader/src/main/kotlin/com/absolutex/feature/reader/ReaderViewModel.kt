@@ -59,6 +59,7 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
 private const val TAG = "Reader"
@@ -171,7 +172,7 @@ class ReaderViewModel internal constructor(
      * conservative (never an OOM), not accidental. Seeded from the budget floor so the
      * first window of a book has a non-zero estimate before any page has landed.
      */
-    private val maxPageBytes = java.util.concurrent.atomic.AtomicLong(
+    internal val maxPageBytes: AtomicLong = AtomicLong(
         MemoryBudget.FLOOR_BYTES / PAGES_PER_BOOK_ESTIMATE,
     )
 
@@ -183,7 +184,7 @@ class ReaderViewModel internal constructor(
      * function so a live cache-size resize is honoured, not just onTrimMemory. The estimate
      * is the running max above; the actual cost reconciles when the decode lands.
      */
-    private val prefetch = PrefetchEngine(
+    internal val prefetch = PrefetchEngine(
         scope = viewModelScope,
         decodeDispatcher = DecodeDispatchers.decode,
         budgetBytes = { tileCache.maxBytes().toLong() },
