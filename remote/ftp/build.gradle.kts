@@ -15,9 +15,6 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":source:api"))
     implementation(project(":remote:core"))
-    // runBlocking bridge only: the transport is blocking by design, the shared retry
-    // loop is suspend. No coroutines escape into the API.
-    implementation(libs.kotlinx.coroutines.core)
     // FTP/FTPS wire protocol. Apache-2.0, version pinned in the catalog (see its note).
     implementation(libs.commons.net)
     testImplementation(libs.junit)

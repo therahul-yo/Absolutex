@@ -6,12 +6,11 @@ import com.absolutex.remote.core.TransportAuthException
 import com.absolutex.remote.core.TransportInvalidator
 import com.absolutex.remote.core.TransportPermanentException
 import com.absolutex.remote.core.TransientTransportException
-import com.absolutex.remote.core.withBoundedRetry
+import com.absolutex.remote.core.withBoundedRetryBlocking
 import java.io.Closeable
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.InputStream
-import kotlinx.coroutines.runBlocking
 import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPReply
@@ -112,21 +111,17 @@ class CommonsNetFtpTransport(
     }
 
     /**
-     * One bounded retry loop for every op above, via [withBoundedRetry] — the shared
-     * suspend loop, bridged here because this transport is blocking by design (same
-     * runBlocking posture as the SMB transport: this worker thread, real-time waits,
-     * cancellation via socket teardown on close). Failures drop the control
-     * connection (a failed transfer leaves it desynced; the next attempt reconnects
-     * instead of speaking mid-transfer to a confused server).
+     * One bounded retry loop for every op above, via [withBoundedRetryBlocking] — the
+     * shared blocking loop for blocking transports (same posture as the SMB transport).
+     * Failures drop the control connection (a failed transfer leaves it desynced; the
+     * next attempt reconnects instead of speaking mid-transfer to a confused server).
      */
     private fun <T> retrying(op: (FTPClient) -> T): T {
         // Drop on any failing exit, not just retries: a connection that just failed
         // is never cached for the next call, which would otherwise burn one attempt
         // of its own budget rediscovering the death.
         try {
-            return runBlocking {
-                withBoundedRetry(retryPolicy, onRetry = { _, _ -> drop() }) { op(connected()) }
-            }
+            return withBoundedRetryBlocking(retryPolicy, onRetry = { _, _ -> drop() }) { op(connected()) }
         } catch (e: IOException) {
             drop()
             throw e

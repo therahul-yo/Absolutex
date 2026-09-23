@@ -185,6 +185,46 @@ class TransportResilienceTest {
         }
     }
 
+    @Test fun `interrupt during blocking backoff ends the exchange and restores the flag`() {
+        // Proves the blocking bridge preserves the interrupt contract: without the
+        // catch, runBlocking lets a raw InterruptedException escape with the flag
+        // consumed — not an IOException, so transport drop-on-failure misses it, and
+        // the pool thread's cancellation signal is silently lost. Mutation: remove
+        // the Thread.currentThread().interrupt() call and the flag assertion goes red.
+        Thread.interrupted() // clear: an earlier test must never leak its flag in here
+        val attempts = java.util.concurrent.atomic.AtomicInteger(0)
+        val flagAfter = java.util.concurrent.atomic.AtomicBoolean(false)
+        val entered = java.util.concurrent.CountDownLatch(1)
+        var failure: Throwable? = null
+        val worker = Thread {
+            try {
+                withBoundedRetryBlocking(
+                    RetryPolicy(maxAttempts = 3, initialDelayMs = 5_000L, maxDelayMs = 60_000L),
+                ) { _: Int ->
+                    attempts.incrementAndGet()
+                    entered.countDown()
+                    throw SocketTimeoutException("read timed out")
+                }
+            } catch (e: Throwable) {
+                failure = e
+                flagAfter.set(Thread.interrupted())
+            }
+        }
+        worker.start()
+        // Attempt one runs, then parks in the 5 s backoff: interrupt there, so the
+        // test proves the wait ends instead of asserting about the attempt. Bounded
+        // wait, never a spin: a worker that never reaches its op fails, not hangs.
+        assertTrue("blocking op never ran", entered.await(10, java.util.concurrent.TimeUnit.SECONDS))
+        Thread.sleep(100)
+        worker.interrupt()
+        worker.join(10_000)
+        assertFalse(worker.isAlive)
+        assertTrue(failure is InterruptedIOException)
+        assertTrue((failure as InterruptedIOException).message?.contains("backoff") == true)
+        assertTrue(flagAfter.get())
+        assertEquals(1, attempts.get())
+    }
+
     @Test fun `cancelling mid-backoff stops everything and the session still closes`() = runTest {
         // Proves waits are cancellable: without delay() this test would need wall-clock
         // sleeps, and without ensureActive a cancelled scope would start attempt two.

@@ -7,7 +7,7 @@ import com.absolutex.remote.core.TransportInvalidator
 import com.absolutex.remote.core.TransportPermanentException
 import com.absolutex.remote.core.TransientExhaustedException
 import com.absolutex.remote.core.TransientTransportException
-import com.absolutex.remote.core.withBoundedRetry
+import com.absolutex.remote.core.withBoundedRetryBlocking
 import com.hierynomus.msdtyp.AccessMask
 import com.hierynomus.mserref.NtStatus
 import com.hierynomus.mssmb2.SMB2CreateDisposition
@@ -22,7 +22,6 @@ import java.io.IOException
 import java.security.GeneralSecurityException
 import java.util.EnumSet
 import javax.net.ssl.SSLException
-import kotlinx.coroutines.runBlocking
 
 /**
  * SMBJ-backed [SmbTransport]. SMB3 only by default (3.0 through 3.1.1): SMB 2.1 has no
@@ -248,19 +247,17 @@ class SmbjTransport(
     }
 
     /**
-     * One bounded retry loop for every op above, via [withBoundedRetry] — the shared
-     * suspend loop, bridged here because this transport is blocking by design.
-     * runBlocking stays on this worker thread (never Main; callers arrive off it):
-     * delay() runs on real time, and cancellation arrives the way it does for every
-     * blocking call here — the next socket op fails once close() tears the session
-     * down. No dispatcher switch: the pool thread stays the pool thread.
+     * One bounded retry loop for every op above, via [withBoundedRetryBlocking] — the
+     * shared blocking loop for blocking transports (this one never leaves its worker
+     * thread; cancellation arrives when close() tears the session and the next socket
+     * op fails, and an interrupt mid-backoff ends the exchange with its flag restored).
      */
     private inline fun <T> reconnecting(
         crossinline op: (SmbConnection) -> T,
-    ): T = runBlocking {
+    ): T {
         var share = connectedShare()
         try {
-            withBoundedRetry(retryPolicy, onRetry = { _, _ ->
+            return withBoundedRetryBlocking(retryPolicy, onRetry = { _, _ ->
                 dropForReconnect(share)
                 share = connectedShare()
             }) { op(share) }

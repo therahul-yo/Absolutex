@@ -209,8 +209,7 @@ data class RetryPolicy(
 
     /**
      * Wait after failed attempt [failedAttempt] (1-based): exponential, capped. Pure —
-     * the blocking transports and the suspending helper share this, so every module
-     * waits the same schedule and unit tests pin it without sleeping.
+     * the shared loop waits this schedule and unit tests pin it without sleeping.
      */
     fun delayForAttempt(failedAttempt: Int): Long {
         require(failedAttempt >= 1) { "attempts are 1-based: $failedAttempt" }
@@ -219,27 +218,37 @@ data class RetryPolicy(
         return minOf(wait, maxDelayMs)
     }
 
-    /**
-     * Blocking variant of [delayForAttempt] for the transports, which are blocking APIs
-     * (SMBJ and Commons Net block; the decode pool calls them off the main thread).
-     * The interrupt is the cancellation channel there: status is restored and an
-     * [InterruptedIOException] (never transient, never retried) escapes, so closing the
-     * book mid-backoff stops the retry instead of sleeping through it.
-     */
-    fun sleepBeforeRetry(failedAttempt: Int) {
-        try {
-            Thread.sleep(delayForAttempt(failedAttempt))
-        } catch (e: InterruptedException) {
-            Thread.currentThread().interrupt()
-            throw InterruptedIOException("retry backoff interrupted").apply { initCause(e) }
-        }
-    }
-
     companion object {
         const val DEFAULT_MAX_ATTEMPTS = 3
         const val DEFAULT_INITIAL_DELAY_MS = 200L
         const val DEFAULT_MAX_DELAY_MS = 2_000L
         const val DEFAULT_MULTIPLIER = 2.0
+    }
+}
+
+/**
+ * Blocking twin of [withBoundedRetry] for the transports, which are blocking APIs
+ * (SMBJ and Commons Net block; the decode pool calls them off the main thread).
+ * Both transports call this — never a hand-rolled loop — so attempts, backoff and
+ * evidence rules live in exactly one place.
+ *
+ * Interrupt contract (matches what the old per-transport sleeps did): a thread
+ * interrupt during the backoff ends the exchange with [InterruptedIOException] and
+ * restores the interrupt flag. runBlocking's blocking loop would otherwise consume
+ * the flag and let a raw InterruptedException escape — which is not an IOException
+ * (so the transports' drop-on-failure catches would miss it) and which silently
+ * clears the pool thread's cancellation signal.
+ */
+fun <T> withBoundedRetryBlocking(
+    policy: RetryPolicy = RetryPolicy(),
+    onRetry: suspend (failedAttempt: Int, error: IOException) -> Unit = { _, _ -> },
+    op: suspend (attempt: Int) -> T,
+): T {
+    try {
+        return kotlinx.coroutines.runBlocking { withBoundedRetry(policy, onRetry, op) }
+    } catch (e: InterruptedException) {
+        Thread.currentThread().interrupt()
+        throw InterruptedIOException("retry backoff interrupted").apply { initCause(e) }
     }
 }
 
