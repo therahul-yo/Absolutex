@@ -510,6 +510,23 @@ class ReaderViewModelTest {
         advanceUntilIdle()
         assertEquals("maxPageBytes must reset to the seed on book switch", seed, vm.maxPageBytes.get())
     }
+
+    @Test fun `the seed estimate is non-zero and conservative`() = test {
+        // Pins the MEDIUM fix. The old seed was FLOOR_BYTES / Integer.MAX_VALUE which
+        // evaluates to 0 — the first window of every book planned against zero. The lead's
+        // mutation (1000 -> 4) survived the earlier suite because no test asserted the value.
+        val vm = vm(FakeBookOpener())
+        val seed = vm.maxPageBytes.get()
+
+        // Non-zero: the first window must plan against a real estimate.
+        assertTrue("seed must be non-zero so the first window plans decodes", seed > 0)
+        // Conservative: a 256 MiB floor divided by 1000 pages = ~262 KiB per page. A typical
+        // phone page (1080x1920 @ 4 bytes) is ~8 MiB, so the seed under-estimates — the safe
+        // direction (over-budgeting is safe; under-budgeting would OOM). The running max takes
+        // over from the first decoded page.
+        assertTrue("seed must be less than a typical page cost (under-estimate is safe)",
+            seed < 1024 * 1024 * 8)
+    }
     private companion object {
         const val TOTAL_RAM_BYTES = 4L * 1024 * 1024 * 1024
 
