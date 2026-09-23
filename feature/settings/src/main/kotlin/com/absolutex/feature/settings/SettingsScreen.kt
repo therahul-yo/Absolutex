@@ -42,6 +42,7 @@ import com.absolutex.model.ReadingFlow
 @Composable
 fun SettingsScreen(
     onOpenRemote: () -> Unit = {},
+    onAddLocation: () -> Unit = {},
     modifier: Modifier = Modifier,
     vm: SettingsViewModel = hiltViewModel(),
 ) {
@@ -73,6 +74,7 @@ fun SettingsScreen(
                 onRendering = vm::updateRendering,
             ),
             onOpenRemote = onOpenRemote,
+            onAddLocation = onAddLocation,
             modifier = modifier,
         )
     }
@@ -86,6 +88,7 @@ fun SettingsContent(
     rendering: RenderingPrefs,
     actions: SettingsActions,
     onOpenRemote: () -> Unit = {},
+    onAddLocation: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Scaffold(
@@ -104,6 +107,7 @@ fun SettingsContent(
             Spacer(Modifier.height(8.dp))
 
             GroupHeader(R.string.settings_group_library)
+            AddStorageLocationRow(onAdd = onAddLocation)
             LibraryGroup(app, actions)
             Spacer(Modifier.height(8.dp))
 
