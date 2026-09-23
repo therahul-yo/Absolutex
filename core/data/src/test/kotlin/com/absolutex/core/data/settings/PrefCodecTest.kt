@@ -572,8 +572,10 @@ class PrefCodecTest {
     }
 
     @Test
-    fun `auto background defaults on and round-trips both ways`() {
-        assertTrue(PrefCodec.decodeRendering(MapPrefBag()).autoBackground)
+    fun `auto background defaults off and round-trips both ways`() {
+        // Off: a comic reads against black. A page with white margins would otherwise tint the
+        // whole screen white. The literal key is pinned below so a rename cannot flip it silently.
+        assertFalse(PrefCodec.decodeRendering(MapPrefBag()).autoBackground)
 
         val on = MapPrefBag()
         PrefCodec.encodeRendering(RenderingPrefs(autoBackground = true), on)
@@ -587,6 +589,13 @@ class PrefCodecTest {
     @Test
     fun `a wrongly typed auto background value falls back to its default`() {
         val bag = MapPrefBag(mapOf(PrefCodec.KEY_AUTO_BACKGROUND to "yes"))
-        assertTrue(PrefCodec.decodeRendering(bag).autoBackground)
+        assertFalse(PrefCodec.decodeRendering(bag).autoBackground)
+    }
+
+    @Test
+    fun `auto background is stored under the literal key auto_background`() {
+        val on = MapPrefBag()
+        PrefCodec.encodeRendering(RenderingPrefs(autoBackground = true), on)
+        assertTrue(PrefCodec.decodeRendering(MapPrefBag(mapOf("auto_background" to true))).autoBackground)
     }
 }

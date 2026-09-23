@@ -129,6 +129,12 @@ fun SettingsContent(
                 labelRes = ::upscalerLabelRes,
                 descriptionRes = R.string.settings_upscaler_desc,
             )
+            SwitchSettingRow(
+                titleRes = R.string.settings_auto_background,
+                checked = rendering.autoBackground,
+                onChange = { on -> actions.onRendering { it.copy(autoBackground = on) } },
+                descriptionRes = R.string.settings_auto_background_desc,
+            )
             Spacer(Modifier.height(8.dp))
 
             GroupHeader(R.string.settings_group_remote)

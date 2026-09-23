@@ -303,7 +303,7 @@ class ReaderViewModel internal constructor(
             settledPage = resume.coerceIn(0, (count - 1).coerceAtLeast(0))
             _ui.value = ReaderUiState(
                 loading = false,
-                title = uri.lastPathSegment?.substringAfterLast('/').orEmpty(),
+                title = bookOpener.titleOf(uri),
                 pageCount = count,
                 bookId = bookId,
                 currentPage = settledPage,
