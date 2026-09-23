@@ -2,7 +2,7 @@ package com.absolutex.feature.remote
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import com.absolutex.remote.sync.FtpServer
-import com.absolutex.remote.sync.InMemoryCredentialStore
+import com.absolutex.remote.core.InMemoryCredentialStore
 import com.absolutex.remote.sync.KomgaServer
 import com.absolutex.remote.sync.RemoteServers
 import com.absolutex.remote.sync.SmbServer
