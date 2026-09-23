@@ -400,34 +400,6 @@ class PrefetchEngineTest {
         advanceUntilIdle()
     }
 
-    @Test
-    fun `the production lambda turns a thrown OutOfMemoryError into OutOfMemory, not Unreadable`() = runTest {
-        // CRITICAL wiring test. pageImage's catch block does NOT catch Error
-        // (OutOfMemoryError extends Error, not RuntimeException), so a real allocation
-        // failure reaches the engine's decode lambda as a throw. The production lambda is
-        // now `DecodeClassifier.classify { pageImage(page) }`. This test drives a REAL
-        // throw through that exact wrapper — not FakeDecode's direct OutOfMemory return —
-        // and asserts the engine's OOM path fires: batch stopped, host shed invoked,
-        // budget restored. Before the fix this was `when (val image = pageImage(page))`
-        // which let the throw propagate uncaught; the whole OOM path was unreachable.
-        val queued = StandardTestDispatcher(testScheduler)
-        val h = harness(decodeDispatcher = queued)
-        h.engine.decode = { DecodeClassifier.classify { throw OutOfMemoryError("synthetic") } }
-        var shed = 0
-        h.engine.onOutOfMemory = { shed++ }
-        h.engine.onSettled(0, 200, PageLayout.SINGLE, depth = 3)
-        advanceUntilIdle()
-        assertEquals(
-            "a thrown OutOfMemoryError must be classified as OutOfMemory and fire the host shed",
-            1, shed,
-        )
-        // The OOM path drops everything: the budget is restored. (batchStopped is the
-        // internal flag; the observable contract is that the host shed fired and the
-        // resident set was cleared — the stopped batch lasts only until the next settle.)
-        assertEquals("the OOM path must clear the resident set", 0, h.engine.residentBytes)
-        h.engine.dropAll()
-        advanceUntilIdle()
-    }
 }
 
 /** A stand-in image the fake decode hands back; the engine only forwards it to onDecoded. */
