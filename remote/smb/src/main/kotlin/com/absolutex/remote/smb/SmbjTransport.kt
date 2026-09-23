@@ -9,12 +9,14 @@ import com.absolutex.remote.core.TransientExhaustedException
 import com.absolutex.remote.core.TransientTransportException
 import com.absolutex.remote.core.withBoundedRetryBlocking
 import com.hierynomus.msdtyp.AccessMask
+import com.hierynomus.msfscc.fileinformation.FileIdBothDirectoryInformation
 import com.hierynomus.mserref.NtStatus
 import com.hierynomus.mssmb2.SMB2CreateDisposition
 import com.hierynomus.mssmb2.SMB2ShareAccess
 import com.hierynomus.mssmb2.SMBApiException
 import com.hierynomus.smbj.SMBClient
 import com.hierynomus.smbj.auth.AuthenticationContext
+import com.hierynomus.smbj.common.SMBRuntimeException
 import com.hierynomus.smbj.session.SMB2GuestSigningRequiredException
 import com.hierynomus.smbj.share.DiskShare
 import java.io.FileNotFoundException
@@ -117,7 +119,7 @@ class SmbjTransport(
     private fun finishEstablish(task: EstablishTask) {
         var password: CharArray? = null
         try {
-            password = storedPassword()
+            password = storedPassword(credentials, credentialAlias)
             installEstablished(connector.connect(password))
             synchronized(guard) { staleCredentials = false }
         } catch (e: IOException) {
@@ -172,17 +174,6 @@ class SmbjTransport(
         spare?.let { runCatching { it.close() } }
         failure?.let { throw it }
         return winner ?: established
-    }
-
-    private fun storedPassword(): CharArray {
-        try {
-            return credentials.retrieve(credentialAlias)
-                ?: throw IOException("no stored credentials for $credentialAlias")
-        } catch (e: GeneralSecurityException) {
-            // A tampered credential file throws here, never IOException: without this latch
-            // every queued read would re-decrypt and throw again instead of failing once.
-            throw IOException("stored credentials unreadable", e)
-        }
     }
 
     /**
@@ -244,6 +235,10 @@ class SmbjTransport(
                 synchronized(guard) { staleCredentials = true }
             }
         }
+    }
+
+    override fun listDir(remotePath: String): List<SmbEntry> {
+        return reconnecting { share -> listShareEntries(share, remotePath) }
     }
 
     /**
@@ -379,6 +374,19 @@ private class SmbjConnection(
         return SmbjFileHandle(file)
     }
 
+    override fun listDir(remotePath: String): List<SmbEntry> {
+        // DiskShare.list materialises the whole query before returning, so there is no
+        // handle to close here — the mapping below owns the only copy from this point on.
+        return mapSmbEntries(share.list(wireDir(remotePath)))
+    }
+
+    /**
+     * Wire form of a listing path: backslash separators, relative to the share. The share
+     * root ("/") queries as the empty path; anything else keeps its segments.
+     */
+    private fun wireDir(remotePath: String): String =
+        remotePath.replace('/', '\\').trimStart(WIRE_SEPARATOR)
+
     override fun close() {
         runCatching { share.close() }
         runCatching { client.close() }
@@ -397,4 +405,74 @@ private class SmbjFileHandle(
     override fun close() {
         runCatching { file.close() }
     }
+}
+
+/**
+ * Reads one stored password for the single-flight logon. Top-level (not a member) so the
+ * transport stays within its function budget; the latch contract in [SmbjTransport] is
+ * unchanged — a tampered credential file still latches every queued read exactly once.
+ */
+internal fun storedPassword(credentials: SmbCredentialStore, credentialAlias: String): CharArray {
+    try {
+        return credentials.retrieve(credentialAlias)
+            ?: throw IOException("no stored credentials for $credentialAlias")
+    } catch (e: GeneralSecurityException) {
+        // A tampered credential file throws here, never IOException: without this latch
+        // every queued read would re-decrypt and throw again instead of failing once.
+        throw IOException("stored credentials unreadable", e)
+    }
+}
+
+/**
+ * One listing attempt: the unchecked smbj surface is wrapped where the DiskShare call
+ * happens, so the transport's retry only ever sees the IOException the seam promises.
+ * Both caught types are smbj-specific (never a generic Exception/RuntimeException
+ * catch), so an unexpected failure still surfaces instead of masquerading as a missing
+ * folder. A genuine IOException passes through unwrapped, like the read path.
+ */
+internal fun listShareEntries(share: SmbConnection, remotePath: String): List<SmbEntry> {
+    try {
+        return share.listDir(remotePath)
+    } catch (e: SMBApiException) {
+        throw IOException("smb list failed", e)
+    } catch (e: SMBRuntimeException) {
+        throw IOException("smb list failed", e)
+    }
+}
+
+/** Wire separator for SMB paths, converted once at the boundary like openFile does. */
+private const val WIRE_SEPARATOR = '\\'
+/** Base-name ceiling mirroring the filesystem limit: longer is a hostile entry, not a file. */
+internal const val MAX_SMB_ENTRY_NAME_LENGTH = 255
+
+/** MS-FSCC FileAttributes FILE_ATTRIBUTE_DIRECTORY bit, read off the wire attributes. */
+private const val DIRECTORY_ATTRIBUTE_MASK = 0x10L
+
+/**
+ * Real mapping from smbj's listing rows to [SmbEntry]: the directory bit decides the kind,
+ * end-of-file the size. Hostile rows are skipped, never fatal to the whole folder — one
+ * crafted name must not hide its well-behaved siblings, and a name that could escape the
+ * share on rejoin (`..`, or anything carrying a separator) never becomes an entry.
+ */
+internal fun mapSmbEntries(
+    infos: List<FileIdBothDirectoryInformation>,
+): List<SmbEntry> = infos.mapNotNull { info ->
+    val name = info.fileName
+    if (!isListableName(name)) {
+        null
+    } else {
+        SmbEntry(
+            name = name,
+            isDirectory = info.fileAttributes and DIRECTORY_ATTRIBUTE_MASK != 0L,
+            sizeBytes = info.endOfFile,
+        )
+    }
+}
+
+internal fun isListableName(name: String): Boolean {
+    if (name.isEmpty() || name == "." || name == "..") return false
+    if (name.length > MAX_SMB_ENTRY_NAME_LENGTH) return false
+    // Base names carry no separators: one that does smuggles a path, not a name.
+    if (name.contains('/') || name.contains(WIRE_SEPARATOR)) return false
+    return true
 }

@@ -1,10 +1,13 @@
 package com.absolutex.feature.remote
 
 import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import com.absolutex.core.decode.DecodeDispatchers
 import com.absolutex.remote.core.RemoteBookOpener
 import com.absolutex.remote.core.RemoteOpenResult
 import com.absolutex.remote.core.TransportBookOpener
+import com.absolutex.remote.core.TransportCoverFetcher
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -24,6 +27,29 @@ import kotlinx.coroutines.withContext
 @Module
 @InstallIn(SingletonComponent::class)
 object RemoteModule {
+
+    /**
+     * Folder listing behind the [RemoteBrowser] seam: the browse ViewModel lists through
+     * the interface, the resolver owns the backends.
+     */
+    @Provides
+    @Singleton
+    fun remoteBrowser(resolver: RemoteListingResolver): RemoteBrowser = resolver
+
+    /**
+     * Grid covers through the shared fetcher, wired to the same backend function as
+     * opens — one seam for both flows, so covers never need a hand-built Uri.
+     */
+    @Provides
+    @Singleton
+    fun coverFetcher(resolver: RemoteBackendResolver): TransportCoverFetcher =
+        TransportCoverFetcher(resolver::transportFor)
+
+    /** Last-folder-per-server store for the browser's cross-launch memory. */
+    @Provides
+    @Singleton
+    fun browseHistoryFile(@ApplicationContext context: Context): DataStore<Preferences> =
+        context.browseHistoryFile
 
     /**
      * Network-change monitor: one callback for the app, watched per book (see

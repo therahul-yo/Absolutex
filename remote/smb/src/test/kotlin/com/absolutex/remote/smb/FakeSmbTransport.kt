@@ -11,6 +11,11 @@ class FakeSmbTransport(private val files: Map<String, ByteArray>) : SmbTransport
 
     val ranges = ArrayList<Range>()
 
+    /** Directory tree for listing tests: absent paths throw, like the missing share would. */
+    var tree: Map<String, List<SmbEntry>> = emptyMap()
+
+    val listed = ArrayList<String>()
+
     val bytesServed: Long get() = ranges.sumOf { it.length.toLong() }
 
     var closes = 0
@@ -28,5 +33,10 @@ class FakeSmbTransport(private val files: Map<String, ByteArray>) : SmbTransport
 
     override fun close() {
         closes++
+    }
+
+    override fun listDir(remotePath: String): List<SmbEntry> {
+        listed.add(remotePath)
+        return tree[remotePath] ?: throw IOException("no such dir: $remotePath")
     }
 }

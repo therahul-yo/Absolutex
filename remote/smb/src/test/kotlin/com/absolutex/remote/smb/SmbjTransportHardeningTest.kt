@@ -57,6 +57,8 @@ class SmbjTransportHardeningTest {
             return handle
         }
 
+        override fun listDir(remotePath: String): List<SmbEntry> = emptyList()
+
         override fun close() {
             closes.incrementAndGet()
             onClose()
