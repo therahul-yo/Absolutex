@@ -26,6 +26,7 @@ import com.absolutex.core.ui.AbsolutexTheme
 import com.absolutex.feature.library.LibraryRoute
 import com.absolutex.feature.remote.REMOTE_LIST_ROUTE
 import com.absolutex.feature.remote.remoteDestination
+import com.absolutex.feature.settings.SETTINGS_ROUTE
 import com.absolutex.feature.settings.settingsDestination
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
@@ -212,6 +213,10 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
                     nav.navigate(readerRoute(bookUri(path)))
                 },
                 onAddLocation = { folderPicker.launch(null) },
+                // The library is the launch destination, so this is the only route to settings a
+                // fresh install has: the reader's own settings action needs a book open first,
+                // and an empty library has none.
+                onOpenSettings = { nav.navigate(SETTINGS_ROUTE) },
             )
         }
         composable(READER_ROUTE) { entry ->
