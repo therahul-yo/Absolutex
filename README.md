@@ -51,6 +51,29 @@ not on the app's dependency graph and contribute nothing to the APK. Connecting 
 edge plus wiring, not only a call site — and the offline registry needs storage, which means an
 `AbsolutexDatabase` migration on a schema other lanes are actively changing.
 
+### Cloud and offline are work in progress
+
+They are **not** part of the current scope, and the rest of the project is not waiting on them.
+Saying so explicitly, because fourteen merged pull requests with green CI read like a finished
+feature and are not one.
+
+What is done is the hard half and it is real: PKCE, the token endpoint, per-account token storage
+with single-flight refresh, OneDrive over Microsoft Graph, Dropbox over its v2 API, pre-authenticated
+link handling that re-resolves a refused URL exactly once, and atomic resumable offline copies.
+All of it range-reads, so a 300 MB book opens without transferring 300 MB.
+
+What is not done, in the order it would have to happen:
+
+1. a build edge from `:app`, which is what first puts either module in the APK;
+2. an account screen and a live OAuth redirect, which is the first point the flow leaves fakes;
+3. an offline registry — storage, so a database migration — plus a copy trigger and progress UI;
+4. dispatch, so opening a cloud book resolves to a `ComicSource`.
+
+**Step 2 cannot be completed by anyone working in this repository.** It needs three client
+registrations that only the project owner can create: an Azure application id for OneDrive, a
+Dropbox app key, and a Google OAuth client with the release signing SHA-1 for Drive. Until those
+exist the lane can be built and tested against fakes and no further, which is exactly where it is.
+
 Folder browsing over a remote share is in review (#50), and the settings row that finally opens
 the servers list is #98. The roadmap names the pull request for each. See [Roadmap](#roadmap).
 
@@ -282,3 +305,4 @@ permission monitoring* is on **and the phone has been rebooted since**.
 | 7 | Settings surface | done and reachable from the library |
 | 8 | Remote: SMB streaming, FTP, Komga/Kavita sync | transports merged and reachable — the settings row that opens the servers list is #98. Sync is merged but **inert**: `SyncController.onAppStart`/`onAppBackgrounded` fire, but `onBookOpened`/`onPageSettled`/`onBookClosed` have no callers, so the controller never learns a book is open and nothing is pushed or pulled. Browse UI in review (#50). See the `TODO(lead)`s in `SyncController.kt` |
 | 9 | NPU upscaling R&D (§4 M6); release polish: licence, signing, launcher icon, baseline profiles | R&D done and the verdict is **no** — see [`docs/npu-sr-report.md`](docs/npu-sr-report.md); Apache-2.0 (#70), signing config, licences screen and launcher icon (#56) done |
+| — | Cloud sources (OneDrive, Dropbox, Drive) and offline copies | **work in progress, out of current scope.** Engine merged and tested; not on the app's dependency graph, no UI, and the OAuth client registrations are the project owner's to create. See [Cloud and offline are work in progress](#cloud-and-offline-are-work-in-progress) |
