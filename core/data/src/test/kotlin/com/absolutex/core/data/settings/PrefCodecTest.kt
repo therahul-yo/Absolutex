@@ -589,4 +589,36 @@ class PrefCodecTest {
         val bag = MapPrefBag(mapOf(PrefCodec.KEY_AUTO_BACKGROUND to "yes"))
         assertTrue(PrefCodec.decodeRendering(bag).autoBackground)
     }
+
+    // ---------------------------------------------------------------- crop (§4, preference)
+
+    @Test
+    fun `crop enabled defaults on and the absent-key test uses the literal key`() {
+        assertTrue(PrefCodec.decodeRendering(MapPrefBag()).cropEnabled)
+        // The test pins the literal string, not the frozen constant; a rename would reset
+        // every user's setting silently, and the literal pin catches that.
+        val bag = MapPrefBag(mapOf("crop_enabled" to true))
+        assertTrue(PrefCodec.decodeRendering(bag).cropEnabled)
+    }
+
+    @Test
+    fun `crop enabled false survives encode to decode`() {
+        val off = MapPrefBag()
+        PrefCodec.encodeRendering(RenderingPrefs(cropEnabled = false), off)
+        assertFalse(PrefCodec.decodeRendering(off).cropEnabled)
+    }
+
+    @Test
+    fun `crop enabled true survives encode to decode`() {
+        val on = MapPrefBag()
+        PrefCodec.encodeRendering(RenderingPrefs(cropEnabled = true), on)
+        assertTrue(PrefCodec.decodeRendering(on).cropEnabled)
+    }
+
+    @Test
+    fun `crop key name is frozen to the literal crop_enabled`() {
+        assertEquals("crop_enabled", PrefCodec.KEY_CROP_ENABLED)
+    }
+
+    // Mutation guard: change decode default to false; the absent-key test must go red.
 }

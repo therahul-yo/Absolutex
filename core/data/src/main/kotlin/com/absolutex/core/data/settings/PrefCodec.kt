@@ -67,6 +67,7 @@ object PrefCodec {
     internal const val KEY_COLOUR_GAMMA_B = "colour_gamma_b"
     internal const val KEY_UPSCALER = "upscaler"
     internal const val KEY_AUTO_BACKGROUND = "auto_background"
+    internal const val KEY_CROP_ENABLED = "crop_enabled"        // FROZEN: never rename
 
     fun decodeApp(bag: PrefBag): AppPrefs {
         val defaults = AppPrefs()
@@ -160,6 +161,7 @@ object PrefCodec {
         return RenderingPrefs(
             upscaler = bag.enumOr(KEY_UPSCALER, Upscaler.PLATFORM, Upscaler.entries),
             autoBackground = bag.boolean(KEY_AUTO_BACKGROUND) ?: true,
+            cropEnabled = bag.boolean(KEY_CROP_ENABLED) ?: true,
             colour = ColourParams(
                 brightness = bag.gradedFloat(KEY_COLOUR_BRIGHTNESS, ColourParams.BRIGHTNESS_RANGE)
                     ?: defaults.brightness,
@@ -188,6 +190,7 @@ object PrefCodec {
     fun encodeRendering(prefs: RenderingPrefs, bag: MutablePrefBag) {
         bag.putString(KEY_UPSCALER, prefs.upscaler.name)
         bag.putBoolean(KEY_AUTO_BACKGROUND, prefs.autoBackground)
+        bag.putBoolean(KEY_CROP_ENABLED, prefs.cropEnabled)
         bag.putFloat(KEY_COLOUR_BRIGHTNESS, prefs.colour.brightness)
         bag.putFloat(KEY_COLOUR_CONTRAST, prefs.colour.contrast)
         bag.putFloat(KEY_COLOUR_SATURATION, prefs.colour.saturation)

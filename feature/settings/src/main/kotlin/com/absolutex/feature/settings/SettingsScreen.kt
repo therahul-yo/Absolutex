@@ -115,6 +115,12 @@ fun SettingsContent(
                 state = rendering.colour,
                 onChange = { actions.onRendering { current -> current.withColour(it) } },
             )
+            SwitchSettingRow(
+                titleRes = R.string.settings_crop_enabled,
+                checked = rendering.cropEnabled,
+                onCheckedChange = { on -> actions.onRendering { it.copy(cropEnabled = on) } },
+                descriptionRes = R.string.settings_crop_enabled_desc,
+            )
             SegmentedSettingRow(
                 options = Upscaler.entries,
                 selected = rendering.upscaler,

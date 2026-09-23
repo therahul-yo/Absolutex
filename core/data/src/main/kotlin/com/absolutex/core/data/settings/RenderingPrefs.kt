@@ -26,4 +26,6 @@ data class RenderingPrefs(
      * cost (it rides the M4 crop thumbnail), so off is the one settings edit, not the default.
      */
     val autoBackground: Boolean = true,
+    /** Border crop enabled (§4): detect and trim uniform page margins. Default on. */
+    val cropEnabled: Boolean = true,
 )

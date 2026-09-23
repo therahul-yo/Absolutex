@@ -723,6 +723,7 @@ private fun PageSlotContent(
             onBackgroundColour = onBackgroundColour,
             colour = colourState,
             upscaler = upscaler,
+            cropEnabled = rendering.cropEnabled,
         )
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()

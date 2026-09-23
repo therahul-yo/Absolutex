@@ -164,7 +164,6 @@ fun PageCanvas(
      * Smart border crop (§4, milestone 4): uniform scan margins are detected on a thumbnail
      * before the first paint and the page draws cropped. True by default; a plain param like
      * `upscaler` — toggles are rare settings edits, and toggling reloads the base layer anyway.
-     * TODO(lead): pass RenderingPrefs.cropEnabled here.
      */
     cropEnabled: Boolean = true,
     /**
