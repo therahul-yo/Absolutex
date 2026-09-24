@@ -1,5 +1,7 @@
 package com.absolutex.feature.reader
 
+import com.absolutex.core.stats.PageSettled
+import com.absolutex.core.data.ReadingHistory
 import android.content.ComponentCallbacks2
 import android.content.Context
 import android.graphics.Bitmap
@@ -98,6 +100,8 @@ class ReaderViewModel internal constructor(
     private val appPrefs: AppPrefsSource,
     private val bookOpener: BookOpener,
     private val remoteBookOpener: RemoteBookOpener,
+    /** Where settled pages are logged for reading stats; null in tests that do not care. */
+    private val history: ReadingHistory? = null,
 ) : ViewModel() {
 
     /**
@@ -115,8 +119,10 @@ class ReaderViewModel internal constructor(
         rendering: RenderingPrefsSource,
         appPrefs: AppPrefsSource,
         remoteBookOpener: RemoteBookOpener,
+        history: ReadingHistory,
     ) : this(
         context, progressDao, totalRamBytes, prefs, rendering, appPrefs, ContextBookOpener(context), remoteBookOpener,
+        history,
     )
 
     /**
@@ -433,6 +439,12 @@ class ReaderViewModel internal constructor(
             updatedAt = System.currentTimeMillis(),
         )
         pendingProgress = progress
+        // Reading history (stats: pages per day, streaks, time read) — one row per settled page.
+        history?.let { log ->
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching { log.record(listOf(PageSettled(id, index, progress.updatedAt))) }
+            }
+        }
         pendingProgressWrite = viewModelScope.launch {
             delay(PROGRESS_DEBOUNCE_MS)
             progressDao.upsert(progress)

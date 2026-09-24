@@ -21,6 +21,7 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:ui"))
     implementation(project(":core:data"))
+    implementation(project(":core:stats"))
     // For SortKey, so the library screens and the index agree on what "sort by date" means.
     implementation(project(":core:scan"))
     // NaturalOrder: "Issue 2" must precede "Issue 10" in the library exactly as it does in a book.

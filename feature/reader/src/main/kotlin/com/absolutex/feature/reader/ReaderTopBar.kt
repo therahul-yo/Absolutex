@@ -28,7 +28,12 @@ import androidx.compose.ui.unit.dp
  * opened the book.
  */
 @Composable
-internal fun ReaderTopBar(title: String, onSettings: (() -> Unit)?, modifier: Modifier = Modifier) {
+internal fun ReaderTopBar(
+    title: String,
+    onSettings: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    bookId: String = "",
+) {
     val back = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     Surface(
         // Opaque, with the content colour stated: a colour with its alpha changed is no scheme
@@ -55,6 +60,7 @@ internal fun ReaderTopBar(title: String, onSettings: (() -> Unit)?, modifier: Mo
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
             )
+            FavouriteButton(bookId)
             onSettings?.let {
                 IconButton(onClick = it) {
                     Icon(Icons.Outlined.Settings, contentDescription = stringResource(R.string.reader_settings))

@@ -64,7 +64,7 @@ data class LibraryBook(
 const val FOLDER_FORMAT = "folder"
 
 /** Just the columns the upsert has to preserve across a rescan. */
-data class BookOrigin(val path: String, val addedAt: Long, val isFavorite: Boolean)
+data class BookOrigin(val path: String, val addedAt: Long, val isFavorite: Boolean, val format: String)
 
 @Dao
 interface LibraryDao {
@@ -72,7 +72,7 @@ interface LibraryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(books: List<LibraryBook>)
 
-    @Query("SELECT path, addedAt, isFavorite FROM library_book WHERE path IN (:paths)")
+    @Query("SELECT path, addedAt, isFavorite, format FROM library_book WHERE path IN (:paths)")
     suspend fun originsOf(paths: List<String>): List<BookOrigin>
 
     /**
@@ -90,7 +90,13 @@ interface LibraryDao {
         upsertAll(
             books.map { book ->
                 val kept = original[book.path] ?: return@map book
-                book.copy(addedAt = kept.addedAt, isFavorite = kept.isFavorite)
+                book.copy(
+                    addedAt = kept.addedAt,
+                    isFavorite = kept.isFavorite,
+                    // A scan names an .epub "epub"; that it is a text book was learned by opening
+                    // it, and rescanning must not forget that.
+                    format = if (kept.format == TEXT_EPUB_FORMAT && book.format == "epub") kept.format else book.format,
+                )
             },
         )
     }

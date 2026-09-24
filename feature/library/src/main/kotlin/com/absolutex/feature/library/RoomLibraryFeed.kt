@@ -1,6 +1,5 @@
 package com.absolutex.feature.library
 
-import com.absolutex.core.data.TEXT_EPUB_FORMAT
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.FOLDER_FORMAT
 import com.absolutex.core.data.BookPath
@@ -145,7 +144,8 @@ internal class RoomLibraryFeed @Inject constructor(
             currentPage = position?.pageIndex,
             isFavorite = isFavorite,
             format = format,
-            showCover = !isDocument() || prefs.documentCovers,
+            // The privacy switch is for PDFs (identity cards, certificates); a book's cover is a cover.
+            showCover = format != PDF_FORMAT || prefs.documentCovers,
             lastReadAt = position?.updatedAt,
         )
     }
@@ -165,7 +165,8 @@ internal class RoomLibraryFeed @Inject constructor(
             if (useOriginalFilename) return file
             // A document is titled by its file name, extension dropped. The comic parser read a PDF
             // named "2025-08-09 22-52-06" as issue #2025 of a series called "08-09 22-52-06".
-            if (book.isDocument() && book.fileName.isNotEmpty()) return file.substringBeforeLast('.')
+            // A text EPUB's parsed name is already its title; only a PDF is named like a file.
+            if (book.format == PDF_FORMAT && book.fileName.isNotEmpty()) return file.substringBeforeLast('.')
             return ParsedName(
                 series = book.series,
                 issue = book.issue?.let { value -> IssueNumber(value, book.issueRaw ?: value.toString()) },
@@ -217,5 +218,5 @@ internal fun LibraryBook.isShown(prefs: AppPrefs): Boolean = when {
     else -> true
 }
 
-/** PDFs and text EPUBs: files named by people, not by a comic's series-and-issue convention. */
-internal fun LibraryBook.isDocument(): Boolean = format == "pdf" || format == TEXT_EPUB_FORMAT
+
+private const val PDF_FORMAT = "pdf"

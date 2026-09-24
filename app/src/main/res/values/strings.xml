@@ -2,4 +2,8 @@
 <resources>
     <string name="app_name">Absolutex</string>
     <string name="open_book">Open a comic</string>
+    <string name="end_finished">Finished</string>
+    <string name="end_next_is">Next: %1$s</string>
+    <string name="end_next">Next</string>
+    <string name="end_library">Library</string>
 </resources>

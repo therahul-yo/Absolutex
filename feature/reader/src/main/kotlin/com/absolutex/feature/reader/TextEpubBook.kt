@@ -1,5 +1,9 @@
 package com.absolutex.feature.reader
 
+import com.absolutex.core.stats.PageSettled
+import com.absolutex.core.data.ReadingHistory
+import com.absolutex.core.data.TEXT_EPUB_FORMAT
+import com.absolutex.core.data.BookFactsDao
 import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
@@ -51,18 +55,57 @@ class TextEpubBook internal constructor(
     }
 }
 
-/** Opens a text EPUB off the main thread and remembers which chapter the reader is in. */
+/** Where to reopen a text book: the chapter, how far through it, and whether it scrolls. */
+data class TextResume(val chapter: Int, val fraction: Float, val scroll: Boolean)
+
+/**
+ * Opens a text EPUB off the main thread and remembers where the reader is.
+ *
+ * The chapter goes in the shared progress table, which the library reads for Recent and its
+ * progress bars. How far through the chapter, and the pages/scroll choice, are this reader's own
+ * and live in its preferences: a fraction rather than a page, so it survives a text-size change.
+ */
 @HiltViewModel
 class TextEpubViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val progress: ProgressDao,
+    private val facts: BookFactsDao,
+    private val history: ReadingHistory,
 ) : ViewModel() {
 
     /** The book and the chapter to resume at, or null when it could not be opened. */
-    suspend fun open(uri: Uri): Pair<TextEpubBook, Int>? = withContext(Dispatchers.IO) {
+    private val prefs by lazy { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
+
+    suspend fun open(uri: Uri): Pair<TextEpubBook, TextResume>? = withContext(Dispatchers.IO) {
         val book = runCatching { TextEpubBook.open(context, uri) }.getOrNull() ?: return@withContext null
-        val resume = progress.get(book.identity)?.pageIndex ?: 0
-        book to resume.coerceIn(0, (book.spine.size - 1).coerceAtLeast(0))
+        // Opening it proves it a text book: the library files it with the documents from now on.
+        facts.updateFormat(if (uri.scheme == "file") uri.path.orEmpty() else uri.toString(), TEXT_EPUB_FORMAT)
+        val chapter = (progress.get(book.identity)?.pageIndex ?: 0).coerceIn(0, (book.spine.size - 1).coerceAtLeast(0))
+        val saved = prefs.getString(POSITION + book.identity, null)?.split('|')
+        val fraction = saved?.takeIf { it.firstOrNull()?.toIntOrNull() == chapter }?.getOrNull(1)?.toFloatOrNull() ?: 0f
+        book to TextResume(chapter, fraction.coerceIn(0f, 1f), prefs.getBoolean(SCROLL, false))
+    }
+
+    /** How far through [chapter] the reader is, as a fraction; saved as they read. */
+    fun savePosition(book: TextEpubBook, chapter: Int, fraction: Float) {
+        prefs.edit().putString(POSITION + book.identity, "$chapter|$fraction").apply()
+    }
+
+    /**
+     * Logs a page read for stats. A text book's page is only meaningful within its chapter, so
+     * the key spaces chapters apart: stats count distinct pages, and page 3 of two chapters are
+     * two pages read.
+     */
+    fun recordPage(book: TextEpubBook, chapter: Int, page: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val key = chapter * PAGES_PER_CHAPTER_KEY + page
+            runCatching { history.record(listOf(PageSettled(book.identity, key, System.currentTimeMillis()))) }
+        }
+    }
+
+    /** Pages or scroll, for every text book: a way of reading, not a property of one book. */
+    fun saveScroll(scroll: Boolean) {
+        prefs.edit().putBoolean(SCROLL, scroll).apply()
     }
 
     /**
@@ -75,3 +118,8 @@ class TextEpubViewModel @Inject constructor(
         }
     }
 }
+
+private const val PREFS = "text_epub"
+private const val SCROLL = "scroll"
+private const val POSITION = "position:"
+private const val PAGES_PER_CHAPTER_KEY = 10_000

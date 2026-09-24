@@ -126,7 +126,7 @@ private const val READER_ROUTE = "reader/{uri}"
 private fun readerRoute(uri: Uri) = "reader/${Uri.encode(uri.toString())}"
 
 /** A library row's path: a document Uri as it stands, a device path as a file Uri. */
-private fun bookUri(path: String): Uri =
+internal fun bookUri(path: String): Uri =
     if (path.startsWith("content://")) Uri.parse(path) else Uri.fromFile(File(path))
 
 /**
