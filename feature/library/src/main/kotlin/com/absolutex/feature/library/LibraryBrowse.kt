@@ -51,6 +51,7 @@ private val SmallThumbWidth = 36.dp
 private const val HERO_ASPECT = 0.8f
 private const val SCRIM_ALPHA = 0.55f
 private const val HERO_SCRIM_ALPHA = 0.85f
+internal const val CONTINUE_LIMIT = 12
 
 /** What a row needs to render and report itself, bundled so parameter lists stay short. */
 internal data class RowContext(
@@ -77,9 +78,10 @@ internal fun LibraryPane(
     val hero = books.firstOrNull()?.takeIf { state.section == HomeSection.RECENT }
     val rest = if (hero == null) books else books.drop(1)
     // Continue reading: in-progress comics on the Comics tab, newest first.
-    val continueReading = if (state.section == HomeSection.COMICS) {
+    val continueReading = if (state.section == HomeSection.COMICS && state.query.isBlank()) {
         state.allBooks.filter { !it.isBook && it.readState == ReadState.IN_PROGRESS }
             .sortedByDescending { it.lastReadAt ?: 0L }
+            .take(CONTINUE_LIMIT)
     } else emptyList()
     val padding = PaddingValues(horizontal = Space.Edge, vertical = Space.Gap)
     if (state.layout == BrowseLayout.GRID) {
@@ -152,7 +154,7 @@ private fun LazyListScope.listContent(
  * facts a shelf of files needs, in the order the eye wants them.
  */
 @Composable
-private fun CoverCard(book: LibraryBookUi, isSelected: Boolean, context: RowContext, modifier: Modifier) {
+internal fun CoverCard(book: LibraryBookUi, isSelected: Boolean, context: RowContext, modifier: Modifier) {
     SelectableSurface(book, isSelected, context, modifier) {
         Column {
             Box {
@@ -348,46 +350,4 @@ private fun NewBadge(modifier: Modifier) {
     }
 }
 
-/** Horizontal strip of in-progress comics on the Comics tab (§5.1). */
-@Composable
-private fun ContinueReadingStrip(
-    books: List<LibraryBookUi>,
-    context: RowContext,
-    onSeeAll: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    if (books.isEmpty()) return
-    Column(modifier.padding(bottom = Space.Gap)) {
-        Row(
-            Modifier.padding(horizontal = Space.Edge).padding(bottom = Space.Tight),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(
-                "Continue reading",
-                style = MaterialTheme.typography.titleMedium,
-            )
-            androidx.compose.material3.TextButton(onClick = onSeeAll) {
-                Text("See all")
-            }
-        }
-        LazyRow(
-            modifier = Modifier.padding(start = Space.Edge, end = Space.Edge),
-            horizontalArrangement = Arrangement.spacedBy(Space.Row),
-            contentPadding = PaddingValues(horizontal = Space.Edge),
-        ) {
-            items(books, key = { it.path }) { book ->
-                CoverCard(
-                    book,
-                    false,
-                    RowContext(
-                        selectionActive = false,
-                        onOpen = context.onOpen,
-                        onToggleSelection = {},
-                    ),
-                    Modifier.width(120.dp),
-                )
-            }
-        }
-    }
-}
+
