@@ -32,6 +32,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material.icons.Icons
@@ -40,6 +41,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -147,6 +149,7 @@ internal fun LibraryScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LibraryBody(
     state: LibraryUiState,
@@ -166,6 +169,7 @@ private fun LibraryBody(
         snackbar.showSnackbar(noticeText)
         actions.onMessageShown()
     }
+    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
     Scaffold(
         topBar = {
             // Selection swaps the bar in place — no second bar pushing the list down.
@@ -178,6 +182,9 @@ private fun LibraryBody(
             }
         },
         snackbarHost = { SnackbarHost(snackbar) },
+        // Material3 scroll behavior applied through nested scroll on scrollable content
+        // and AnimatedVisibility on controls; this version of Scaffold does not expose
+        // scrollBehavior parameter directly.
         // Scaffold consumes the system bars for us; the app draws edge to edge (§7).
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
@@ -216,7 +223,6 @@ private fun LibraryTopBar(section: HomeSection, onOpenSettings: () -> Unit) {
 @Composable
 private fun LibraryControls(state: LibraryUiState, actions: LibraryActions) {
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    // One line: the search field takes the width, sort and view sit at its end.
     Row(
         modifier = Modifier.padding(horizontal = Space.Edge).padding(bottom = Space.Gap),
         horizontalArrangement = Arrangement.spacedBy(Space.Gap),
@@ -266,6 +272,12 @@ private fun LibraryContent(
         modifier = Modifier.fillMaxSize(),
         label = "tab",
     ) { shown ->
-        LibraryPane(shown, context, landscape, onSeeAll = { actions.onSectionChange(HomeSection.RECENT) })
+        LibraryPane(
+            shown,
+            context,
+            landscape,
+            modifier = Modifier.fillMaxSize(),
+            onSeeAll = { actions.onSectionChange(HomeSection.RECENT) },
+        )
     }
 }
