@@ -525,16 +525,21 @@ private fun ReaderWindow(prefs: ReaderPrefs, immersive: Boolean) {
 /**
  * Immersive reading: the system bars are hidden while the chrome is, and a swipe from an edge
  * brings them back transiently without disturbing the page.
+ *
+ * The bars come back the moment the reader leaves composition. They did not before: the library
+ * opened with no status bar, the bars returned a beat later and the whole screen jumped down
+ * mid-transition — the back animation looked broken when it was the insets that moved.
  */
 @Composable
 private fun ImmersiveWhile(hidden: Boolean) {
     val view = LocalView.current
     val window = (view.context as? Activity)?.window
-    LaunchedEffect(hidden, window) {
-        val controller = window?.let { WindowCompat.getInsetsController(it, view) } ?: return@LaunchedEffect
-        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        if (hidden) controller.hide(WindowInsetsCompat.Type.systemBars())
-        else controller.show(WindowInsetsCompat.Type.systemBars())
+    DisposableEffect(hidden, window) {
+        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
+        controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (hidden) controller?.hide(WindowInsetsCompat.Type.systemBars())
+        else controller?.show(WindowInsetsCompat.Type.systemBars())
+        onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
     }
 }
 
