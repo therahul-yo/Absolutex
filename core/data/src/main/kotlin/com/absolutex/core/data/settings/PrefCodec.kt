@@ -30,6 +30,7 @@ object PrefCodec {
     internal const val KEY_SHOW_HIDDEN = "show_hidden_folders"
     internal const val KEY_GENERIC_ARCHIVES = "open_generic_archives"
     internal const val KEY_IMAGE_FOLDERS = "open_image_folders"
+    internal const val KEY_DOCUMENT_COVERS = "document_covers"
     internal const val KEY_LOCATIONS = "library_locations"
     internal const val KEY_READING_FLOW = "reading_flow"
     internal const val KEY_FIT_MODE = "fit_mode"
@@ -78,6 +79,7 @@ object PrefCodec {
             showHiddenFolders = bag.boolean(KEY_SHOW_HIDDEN) ?: defaults.showHiddenFolders,
             openGenericArchives = bag.boolean(KEY_GENERIC_ARCHIVES) ?: defaults.openGenericArchives,
             openImageFolders = bag.boolean(KEY_IMAGE_FOLDERS) ?: defaults.openImageFolders,
+            documentCovers = bag.boolean(KEY_DOCUMENT_COVERS) ?: defaults.documentCovers,
             locations = bag.stringSet(KEY_LOCATIONS) ?: defaults.locations,
             // Lane keys decode in their own codec; this one line keeps them in the single
             // AppPrefs snapshot without growing PrefCodec per feature.
@@ -94,6 +96,7 @@ object PrefCodec {
         bag.putBoolean(KEY_SHOW_HIDDEN, prefs.showHiddenFolders)
         bag.putBoolean(KEY_GENERIC_ARCHIVES, prefs.openGenericArchives)
         bag.putBoolean(KEY_IMAGE_FOLDERS, prefs.openImageFolders)
+        bag.putBoolean(KEY_DOCUMENT_COVERS, prefs.documentCovers)
         // Only when there are any: an empty set would write a key that says nothing. Removing the
         // key rather than skipping the write is what makes the empty case actually persist —
         // skipping it left whatever was already stored (from before the last location was

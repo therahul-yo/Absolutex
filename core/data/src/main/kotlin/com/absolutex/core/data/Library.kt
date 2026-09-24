@@ -50,6 +50,14 @@ data class LibraryBook(
      */
     @ColumnInfo(defaultValue = "")
     val format: String = "",
+    /**
+     * The file's own name as its provider reports it ("Absolute Batman 001 (2024).cbz"). A SAF
+     * path ends in a numeric document id, so this is the only record of the real name: what a
+     * document shows as its title, and what "use original filename" means. Empty on rows written
+     * before the column existed, until their next scan.
+     */
+    @ColumnInfo(defaultValue = "")
+    val fileName: String = "",
 )
 
 /** [LibraryBook.format] for an image folder, which has no extension of its own. */

@@ -82,6 +82,7 @@ fun SettingsScreen(
                 onCacheSize = vm::setCacheSize,
                 onRendering = vm::updateRendering,
                 onRemoveLocation = locationsVm::remove,
+                onDocumentCovers = locationsVm::setDocumentCovers,
             ),
             locations = locations,
             onOpenRemote = onOpenRemote,
@@ -215,6 +216,12 @@ private fun LibraryGroup(app: AppPrefs, actions: SettingsActions) {
             checked = app.openImageFolders,
             onChange = actions.onOpenImageFolders,
             descriptionRes = R.string.settings_image_folders_desc,
+        )
+        SwitchSettingRow(
+            titleRes = R.string.settings_document_covers,
+            checked = app.documentCovers,
+            onChange = actions.onDocumentCovers,
+            descriptionRes = R.string.settings_document_covers_desc,
         )
     }
 }

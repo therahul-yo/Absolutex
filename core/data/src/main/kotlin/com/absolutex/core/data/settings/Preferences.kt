@@ -112,6 +112,12 @@ data class AppPrefs(
      * shelf. Someone who keeps comics as loose images turns it on.
      */
     val openImageFolders: Boolean = false,
+    /**
+     * Show a document's first page as its cover. Off by default: the documents a phone's
+     * Downloads holds are often private — identity cards, certificates — and a library grid of
+     * their first pages puts them on show. Off, a document gets a typographic placeholder.
+     */
+    val documentCovers: Boolean = false,
     /** Library locations (§5.1): SAF tree Uris the user granted, as strings. */
     val locations: Set<String> = emptySet(),
     /**

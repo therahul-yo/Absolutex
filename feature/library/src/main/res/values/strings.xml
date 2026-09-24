@@ -100,4 +100,8 @@
     <string name="library_book_facts">%1$s · %2$s</string>
     <!-- The pill on an image-folder book: it has no file extension to show. -->
     <string name="library_format_folder">Folder</string>
+    <!-- Reading progress on a comic card, e.g. "45%". -->
+    <string name="library_book_percent">%1$d%%</string>
+    <!-- Badge on a comic that has not been opened. -->
+    <string name="library_badge_new">New</string>
 </resources>

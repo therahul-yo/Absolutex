@@ -23,4 +23,5 @@ data class SettingsActions(
     val onRendering: ((RenderingPrefs) -> RenderingPrefs) -> Unit,
     /** Removes a storage location, its grant and its books. */
     val onRemoveLocation: (String) -> Unit = {},
+    val onDocumentCovers: (Boolean) -> Unit = {},
 )

@@ -55,7 +55,7 @@ internal class RoomLibraryFeed @Inject constructor(
             val byIdentity = progress.associateBy { it.bookId }
             // Deduplicated before mapping, so the expensive part runs once per book that is shown.
             books.filter { it.isShown(prefs) }.deduplicatedByIdentity()
-                .map { it.toUi(byIdentity, prefs.useOriginalFilename) }
+                .map { it.toUi(byIdentity, prefs) }
             // Mapping thousands of rows is real work and Room emits on its own executor; Default
             // keeps it off both the main thread and Room's.
         }.flowOn(Dispatchers.Default)
@@ -70,7 +70,7 @@ internal class RoomLibraryFeed @Inject constructor(
         return repository.search(query)
             .filter { it.isShown(prefs) }
             .deduplicatedByIdentity()
-            .map { it.toUi(progress, prefs.useOriginalFilename) }
+            .map { it.toUi(progress, prefs) }
     }
 
     /**
@@ -128,13 +128,13 @@ internal class RoomLibraryFeed @Inject constructor(
 
     private fun LibraryBook.toUi(
         progress: Map<String, ReadingProgress>,
-        useOriginalFilename: Boolean,
+        prefs: AppPrefs,
     ): LibraryBookUi {
         val position = progress[contentKey]
         return LibraryBookUi(
             path = path,
-            displayName = displayNameOf(this, useOriginalFilename),
-            originalFilename = BookPath.nameOf(path),
+            displayName = displayNameOf(this, prefs.useOriginalFilename),
+            originalFilename = fileName.ifEmpty { BookPath.nameOf(path) },
             series = series,
             sizeBytes = sizeBytes,
             lastModified = lastModified,
@@ -144,6 +144,7 @@ internal class RoomLibraryFeed @Inject constructor(
             currentPage = position?.pageIndex,
             isFavorite = isFavorite,
             format = format,
+            showCover = !isDocument() || prefs.documentCovers,
             lastReadAt = position?.updatedAt,
         )
     }
@@ -159,7 +160,11 @@ internal class RoomLibraryFeed @Inject constructor(
          * the label for both display and search, which is what the switch's "escape hatch" means.
          */
         fun displayNameOf(book: LibraryBook, useOriginalFilename: Boolean): String {
-            if (useOriginalFilename) return BookPath.nameOf(book.path)
+            val file = book.fileName.ifEmpty { BookPath.nameOf(book.path) }
+            if (useOriginalFilename) return file
+            // A document is titled by its file name, extension dropped. The comic parser read a PDF
+            // named "2025-08-09 22-52-06" as issue #2025 of a series called "08-09 22-52-06".
+            if (book.isDocument() && book.fileName.isNotEmpty()) return file.substringBeforeLast('.')
             return ParsedName(
                 series = book.series,
                 issue = book.issue?.let { value -> IssueNumber(value, book.issueRaw ?: value.toString()) },
@@ -210,3 +215,6 @@ internal fun LibraryBook.isShown(prefs: AppPrefs): Boolean = when {
     format in GENERIC_ARCHIVES -> prefs.openGenericArchives
     else -> true
 }
+
+/** PDFs and text EPUBs: files named by people, not by a comic's series-and-issue convention. */
+internal fun LibraryBook.isDocument(): Boolean = format == "pdf" || format == "epub-text"

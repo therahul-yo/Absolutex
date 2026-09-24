@@ -43,6 +43,9 @@ interface LocationStore {
     val locations: Flow<List<StorageLocation>>
 
     suspend fun remove(uri: String)
+
+    /** Whether documents show their first page as a cover (see AppPrefs.documentCovers). */
+    suspend fun setDocumentCovers(show: Boolean)
 }
 
 internal class StorageLocations @Inject constructor(
@@ -65,6 +68,10 @@ internal class StorageLocations @Inject constructor(
      * Forgets the location, releases its grant and drops its books. Order matters: the prefs go
      * first, so a rescan that races this cannot re-add books from a location being removed.
      */
+    override suspend fun setDocumentCovers(show: Boolean) {
+        writer.updateApp { it.copy(documentCovers = show) }
+    }
+
     override suspend fun remove(uri: String) {
         writer.updateApp { it.copy(locations = it.locations - uri) }
         runCatching {
@@ -99,6 +106,10 @@ class LocationsViewModel @Inject constructor(private val store: LocationStore) :
 
     fun remove(uri: String) {
         viewModelScope.launch { store.remove(uri) }
+    }
+
+    fun setDocumentCovers(show: Boolean) {
+        viewModelScope.launch { store.setDocumentCovers(show) }
     }
 }
 

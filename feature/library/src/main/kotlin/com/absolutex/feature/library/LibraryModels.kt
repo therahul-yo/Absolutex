@@ -79,6 +79,8 @@ internal data class LibraryBookUi(
     val format: String = "",
     /** When the reader last saved a position in this book; null if never opened. */
     val lastReadAt: Long? = null,
+    /** False for a document while "show document covers" is off: it gets the placeholder. */
+    val showCover: Boolean = true,
 ) {
 
     /**

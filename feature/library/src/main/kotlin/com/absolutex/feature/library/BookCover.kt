@@ -1,5 +1,18 @@
 package com.absolutex.feature.library
 
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.Alignment
+import androidx.compose.material3.Text
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
@@ -48,7 +61,6 @@ internal fun BookCover(
     shape: Shape = MaterialTheme.shapes.small,
 ) {
     val covers = LocalBookCovers.current
-    val missing = stringResource(R.string.library_cover_placeholder)
     // The width comes from onSizeChanged rather than BoxWithConstraints: that subcomposes every
     // card, and a library screen full of them cost ~77 ms of layout on the frame it came back.
     var widthPx by remember { mutableIntStateOf(0) }
@@ -59,16 +71,17 @@ internal fun BookCover(
             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
             .onSizeChanged { widthPx = it.width },
     ) {
+        // Drawn first and always: the art fades in over it when it arrives, and a book with no
+        // art (a text ebook, a hidden document cover, a failed decode) keeps it.
+        CoverPlaceholder(book, showTitle = widthPx >= TITLE_MIN_WIDTH_PX)
+        if (!book.showCover) return@Box
         // The key changes when the file does, so a replaced book never keeps its old cover.
         val key = "${book.path}|${book.sizeBytes}|${book.lastModified}"
         val art by produceState<ImageBitmap?>(null, key, widthPx) {
             if (widthPx > 0) value = covers.cover(book.path, key, widthPx)?.asImageBitmap()
         }
         val shown by animateFloatAsState(if (art == null) 0f else 1f, Motion.enter(), label = "cover")
-        val current = art
-        if (current == null) {
-            Box(Modifier.fillMaxSize().clearAndSetSemantics { contentDescription = missing })
-        } else {
+        art?.let { current ->
             Image(
                 current,
                 contentDescription = null,
@@ -78,3 +91,40 @@ internal fun BookCover(
         }
     }
 }
+
+/**
+ * What a book looks like before, or without, its art: the kind of book as an icon and, where there
+ * is room, its title set in type — a designed card, never an empty grey box.
+ */
+@Composable
+private fun CoverPlaceholder(book: LibraryBookUi, showTitle: Boolean) {
+    val missing = stringResource(R.string.library_cover_placeholder)
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(12.dp)
+            .clearAndSetSemantics { contentDescription = missing },
+        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            if (book.isBook) Icons.Outlined.Description else Icons.Outlined.AutoStories,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(if (showTitle) 36.dp else 20.dp),
+        )
+        if (showTitle) {
+            Text(
+                book.displayName,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** Narrower than this (a list row's thumbnail), the placeholder is the icon alone. */
+private const val TITLE_MIN_WIDTH_PX = 240

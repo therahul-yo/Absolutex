@@ -90,4 +90,6 @@
     <string name="settings_location_remove_body">Its books leave your library. The files stay on your phone.</string>
     <string name="settings_location_remove_confirm">Remove</string>
     <string name="settings_location_remove_cancel">Cancel</string>
+    <string name="settings_document_covers">Show document covers</string>
+    <string name="settings_document_covers_desc">Show document covers. Use each PDF\'s first page as its cover. Off keeps private documents out of sight in the library.</string>
 </resources>

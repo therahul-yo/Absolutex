@@ -34,6 +34,7 @@ class PrefCodecTest {
         assertFalse(app.showHiddenFolders)
         assertFalse(app.openGenericArchives)
         assertFalse(app.openImageFolders)
+        assertFalse(app.documentCovers)
         assertFalse(app.useOriginalFilename)
     }
 
@@ -211,6 +212,7 @@ class PrefCodecTest {
                 PrefCodec.KEY_SHOW_HIDDEN,
                 PrefCodec.KEY_GENERIC_ARCHIVES,
                 PrefCodec.KEY_IMAGE_FOLDERS,
+                PrefCodec.KEY_DOCUMENT_COVERS,
                 LibraryPrefKeys.USE_ORIGINAL_FILENAME,
                 PrefCodec.KEY_READING_FLOW,
                 PrefCodec.KEY_FIT_MODE,
@@ -355,6 +357,7 @@ class PrefCodecTest {
         assertEquals("show_hidden_folders", PrefCodec.KEY_SHOW_HIDDEN)
         assertEquals("open_generic_archives", PrefCodec.KEY_GENERIC_ARCHIVES)
         assertEquals("open_image_folders", PrefCodec.KEY_IMAGE_FOLDERS)
+        assertEquals("document_covers", PrefCodec.KEY_DOCUMENT_COVERS)
         // Lane keys live in their own codec file, but they are on disk just the same.
         assertEquals("use_original_filename", LibraryPrefKeys.USE_ORIGINAL_FILENAME)
         assertEquals("reading_flow", PrefCodec.KEY_READING_FLOW)

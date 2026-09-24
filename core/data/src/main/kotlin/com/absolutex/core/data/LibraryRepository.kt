@@ -198,6 +198,7 @@ class LibraryRepository internal constructor(
         addedAt = scanId,
         seenAtScan = scanId,
         format = if (isImageFolder) FOLDER_FORMAT else displayName.substringAfterLast('.', "").lowercase(),
+        fileName = displayName,
     )
 
     private companion object {
