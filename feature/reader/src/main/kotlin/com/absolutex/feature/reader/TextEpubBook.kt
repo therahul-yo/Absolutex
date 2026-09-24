@@ -1,5 +1,7 @@
 package com.absolutex.feature.reader
 
+import com.absolutex.core.data.TEXT_EPUB_FORMAT
+import com.absolutex.core.data.BookFactsDao
 import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
@@ -65,6 +67,7 @@ data class TextResume(val chapter: Int, val fraction: Float, val scroll: Boolean
 class TextEpubViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val progress: ProgressDao,
+    private val facts: BookFactsDao,
 ) : ViewModel() {
 
     /** The book and the chapter to resume at, or null when it could not be opened. */
@@ -72,6 +75,8 @@ class TextEpubViewModel @Inject constructor(
 
     suspend fun open(uri: Uri): Pair<TextEpubBook, TextResume>? = withContext(Dispatchers.IO) {
         val book = runCatching { TextEpubBook.open(context, uri) }.getOrNull() ?: return@withContext null
+        // Opening it proves it a text book: the library files it with the documents from now on.
+        facts.updateFormat(if (uri.scheme == "file") uri.path.orEmpty() else uri.toString(), TEXT_EPUB_FORMAT)
         val chapter = (progress.get(book.identity)?.pageIndex ?: 0).coerceIn(0, (book.spine.size - 1).coerceAtLeast(0))
         val saved = prefs.getString(POSITION + book.identity, null)?.split('|')
         val fraction = saved?.takeIf { it.firstOrNull()?.toIntOrNull() == chapter }?.getOrNull(1)?.toFloatOrNull() ?: 0f
