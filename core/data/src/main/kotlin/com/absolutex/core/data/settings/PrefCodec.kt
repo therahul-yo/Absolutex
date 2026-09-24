@@ -40,6 +40,7 @@ object PrefCodec {
     internal const val KEY_USE_CUTOUT = "use_cutout"
     internal const val KEY_PAGE_LAYOUT = "page_layout"
     internal const val KEY_THUMBNAIL_STRIP = "thumbnail_strip"
+    internal const val KEY_DARK_PAGES = "dark_pages"
     internal const val KEY_TRANSITION = "page_transition"
     internal const val KEY_PAGE_TURN_MS = "page_turn_ms"
     internal const val KEY_SCROLL_STEP = "scroll_step_percent"
@@ -116,6 +117,7 @@ object PrefCodec {
             useCutout = bag.boolean(KEY_USE_CUTOUT) ?: defaults.useCutout,
             pageLayout = bag.enumOr(KEY_PAGE_LAYOUT, defaults.pageLayout, PageLayout.entries),
             thumbnailStrip = bag.boolean(KEY_THUMBNAIL_STRIP) ?: defaults.thumbnailStrip,
+            darkPages = bag.boolean(KEY_DARK_PAGES) ?: defaults.darkPages,
             transition = bag.enumOr(KEY_TRANSITION, defaults.transition, PageTransition.entries),
             pageTurnMs = (bag.int(KEY_PAGE_TURN_MS) ?: defaults.pageTurnMs)
                 .coerceIn(MIN_PAGE_TURN_MS, MAX_PAGE_TURN_MS),
@@ -143,6 +145,7 @@ object PrefCodec {
         bag.putBoolean(KEY_USE_CUTOUT, prefs.useCutout)
         bag.putString(KEY_PAGE_LAYOUT, prefs.pageLayout.name)
         bag.putBoolean(KEY_THUMBNAIL_STRIP, prefs.thumbnailStrip)
+        bag.putBoolean(KEY_DARK_PAGES, prefs.darkPages)
         bag.putString(KEY_TRANSITION, prefs.transition.name)
         bag.putInt(KEY_PAGE_TURN_MS, prefs.pageTurnMs.coerceIn(MIN_PAGE_TURN_MS, MAX_PAGE_TURN_MS))
         bag.putInt(KEY_SCROLL_STEP, prefs.scrollStepPercent.coerceIn(MIN_SCROLL_STEP_PERCENT, MAX_SCROLL_STEP_PERCENT))

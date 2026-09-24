@@ -36,6 +36,7 @@
     <string name="reader_layout_double">Double</string>
     <string name="reader_layout_cover">Cover+</string>
     <string name="reader_layout_continuous">Strip</string>
+    <string name="reader_dark_pages">Dark pages</string>
     <string name="reader_fit_screen">Screen</string>
     <string name="reader_fit_width">Width</string>
     <string name="reader_fit_height">Height</string>

@@ -598,7 +598,7 @@ private fun PageSlot(
         onPagerLockChanged = onPagerLockChanged, onEdgeSwipe = onEdgeSwipe, onTapZone = onTapZone,
         spreadSide = spreadSide, onBaseReady = onBaseReady, zoomSteps = zoomSteps,
         onCropDecided = onCropDecided, onBackgroundColour = onBackgroundColour,
-        onInvalidate = { vm.invalidatePage(index); attempts++ },
+        onInvalidate = { vm.invalidatePage(index); attempts++ }, dark = prefs.darkPages,
     )
 }
 
@@ -627,6 +627,7 @@ private fun PageSlotContent(
     onCropDecided: ((CropRect?) -> Unit)?,
     onBackgroundColour: (Color) -> Unit,
     onInvalidate: () -> Unit,
+    dark: Boolean,
 ) {
     // Draw-observed colour state for §4. The colour is NEVER read in composition: one
     // lifecycle-aware collector writes it into draw-observed state, so a slider drag
@@ -651,6 +652,7 @@ private fun PageSlotContent(
     when {
         img != null -> PageCanvas(
             page = img,
+            modifier = Modifier.darkPages(dark),
             pageIndex = index,
             bookId = bookId,
             cache = vm.tileCache,
