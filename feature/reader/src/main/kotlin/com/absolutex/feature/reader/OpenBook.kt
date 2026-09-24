@@ -30,7 +30,7 @@ import java.io.IOException
  * — are JVM tests instead of something only a device can reproduce. It costs the same single
  * header read the inline check did.
  */
-internal fun Context.openBook(uri: Uri): Closeable {
+internal fun Context.openBook(uri: Uri, password: String? = null): Closeable {
     // Folders are asked about first: a folder is not a container with an unfamiliar header, it
     // has no header at all and no descriptor worth opening. See [folderPages] for the cost.
     val folder = folderPages(uri)
@@ -38,7 +38,7 @@ internal fun Context.openBook(uri: Uri): Closeable {
     val head = ParcelFileDescriptor.AutoCloseInputStream(openDescriptor(uri))
         .use { it.readNBytes(FormatSniffer.HEADER_BYTES) }
     return when (FormatSniffer.detect(head)) {
-        ContainerFormat.PDF -> openPdf(uri)
+        ContainerFormat.PDF -> openPdf(uri, password)
         // A malformed package is still a ZIP; the archive reader opens its images.
         ContainerFormat.EPUB -> openEpub(uri) ?: LibArchiveSource.open { openDescriptor(uri) }
         // Everything else is libarchive's, which reads more formats than the sniffer names — so
@@ -48,11 +48,11 @@ internal fun Context.openBook(uri: Uri): Closeable {
     }
 }
 
-private fun Context.openPdf(uri: Uri): Closeable {
+private fun Context.openPdf(uri: Uri, password: String?): Closeable {
     // One descriptor for the document's life: every PDFium read is a pread (see PdfDocument).
     val pfd = openDescriptor(uri)
     return try {
-        PdfDocument.open(pfd)
+        PdfDocument.open(pfd, password)
     } catch (e: IOException) {
         pfd.close()
         throw e

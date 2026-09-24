@@ -6,6 +6,14 @@
     <string name="reader_page_unreadable">This page couldn’t be read</string>
     <string name="reader_no_pages">No readable pages</string>
     <string name="reader_retry">Retry</string>
+    <!-- Encrypted-PDF prompt. The password itself is never kept: it is submitted straight back
+         into the open call, and dismissing leaves the generic failure above behind it. -->
+    <string name="reader_password_title">Password required</string>
+    <string name="reader_password_body">This PDF is encrypted. Enter its password to open it.</string>
+    <string name="reader_password_body_incorrect">Incorrect password. Try again.</string>
+    <string name="reader_password_label">Password</string>
+    <string name="reader_password_open">Open</string>
+    <string name="reader_password_cancel">Cancel</string>
     <string name="reader_recovery_known">%1$d of %2$d pages readable</string>
     <string name="reader_recovery_unknown">%1$d pages readable (total unknown)</string>
 
