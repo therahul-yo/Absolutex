@@ -1,5 +1,14 @@
 package com.absolutex
 
+import kotlinx.coroutines.launch
+import com.absolutex.core.ui.rememberHaptics
+import androidx.compose.ui.Modifier
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Box
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -26,10 +35,33 @@ internal fun ReaderDestination(
 ) {
     val readerScope = rememberCoroutineScope()
     val advanceInFlight = remember { AtomicBoolean(false) }
-    ReaderScreen(
-        uri = uri,
-        vm = readerVm,
-        onSettings = onSettings,
-        onFinished = { advanceFromReader(readerScope, vm, open, readerVm.ui.value.bookId, advanceInFlight) },
-    )
+    val haptics = rememberHaptics()
+    val back = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+    var finished by remember(uri) { mutableStateOf<Finished?>(null) }
+    Box(Modifier.fillMaxSize()) {
+        ReaderScreen(
+            uri = uri,
+            vm = readerVm,
+            onSettings = onSettings,
+            onFinished = {
+                // Auto-advance goes straight on; otherwise the end card offers the next book.
+                advanceFromReader(readerScope, vm, open, readerVm.ui.value.bookId, advanceInFlight)
+                readerScope.launch {
+                    if (finished == null && !vm.autoAdvances()) {
+                        haptics.confirm()
+                        finished = Finished(vm.nextBook(readerVm.ui.value.bookId, onlyWhenAutoAdvancing = false))
+                    }
+                }
+            },
+        )
+        EndOfBookCard(
+            finished,
+            onNext = { next -> open(bookUri(next.path)) },
+            onLibrary = {
+                finished = null
+                back?.onBackPressed()
+            },
+            onDismiss = { finished = null },
+        )
+    }
 }

@@ -131,15 +131,17 @@ class ShellViewModel @Inject constructor(
      * one in scope. Off the main thread: a library can run to several thousand rows, and this is
      * called from the reader's own turn-forward gesture.
      */
-    suspend fun nextBook(currentBookId: String): LibraryBook? {
+    suspend fun nextBook(currentBookId: String, onlyWhenAutoAdvancing: Boolean = true): LibraryBook? {
         val prefs = readerPrefs.currentReaderPrefs()
-        if (!prefs.autoAdvance) return null
+        if (onlyWhenAutoAdvancing && !prefs.autoAdvance) return null
         return withContext(Dispatchers.Default) {
             val books = library.search("")
             val current = books.firstOrNull { it.contentKey == currentBookId } ?: return@withContext null
             NextBook.after(current, books, prefs.nextBookScope, prefs.nextBookOrder)
         }
     }
+
+    suspend fun autoAdvances(): Boolean = readerPrefs.currentReaderPrefs().autoAdvance
 
     fun rememberBook(uri: String) {
         viewModelScope.launch { lastBookStore.set(uri) }
