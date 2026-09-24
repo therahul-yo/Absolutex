@@ -1,6 +1,5 @@
 package com.absolutex.core.ui
 
-import android.graphics.Typeface
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
@@ -15,6 +14,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.DeviceFontFamilyName
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -76,7 +77,13 @@ private val InkLight: ColorScheme = lightColorScheme(
  * Roboto Condensed for titles, Roboto for reading. Both ship on every Android device, so the
  * masthead costs nothing in the APK — which has little headroom under its size ceiling.
  */
-private val Condensed = FontFamily(Typeface.create("sans-serif-condensed", Typeface.NORMAL))
+private val Condensed = FontFamily(
+    // One entry per weight the scale uses: a FontFamily built from a single platform Typeface
+    // ignores FontWeight, which is how the first version of this shipped regular-weight titles.
+    Font(DeviceFontFamilyName("sans-serif-condensed"), FontWeight.Bold),
+    Font(DeviceFontFamilyName("sans-serif-condensed"), FontWeight.ExtraBold),
+    Font(DeviceFontFamilyName("sans-serif-condensed"), FontWeight.Black),
+)
 private val Body = FontFamily.SansSerif
 
 private fun type(family: FontFamily, weight: FontWeight, size: Int, line: Int, tracking: Double = 0.0) =
