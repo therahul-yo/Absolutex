@@ -14,8 +14,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.DeviceFontFamilyName
-import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -23,15 +21,15 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 
 private val InkDark: ColorScheme = darkColorScheme(
-    primary = Ink.Caption,
+    primary = Ink.Accent,
     onPrimary = Ink.Black,
-    primaryContainer = Ink.CaptionDeep,
-    onPrimaryContainer = Ink.Caption,
+    primaryContainer = Ink.AccentDeep,
+    onPrimaryContainer = Ink.Accent,
     secondary = Ink.Paper,
     onSecondary = Ink.Black,
     secondaryContainer = Ink.PanelHigh,
     onSecondaryContainer = Ink.Paper,
-    tertiary = Ink.Caption,
+    tertiary = Ink.Accent,
     onTertiary = Ink.Black,
     background = Ink.Black,
     onBackground = Ink.Paper,
@@ -50,15 +48,15 @@ private val InkDark: ColorScheme = darkColorScheme(
     onError = Ink.Black,
     inverseSurface = Ink.Paper,
     inverseOnSurface = Ink.Black,
-    inversePrimary = Ink.CaptionDeep,
+    inversePrimary = Ink.AccentDeep,
     scrim = Ink.Black,
 )
 
 /** The same identity on paper, for whoever chooses the light theme. */
 private val InkLight: ColorScheme = lightColorScheme(
     primary = Color(0xFF1A1A1A),
-    onPrimary = Ink.Caption,
-    primaryContainer = Ink.Caption,
+    onPrimary = Ink.Accent,
+    primaryContainer = Color(0xFFE0E0E0),
     onPrimaryContainer = Ink.Black,
     secondary = Color(0xFF3A3A3A),
     background = Ink.Paper,
@@ -73,17 +71,7 @@ private val InkLight: ColorScheme = lightColorScheme(
     error = Color(0xFFB3261E),
 )
 
-/**
- * Roboto Condensed for titles, Roboto for reading. Both ship on every Android device, so the
- * masthead costs nothing in the APK — which has little headroom under its size ceiling.
- */
-private val Condensed = FontFamily(
-    // One entry per weight the scale uses: a FontFamily built from a single platform Typeface
-    // ignores FontWeight, which is how the first version of this shipped regular-weight titles.
-    Font(DeviceFontFamilyName("sans-serif-condensed"), FontWeight.Bold),
-    Font(DeviceFontFamilyName("sans-serif-condensed"), FontWeight.ExtraBold),
-    Font(DeviceFontFamilyName("sans-serif-condensed"), FontWeight.Black),
-)
+/** Roboto throughout: the system face, so the type costs nothing in the APK. */
 private val Body = FontFamily.SansSerif
 
 private fun type(family: FontFamily, weight: FontWeight, size: Int, line: Int, tracking: Double = 0.0) =
@@ -96,29 +84,29 @@ private fun type(family: FontFamily, weight: FontWeight, size: Int, line: Int, t
     )
 
 private val InkTypography = Typography(
-    displayLarge = type(Condensed, FontWeight.Black, 52, 56, -0.02),
-    displayMedium = type(Condensed, FontWeight.Black, 40, 44, -0.015),
-    displaySmall = type(Condensed, FontWeight.ExtraBold, 32, 36, -0.01),
-    headlineLarge = type(Condensed, FontWeight.ExtraBold, 30, 34, -0.01),
-    headlineMedium = type(Condensed, FontWeight.Bold, 26, 30),
-    headlineSmall = type(Condensed, FontWeight.Bold, 22, 26),
-    titleLarge = type(Condensed, FontWeight.Bold, 22, 26),
-    titleMedium = type(Body, FontWeight.SemiBold, 16, 22, 0.005),
-    titleSmall = type(Body, FontWeight.SemiBold, 14, 20),
-    bodyLarge = type(Body, FontWeight.Normal, 16, 24),
-    bodyMedium = type(Body, FontWeight.Normal, 14, 20),
-    bodySmall = type(Body, FontWeight.Normal, 12, 16, 0.01),
-    labelLarge = type(Body, FontWeight.SemiBold, 14, 20, 0.01),
-    labelMedium = type(Body, FontWeight.Medium, 12, 16, 0.02),
-    labelSmall = type(Body, FontWeight.Medium, 11, 16, 0.02),
+    displayLarge = type(Body, FontWeight.Normal, 57, 64, -0.004),
+    displayMedium = type(Body, FontWeight.Normal, 45, 52),
+    displaySmall = type(Body, FontWeight.Normal, 36, 44),
+    headlineLarge = type(Body, FontWeight.Medium, 32, 40),
+    headlineMedium = type(Body, FontWeight.Medium, 28, 36),
+    headlineSmall = type(Body, FontWeight.Medium, 24, 32),
+    titleLarge = type(Body, FontWeight.Medium, 22, 28),
+    titleMedium = type(Body, FontWeight.Medium, 16, 24, 0.009),
+    titleSmall = type(Body, FontWeight.Medium, 14, 20, 0.007),
+    bodyLarge = type(Body, FontWeight.Normal, 16, 24, 0.03),
+    bodyMedium = type(Body, FontWeight.Normal, 14, 20, 0.018),
+    bodySmall = type(Body, FontWeight.Normal, 12, 16, 0.033),
+    labelLarge = type(Body, FontWeight.Medium, 14, 20, 0.007),
+    labelMedium = type(Body, FontWeight.Medium, 12, 16, 0.042),
+    labelSmall = type(Body, FontWeight.Medium, 11, 16, 0.045),
 )
 
-/** Radius follows rank: a chip is barely softened, a sheet is generously so. */
+/** Soft, even radii: Material 3 proportions, a step rounder. */
 private val InkShapes = Shapes(
-    extraSmall = RoundedCornerShape(6.dp),
-    small = RoundedCornerShape(10.dp),
-    medium = RoundedCornerShape(14.dp),
-    large = RoundedCornerShape(20.dp),
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(24.dp),
     extraLarge = RoundedCornerShape(28.dp),
 )
 

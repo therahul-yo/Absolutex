@@ -1,5 +1,13 @@
 package com.absolutex.feature.settings
 
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.LargeTopAppBar
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -12,7 +20,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -91,63 +98,70 @@ fun SettingsContent(
     onAddLocation: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    // The large title collapses into the bar as the page scrolls, as Material 3 settings do.
+    val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
-        modifier = modifier.fillMaxSize(),
-        topBar = { TopAppBar(title = { Text(stringResource(R.string.settings_title)) }) },
+        modifier = modifier.fillMaxSize().nestedScroll(scroll.nestedScrollConnection),
+        topBar = {
+            LargeTopAppBar(title = { Text(stringResource(R.string.settings_title)) }, scrollBehavior = scroll)
+        },
     ) { inner ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .padding(inner)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-                .padding(inner),
+                .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
             GroupHeader(R.string.settings_group_general)
-            GeneralGroup(app, actions)
-            Spacer(Modifier.height(8.dp))
+            SettingsCard { GeneralGroup(app, actions) }
 
             GroupHeader(R.string.settings_group_library)
-            AddStorageLocationRow(onAdd = onAddLocation)
-            LibraryGroup(app, actions)
-            Spacer(Modifier.height(8.dp))
+            SettingsCard {
+                AddStorageLocationRow(onAdd = onAddLocation)
+                LibraryGroup(app, actions)
+            }
 
             GroupHeader(R.string.settings_group_reader)
-            ReaderGroup(reader, actions)
-            Spacer(Modifier.height(8.dp))
+            SettingsCard { ReaderGroup(reader, actions) }
 
             GroupHeader(R.string.settings_group_rendering)
-            CacheSizeRow(valueMiB = app.cacheSizeMiB, onChange = actions.onCacheSize)
-            // The same panel the reader chrome hosts: one composable, one state, no copies.
-            ColourPanel(
-                state = rendering.colour,
-                onChange = { actions.onRendering { current -> current.withColour(it) } },
-            )
-            SegmentedSettingRow(
-                options = Upscaler.entries,
-                selected = rendering.upscaler,
-                onSelect = { actions.onRendering { current -> current.copy(upscaler = it) } },
-                labelRes = ::upscalerLabelRes,
-                descriptionRes = R.string.settings_upscaler_desc,
-            )
-            SwitchSettingRow(
-                titleRes = R.string.settings_auto_background,
-                checked = rendering.autoBackground,
-                onChange = { on -> actions.onRendering { it.copy(autoBackground = on) } },
-                descriptionRes = R.string.settings_auto_background_desc,
-            )
-            Spacer(Modifier.height(8.dp))
+            SettingsCard { RenderingGroup(app, rendering, actions) }
 
             GroupHeader(R.string.settings_group_remote)
-            RemoteServersRow(onOpen = onOpenRemote)
-            Spacer(Modifier.height(8.dp))
+            SettingsCard { RemoteServersRow(onOpen = onOpenRemote) }
 
             GroupHeader(R.string.settings_group_about)
-            AboutRow()
-            Spacer(Modifier.height(4.dp))
-            OpenSourceLicencesRow()
+            SettingsCard {
+                AboutRow()
+                OpenSourceLicencesRow()
+            }
             Spacer(Modifier.height(16.dp))
         }
     }
+}
+
+@Composable
+private fun RenderingGroup(app: AppPrefs, rendering: RenderingPrefs, actions: SettingsActions) {
+    CacheSizeRow(valueMiB = app.cacheSizeMiB, onChange = actions.onCacheSize)
+    // The same panel the reader chrome hosts: one composable, one state, no copies.
+    ColourPanel(
+        state = rendering.colour,
+        onChange = { actions.onRendering { current -> current.withColour(it) } },
+    )
+    SegmentedSettingRow(
+        options = Upscaler.entries,
+        selected = rendering.upscaler,
+        onSelect = { actions.onRendering { current -> current.copy(upscaler = it) } },
+        labelRes = ::upscalerLabelRes,
+        descriptionRes = R.string.settings_upscaler_desc,
+    )
+    SwitchSettingRow(
+        titleRes = R.string.settings_auto_background,
+        checked = rendering.autoBackground,
+        onChange = { on -> actions.onRendering { it.copy(autoBackground = on) } },
+        descriptionRes = R.string.settings_auto_background_desc,
+    )
 }
 
 @Composable
@@ -326,6 +340,20 @@ private fun GroupHeader(titleRes: Int, modifier: Modifier = Modifier) {
         text = stringResource(titleRes),
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
-        modifier = modifier.padding(vertical = 8.dp),
+        modifier = modifier
+            .padding(start = 16.dp, top = 16.dp, bottom = 8.dp)
+            .semantics { heading() },
     )
+}
+
+/** A group's rows on one rounded tonal card, so sections read as units without dividers. */
+@Composable
+private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = MaterialTheme.shapes.large,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), content = content)
+    }
 }

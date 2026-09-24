@@ -1,5 +1,24 @@
 package com.absolutex.feature.library
 
+import androidx.compose.ui.unit.dp
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.outlined.CreateNewFolder
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.FiberNew
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.CollectionsBookmark
+import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FiberNew
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.CollectionsBookmark
+import androidx.compose.material.icons.filled.AutoStories
+import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -104,21 +123,33 @@ internal fun LibraryEmptyState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(Space.Row, Alignment.CenterVertically),
     ) {
+        Icon(
+            section.icon(selected = false),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(EmptyIconSize),
+        )
         Text(
             emptyTitle(reason),
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.headlineSmall,
             textAlign = TextAlign.Center,
         )
         Text(
             emptyBody(reason, section, query),
             style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
         if (reason == LibraryEmptyReason.NO_LOCATIONS) {
             Button(
                 onClick = onAddLocation,
-                modifier = Modifier.heightIn(min = A11y.MinTouchTarget),
-            ) { Text(stringResource(R.string.library_empty_no_locations_action)) }
+                contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
+                modifier = Modifier.heightIn(min = BigButtonHeight),
+            ) {
+                Icon(Icons.Outlined.CreateNewFolder, contentDescription = null)
+                Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                Text(stringResource(R.string.library_empty_no_locations_action))
+            }
         }
     }
 }
@@ -158,19 +189,14 @@ internal fun HomeSection.label(): String = when (this) {
     HomeSection.FAVORITES -> stringResource(R.string.library_section_favorites)
 }
 
-/**
- * Stand-in for a navigation icon.
- *
- * `NavigationSuiteScope.item` requires an icon slot, and the Material icon artifacts are not on
- * this module's classpath. A short glyph keeps the bar readable and the labels do the real work
- * for TalkBack.
- * TODO(library): swap for real icons once material-icons is added to the catalog.
- */
-@Composable
-internal fun HomeSection.glyph(): String = when (this) {
-    HomeSection.READING -> "▶"
-    HomeSection.SERIES -> "◆"
-    HomeSection.FOLDERS -> "▣"
-    HomeSection.UNREAD -> "○"
-    HomeSection.FAVORITES -> "★"
+/** A tab's icon: filled when it is the current section, outlined otherwise, as Material does. */
+internal fun HomeSection.icon(selected: Boolean): ImageVector = when (this) {
+    HomeSection.READING -> if (selected) Icons.Filled.AutoStories else Icons.Outlined.AutoStories
+    HomeSection.SERIES -> if (selected) Icons.Filled.CollectionsBookmark else Icons.Outlined.CollectionsBookmark
+    HomeSection.FOLDERS -> if (selected) Icons.Filled.Folder else Icons.Outlined.Folder
+    HomeSection.UNREAD -> if (selected) Icons.Filled.FiberNew else Icons.Outlined.FiberNew
+    HomeSection.FAVORITES -> if (selected) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder
 }
+
+private val EmptyIconSize = 64.dp
+private val BigButtonHeight = 56.dp

@@ -31,6 +31,7 @@ dependencies {
     // Icon set for the settings action in the top bar. The *core* set, as :feature:remote
     // already uses — it is in the APK either way, and the extended set is not worth one glyph.
     implementation(libs.compose.material.icons.core)
+    implementation(libs.compose.material.icons.extended)
     implementation(libs.compose.material3)
     implementation(libs.compose.foundation)
     // NavigationSuiteScaffold (§7): one declaration adapts between bottom bar, rail and drawer

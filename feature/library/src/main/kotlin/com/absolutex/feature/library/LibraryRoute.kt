@@ -1,5 +1,18 @@
 package com.absolutex.feature.library
 
+import com.absolutex.core.ui.rememberHaptics
+import com.absolutex.core.ui.Motion
+import com.absolutex.core.ui.A11y
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.foundation.layout.size
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.AnimatedVisibility
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,7 +21,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -16,7 +28,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -98,14 +109,20 @@ internal fun LibraryScreen(
     onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val haptics = rememberHaptics()
     // §7: one declaration adapts to bottom bar, rail or drawer across phone, tablet and foldable.
     NavigationSuiteScaffold(
         navigationSuiteItems = {
             HomeSection.entries.forEach { section ->
+                val selected = section == state.section
                 item(
-                    selected = section == state.section,
-                    onClick = { actions.onSectionChange(section) },
-                    icon = { Text(section.glyph()) },
+                    selected = selected,
+                    onClick = {
+                        if (!selected) haptics.select()
+                        actions.onSectionChange(section)
+                    },
+                    // The label names the tab for TalkBack, so the icon is decoration.
+                    icon = { Icon(section.icon(selected), contentDescription = null) },
                     label = { Text(section.label()) },
                 )
             }
@@ -139,13 +156,21 @@ private fun LibraryBody(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.library_title)) },
-                // An icon-only control, so the description is the only thing a screen reader has
-                // to go on — and IconButton already carries Role.Button and the 48 dp target.
+                title = {
+                    // The section name is the title; it cross-fades rather than jumping.
+                    Crossfade(state.section, animationSpec = Motion.enter(), label = "title") { section ->
+                        Text(section.label(), style = MaterialTheme.typography.headlineMedium)
+                    }
+                },
                 actions = {
-                    IconButton(onClick = onOpenSettings) {
+                    // An icon-only control, so the description is the only thing a screen reader
+                    // has to go on. Tonal and full-size so it reads as a button, not a stray glyph.
+                    FilledTonalIconButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier.padding(end = Space.Gap).size(A11y.MinTouchTarget),
+                    ) {
                         Icon(
-                            imageVector = Icons.Filled.Settings,
+                            imageVector = Icons.Outlined.Settings,
                             contentDescription = stringResource(R.string.library_open_settings),
                         )
                     }
@@ -156,7 +181,11 @@ private fun LibraryBody(
         // Scaffold consumes the system bars for us; the app draws edge to edge (§7).
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
-            if (state.selectionActive) SelectionBar(state, actions)
+            AnimatedVisibility(
+                state.selectionActive,
+                enter = expandVertically(Motion.enter()) + fadeIn(Motion.enter()),
+                exit = shrinkVertically(Motion.exit()) + fadeOut(Motion.exit()),
+            ) { SelectionBar(state, actions) }
             LibraryControls(state, actions)
             LibraryContent(state, actions, onOpenBook, onAddLocation)
         }
@@ -167,13 +196,16 @@ private fun LibraryBody(
 private fun LibraryControls(state: LibraryUiState, actions: LibraryActions) {
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     Column(
-        modifier = Modifier.padding(horizontal = Space.Edge),
-        verticalArrangement = Arrangement.spacedBy(Space.Tight),
+        modifier = Modifier.padding(horizontal = Space.Edge).padding(bottom = Space.Gap),
+        verticalArrangement = Arrangement.spacedBy(Space.Gap),
     ) {
         LibrarySearchField(state.query, actions.onQueryChange)
-        SortControl(state.sort, actions.onSortChange)
-        LayoutControl(state.layout, actions.onLayoutChange)
-        if (state.layout == BrowseLayout.GRID) {
+        BrowseControls(state, actions)
+        AnimatedVisibility(
+            state.layout == BrowseLayout.GRID,
+            enter = expandVertically(Motion.enter()) + fadeIn(Motion.enter()),
+            exit = shrinkVertically(Motion.exit()) + fadeOut(Motion.exit()),
+        ) {
             GridColumnControl(state.grid, landscape, actions.onGridColumns)
         }
     }

@@ -1,5 +1,18 @@
 package com.absolutex.feature.library
 
+import com.absolutex.core.ui.rememberHaptics
+import com.absolutex.core.ui.Motion
+import androidx.compose.ui.draw.clip
+import androidx.compose.runtime.getValue
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.background
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,7 +34,6 @@ import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -36,7 +48,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.absolutex.core.ui.A11y
 
-private val ThumbWidth = 56.dp
+private val ThumbWidth = 64.dp
+private val SmallThumbWidth = 36.dp
 
 /** What a row needs to render and report itself, bundled so parameter lists stay short. */
 internal data class RowContext(
@@ -67,14 +80,18 @@ internal fun LibraryPane(
         LazyVerticalGrid(
             columns = GridCells.Fixed(state.grid.columnsFor(landscape)),
             modifier = modifier.fillMaxSize(),
-            contentPadding = PaddingValues(Space.Tight),
-            horizontalArrangement = Arrangement.spacedBy(Space.Tight),
-            verticalArrangement = Arrangement.spacedBy(Space.Tight),
+            contentPadding = PaddingValues(horizontal = Space.Edge, vertical = Space.Gap),
+            horizontalArrangement = Arrangement.spacedBy(Space.Row),
+            verticalArrangement = Arrangement.spacedBy(Space.Row),
         ) {
             gridContent(state, shelves, context)
         }
     } else {
-        LazyColumn(modifier = modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = Space.Edge, vertical = Space.Gap),
+            verticalArrangement = Arrangement.spacedBy(Space.Gap),
+        ) {
             listContent(state, shelves, context)
         }
     }
@@ -87,14 +104,14 @@ private fun LazyGridScope.gridContent(
 ) {
     if (shelves == null) {
         items(state.visibleBooks, key = { it.path }) { book ->
-            GridCell(book, book.path in state.selected, context)
+            GridCell(book, book.path in state.selected, context, Modifier.animateItem())
         }
         return
     }
     shelves.forEach { shelf ->
         item(key = "shelf:${shelf.id}", span = { GridItemSpan(maxLineSpan) }) { ShelfHeader(shelf) }
         items(shelf.books, key = { it.path }) { book ->
-            GridCell(book, book.path in state.selected, context)
+            GridCell(book, book.path in state.selected, context, Modifier.animateItem())
         }
     }
 }
@@ -105,98 +122,114 @@ private fun LazyListScope.listContent(
     context: RowContext,
 ) {
     if (shelves == null) {
-        items(state.visibleBooks, key = { it.path }) { book -> BookRow(state, book, context) }
+        items(state.visibleBooks, key = { it.path }) { book -> BookRow(state, book, context, Modifier.animateItem()) }
         return
     }
     shelves.forEach { shelf ->
         item(key = "shelf:${shelf.id}") { ShelfHeader(shelf) }
-        items(shelf.books, key = { it.path }) { book -> BookRow(state, book, context) }
+        items(shelf.books, key = { it.path }) { book -> BookRow(state, book, context, Modifier.animateItem()) }
     }
 }
 
 @Composable
-private fun BookRow(state: LibraryUiState, book: LibraryBookUi, context: RowContext) {
-    SelectableRow(book, book.path in state.selected, context) {
-        if (state.layout == BrowseLayout.DETAILED_LIST) {
-            DetailedBookContent(book)
-        } else {
-            Text(
-                book.displayName,
-                style = MaterialTheme.typography.bodyLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-/** Thumbnail, title, page count, current page, size and original filename (§5.1). */
-@Composable
-private fun DetailedBookContent(book: LibraryBookUi) {
-    Row(horizontalArrangement = Arrangement.spacedBy(Space.Row)) {
-        BookCover(book, Modifier.width(ThumbWidth))
-        Column(verticalArrangement = Arrangement.spacedBy(Space.Tight)) {
-            Text(
-                book.displayName,
-                style = MaterialTheme.typography.bodyLarge,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(book.pagesLabel(), style = MaterialTheme.typography.bodySmall)
-            Text(book.positionLabel(), style = MaterialTheme.typography.bodySmall)
-            Text(book.sizeLabel(), style = MaterialTheme.typography.bodySmall)
-            Text(
-                stringResource(R.string.library_book_filename, book.originalFilename),
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            book.progressFraction?.let { fraction ->
-                LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
-            }
-        }
-    }
-}
-
-@Composable
-private fun GridCell(book: LibraryBookUi, isSelected: Boolean, context: RowContext) {
-    SelectableSurface(book, isSelected, context, Modifier) {
-        Column(Modifier.padding(Space.Tight)) {
-            BookCover(book, Modifier.fillMaxWidth())
-            Text(
-                book.displayName,
-                style = MaterialTheme.typography.labelMedium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            book.progressFraction?.let { fraction ->
-                LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
-            }
-        }
-    }
-}
-
-@Composable
-private fun SelectableRow(
-    book: LibraryBookUi,
-    isSelected: Boolean,
-    context: RowContext,
-    content: @Composable () -> Unit,
-) {
-    SelectableSurface(book, isSelected, context, Modifier.heightIn(min = A11y.MinTouchTarget)) {
+private fun BookRow(state: LibraryUiState, book: LibraryBookUi, context: RowContext, modifier: Modifier) {
+    val selected = book.path in state.selected
+    SelectableSurface(book, selected, context, modifier.heightIn(min = A11y.MinTouchTarget)) {
         Row(
-            modifier = Modifier.padding(horizontal = Space.Edge, vertical = Space.Row),
+            modifier = Modifier.padding(Space.Row),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Space.Row),
         ) {
-            if (context.selectionActive) {
-                // Decorative: the surface already announces selected state in one spoken label.
-                Checkbox(checked = isSelected, onCheckedChange = null)
+            if (state.layout == BrowseLayout.DETAILED_LIST) {
+                SelectableCover(book, selected, Modifier.width(ThumbWidth))
+                DetailedBookContent(book, Modifier.weight(1f))
+            } else {
+                SelectableCover(book, selected, Modifier.width(SmallThumbWidth))
+                Text(
+                    book.displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
             }
-            Box(Modifier.weight(1f)) { content() }
         }
     }
 }
+
+/** Title, facts and progress (§5.1). The SAF document id is not a filename, so it is not shown. */
+@Composable
+private fun DetailedBookContent(book: LibraryBookUi, modifier: Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(Space.Tight)) {
+        Text(
+            book.displayName,
+            style = MaterialTheme.typography.titleMedium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            "${book.pagesLabel()} · ${book.sizeLabel()}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            book.positionLabel(),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        book.progressFraction?.let { ReadingProgress(it) }
+    }
+}
+
+@Composable
+private fun ReadingProgress(fraction: Float) {
+    LinearProgressIndicator(
+        progress = { fraction },
+        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+        modifier = Modifier.fillMaxWidth().padding(top = Space.Tight),
+    )
+}
+
+/** A cover that shows a check over itself when its book is selected. */
+@Composable
+private fun SelectableCover(book: LibraryBookUi, selected: Boolean, modifier: Modifier) {
+    Box(modifier.clip(MaterialTheme.shapes.extraSmall)) {
+        BookCover(book, Modifier.fillMaxWidth())
+        AnimatedVisibility(
+            selected,
+            enter = fadeIn(Motion.enter()) + scaleIn(Motion.enter(), initialScale = CHECK_START_SCALE),
+            exit = fadeOut(Motion.exit()),
+            modifier = Modifier.matchParentSize(),
+        ) {
+            Box(
+                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = SCRIM_ALPHA)),
+                contentAlignment = Alignment.Center,
+            ) {
+                // Decorative: the surface already announces selected state in one spoken label.
+                Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun GridCell(book: LibraryBookUi, isSelected: Boolean, context: RowContext, modifier: Modifier) {
+    SelectableSurface(book, isSelected, context, modifier) {
+        Column(Modifier.padding(Space.Gap), verticalArrangement = Arrangement.spacedBy(Space.Gap)) {
+            SelectableCover(book, isSelected, Modifier.fillMaxWidth())
+            Text(
+                book.displayName,
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            book.progressFraction?.let { ReadingProgress(it) }
+        }
+    }
+}
+
+private const val SCRIM_ALPHA = 0.55f
+private const val CHECK_START_SCALE = 0.6f
 
 /**
  * Tap and long-press behaviour shared by rows and grid cells.
@@ -215,15 +248,26 @@ private fun SelectableSurface(
     content: @Composable () -> Unit,
 ) {
     val label = book.accessibilityLabel(isSelected, context.selectionActive)
+    val haptics = rememberHaptics()
+    val container by animateColorAsState(
+        with(MaterialTheme.colorScheme) { if (isSelected) surfaceContainerHighest else surfaceContainerLow },
+        Motion.enter(),
+        label = "selected",
+    )
     Surface(
-        tonalElevation = if (isSelected) Space.Tight else Space.Zero,
+        color = container,
+        shape = MaterialTheme.shapes.medium,
         modifier = modifier
             .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
             .combinedClickable(
                 onClick = {
                     if (context.selectionActive) context.onToggleSelection(book.path) else context.onOpen(book)
                 },
-                onLongClick = { context.onToggleSelection(book.path) },
+                onLongClick = {
+                    haptics.confirm()
+                    context.onToggleSelection(book.path)
+                },
             )
             // One spoken label per row: unlabelled, TalkBack reads six text nodes one swipe at a
             // time and never announces the selected state at all.

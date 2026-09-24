@@ -1,5 +1,39 @@
 package com.absolutex.feature.library
 
+import com.absolutex.core.ui.rememberHaptics
+import com.absolutex.core.ui.Motion
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.rotate
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TextField
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material.icons.outlined.ViewAgenda
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ArrowUpward
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.automirrored.outlined.ViewList
+import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.AnimatedVisibility
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -10,7 +44,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -29,60 +62,113 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.absolutex.core.scan.SortKey
 import com.absolutex.core.ui.A11y
 
+/** The search field: a filled, fully rounded pill, the Material 3 search-bar shape. */
 @Composable
 internal fun LibrarySearchField(
     query: String,
     onQueryChange: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    OutlinedTextField(
+    TextField(
         value = query,
         onValueChange = onQueryChange,
         singleLine = true,
-        label = { Text(stringResource(R.string.library_search_hint)) },
+        placeholder = { Text(stringResource(R.string.library_search_hint)) },
+        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
         trailingIcon = {
-            if (query.isNotEmpty()) {
-                // Resolved outside the semantics lambda: stringResource is @Composable,
-                // and the lambda passed to semantics is not.
-                val clearLabel = stringResource(R.string.library_search_clear)
-                TextButton(
-                    onClick = { onQueryChange("") },
-                    modifier = Modifier
-                        .heightIn(min = A11y.MinTouchTarget)
-                        .semantics { contentDescription = clearLabel },
-                ) { Text("✕") }
+            AnimatedVisibility(query.isNotEmpty(), enter = fadeIn(Motion.enter()), exit = fadeOut(Motion.exit())) {
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.library_search_clear))
+                }
             }
         },
-        modifier = modifier.fillMaxWidth(),
+        shape = CircleShape,
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            focusedIndicatorColor = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent,
+        ),
+        modifier = modifier.fillMaxWidth().heightIn(min = SearchHeight),
     )
 }
 
+/**
+ * Sort and view on one line: sort as filter chips (tapping the active one flips its direction,
+ * and its arrow says which way it runs), view as an icon toggle at the end.
+ */
 @Composable
-internal fun SortControl(sort: SortSpec, onSortChange: (SortKey) -> Unit, modifier: Modifier = Modifier) {
-    var open by remember { mutableStateOf(false) }
-    val direction = if (sort.ascending) {
-        stringResource(R.string.library_sort_ascending)
-    } else {
-        stringResource(R.string.library_sort_descending)
-    }
-    val label = "${stringResource(R.string.library_sort)}: ${sort.key.label()}, $direction"
-    Row(modifier = modifier) {
-        TextButton(
-            onClick = { open = true },
-            modifier = Modifier.heightIn(min = A11y.MinTouchTarget),
-        ) { Text(label) }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+internal fun BrowseControls(state: LibraryUiState, actions: LibraryActions, modifier: Modifier = Modifier) {
+    val haptics = rememberHaptics()
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(Space.Gap),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(Space.Gap),
+        ) {
             SortKey.entries.forEach { key ->
-                DropdownMenuItem(
-                    text = { Text(key.label()) },
+                val active = state.sort.key == key
+                FilterChip(
+                    selected = active,
                     onClick = {
-                        onSortChange(key)
-                        open = false
+                        haptics.select()
+                        actions.onSortChange(key)
+                    },
+                    label = { Text(key.label()) },
+                    trailingIcon = if (active) {
+                        { SortArrow(state.sort.ascending) }
+                    } else {
+                        null
                     },
                 )
             }
         }
+        LayoutToggle(state.layout) {
+            haptics.select()
+            actions.onLayoutChange(it)
+        }
     }
+}
+
+/** The direction arrow turns rather than swapping, so the flip is visible. */
+@Composable
+private fun SortArrow(ascending: Boolean) {
+    val turn by animateFloatAsState(if (ascending) 0f else HALF_TURN, Motion.enter(), label = "sort")
+    val direction = if (ascending) {
+        stringResource(R.string.library_sort_ascending)
+    } else {
+        stringResource(R.string.library_sort_descending)
+    }
+    Icon(
+        Icons.Outlined.ArrowUpward,
+        contentDescription = direction,
+        modifier = Modifier.size(FilterChipDefaults.IconSize).rotate(turn),
+    )
+}
+
+/** List, details or grid, as a connected icon toggle. */
+@Composable
+private fun LayoutToggle(layout: BrowseLayout, onChange: (BrowseLayout) -> Unit) {
+    SingleChoiceSegmentedButtonRow {
+        BrowseLayout.entries.forEachIndexed { index, option ->
+            SegmentedButton(
+                selected = layout == option,
+                onClick = { onChange(option) },
+                shape = SegmentedButtonDefaults.itemShape(index, BrowseLayout.entries.size),
+                icon = {},
+                label = { Icon(option.icon(), contentDescription = option.label()) },
+            )
+        }
+    }
+}
+
+private fun BrowseLayout.icon(): ImageVector = when (this) {
+    BrowseLayout.SIMPLE_LIST -> Icons.AutoMirrored.Outlined.ViewList
+    BrowseLayout.DETAILED_LIST -> Icons.Outlined.ViewAgenda
+    BrowseLayout.GRID -> Icons.Outlined.GridView
 }
 
 @Composable
@@ -90,32 +176,6 @@ private fun SortKey.label(): String = when (this) {
     SortKey.NAME -> stringResource(R.string.library_sort_name)
     SortKey.SIZE -> stringResource(R.string.library_sort_size)
     SortKey.DATE -> stringResource(R.string.library_sort_date)
-}
-
-@Composable
-internal fun LayoutControl(
-    layout: BrowseLayout,
-    onLayoutChange: (BrowseLayout) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var open by remember { mutableStateOf(false) }
-    Row(modifier = modifier) {
-        TextButton(
-            onClick = { open = true },
-            modifier = Modifier.heightIn(min = A11y.MinTouchTarget),
-        ) { Text("${stringResource(R.string.library_layout)}: ${layout.label()}") }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            BrowseLayout.entries.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(option.label()) },
-                    onClick = {
-                        onLayoutChange(option)
-                        open = false
-                    },
-                )
-            }
-        }
-    }
 }
 
 @Composable
@@ -134,20 +194,27 @@ internal fun GridColumnControl(
     modifier: Modifier = Modifier,
 ) {
     val columns = grid.columnsFor(landscape)
-    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
-        TextButton(
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.Row),
+    ) {
+        FilledTonalIconButton(
             onClick = { onColumns(landscape, columns - 1) },
             enabled = columns > GridSpec.MIN_COLUMNS,
-            modifier = Modifier.heightIn(min = A11y.MinTouchTarget),
-        ) { Text(stringResource(R.string.library_grid_fewer)) }
-        Text(stringResource(R.string.library_grid_columns, columns))
-        TextButton(
+            modifier = Modifier.size(A11y.MinTouchTarget),
+        ) { Icon(Icons.Outlined.Remove, contentDescription = stringResource(R.string.library_grid_fewer)) }
+        Text(stringResource(R.string.library_grid_columns, columns), style = MaterialTheme.typography.titleSmall)
+        FilledTonalIconButton(
             onClick = { onColumns(landscape, columns + 1) },
             enabled = columns < GridSpec.MAX_COLUMNS,
-            modifier = Modifier.heightIn(min = A11y.MinTouchTarget),
-        ) { Text(stringResource(R.string.library_grid_more)) }
+            modifier = Modifier.size(A11y.MinTouchTarget),
+        ) { Icon(Icons.Outlined.Add, contentDescription = stringResource(R.string.library_grid_more)) }
     }
 }
+
+private val SearchHeight = 52.dp
+private const val HALF_TURN = 180f
 
 /**
  * Batch action bar (§5.1).
@@ -166,7 +233,7 @@ internal fun SelectionBar(
     actions: LibraryActions,
     modifier: Modifier = Modifier,
 ) {
-    Surface(color = MaterialTheme.colorScheme.secondaryContainer, modifier = modifier.fillMaxWidth()) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.padding(horizontal = Space.Edge, vertical = Space.Tight),
             verticalAlignment = Alignment.CenterVertically,
