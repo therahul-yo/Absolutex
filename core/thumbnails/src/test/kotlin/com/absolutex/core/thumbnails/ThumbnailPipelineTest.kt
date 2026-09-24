@@ -8,6 +8,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -66,6 +67,18 @@ class ThumbnailPipelineTest {
         val second = pipeline().load(source, request(0))
         assertEquals(1, source.reads.get())
         assertEquals(ThumbRequest.BUCKET_SMALL, second.width)
+    }
+
+    @Test fun `cached answers from disk without a source at all`() = runTest {
+        // The library's case: a fresh pipeline (a new app process) with the cover already on disk
+        // must show it without opening the book — cached() takes no source to open.
+        pipeline().load(FakeSource(mapOf(0 to testPngBytes(64, 32))), request(0))
+        val hit = pipeline().cached(request(0))
+        assertEquals(ThumbRequest.BUCKET_SMALL, hit?.width)
+    }
+
+    @Test fun `cached is a miss for anything never loaded`() = runTest {
+        assertNull(pipeline().cached(request(3)))
     }
 
     @Test(expected = IOException::class)
