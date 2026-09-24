@@ -21,13 +21,12 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.res.stringResource
-import androidx.compose.animation.core.tween
+import com.absolutex.core.ui.Motion
 
 
 /** Comic pages are taller than wide; 2:3 is the common trim. */
 internal const val COVER_ASPECT = 2f / 3f
 
-private const val COVER_FADE_MS = 300
 
 /**
  * A book's cover at its trim ratio, fading in when it arrives over a panel-tone ground.
@@ -52,7 +51,7 @@ internal fun BookCover(book: LibraryBookUi, modifier: Modifier = Modifier) {
         val art by produceState<ImageBitmap?>(null, key, widthPx) {
             value = covers.cover(book.path, key, widthPx)?.asImageBitmap()
         }
-        val shown by animateFloatAsState(if (art == null) 0f else 1f, tween(COVER_FADE_MS), label = "cover")
+        val shown by animateFloatAsState(if (art == null) 0f else 1f, Motion.enter(), label = "cover")
         val current = art
         if (current == null) {
             androidx.compose.foundation.layout.Box(
