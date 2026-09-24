@@ -81,7 +81,9 @@ internal fun LibrarySearchField(
         value = query,
         onValueChange = onQueryChange,
         singleLine = true,
-        placeholder = { Text(stringResource(R.string.library_search_hint)) },
+        placeholder = {
+            Text(stringResource(R.string.library_search_hint), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        },
         leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
         trailingIcon = {
             AnimatedVisibility(query.isNotEmpty(), enter = fadeIn(Motion.enter()), exit = fadeOut(Motion.exit())) {
