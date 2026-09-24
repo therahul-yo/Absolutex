@@ -1,5 +1,13 @@
 package com.absolutex.feature.reader
 
+import androidx.core.view.doOnLayout
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineScope
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animate
 import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.webkit.WebResourceRequest
@@ -55,6 +63,7 @@ import com.absolutex.core.ui.Motion
 import com.absolutex.core.ui.rememberHaptics
 import java.io.ByteArrayInputStream
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * The reader for a reflowable text EPUB (§2): the book's own chapters in a WebView, one screen
@@ -97,15 +106,14 @@ private fun TextBook(
     var chapter by rememberSaveable { mutableIntStateOf(startChapter) }
     var fontPx by rememberSaveable { mutableIntStateOf(DEFAULT_FONT_PX) }
     var chrome by rememberSaveable { mutableStateOf(false) }
-    val pager = remember(book) { ChapterPager() }
     val haptics = rememberHaptics()
-    val web = rememberBookWebView(book, pager)
+    val scope = rememberCoroutineScope()
+    val web = rememberBookWebView(book)
+    val pager = remember(book, web) { ChapterPager(scope, web).also { p -> web.onMeasured = p::measured } }
 
     // One place that decides what a turn means, so taps, swipes and chapter edges agree.
-    val turn: (Boolean) -> Unit = { forward ->
+    val leaveChapter: (Boolean) -> Unit = { forward ->
         when {
-            forward && pager.page < pager.pages - 1 -> pager.show(web, pager.page + 1)
-            !forward && pager.page > 0 -> pager.show(web, pager.page - 1)
             forward && chapter < book.spine.size - 1 -> chapter += 1
             !forward && chapter > 0 -> {
                 pager.landOnLastPage = true
@@ -114,14 +122,21 @@ private fun TextBook(
             else -> haptics.confirm() // the book's first or last page: nothing further to turn to
         }
     }
+    val turn: (Boolean) -> Unit = { forward ->
+        when {
+            forward && pager.page < pager.pages - 1 -> pager.slideTo(pager.page + 1)
+            !forward && pager.page > 0 -> pager.slideTo(pager.page - 1)
+            else -> leaveChapter(forward)
+        }
+    }
     DisposableEffect(chapter, fontPx) {
-        pager.load(web, book.spine[chapter], fontPx)
+        pager.load(book.spine[chapter], fontPx)
         vm.saveChapter(book, chapter)
         onDispose { }
     }
     Box(Modifier.fillMaxSize()) {
         AndroidView(factory = { web }, modifier = Modifier.fillMaxSize())
-        TurnGestures(onTurn = turn, onMiddle = { chrome = !chrome })
+        TurnGestures(pager, onTurn = turn, onLeaveChapter = leaveChapter, onMiddle = { chrome = !chrome })
         AnimatedVisibility(
             chrome,
             enter = slideInVertically(Motion.enter()) { -it } + fadeIn(Motion.enter()),
@@ -146,10 +161,19 @@ private fun TextBook(
     }
 }
 
-/** Taps in the side thirds turn, the middle toggles the chrome, and a swipe turns its way. */
+/**
+ * Taps in the side thirds turn, the middle toggles the chrome, and a horizontal drag moves the
+ * page with the finger, settling on release through [ChapterPager.release].
+ */
 @Composable
-private fun TurnGestures(onTurn: (Boolean) -> Unit, onMiddle: () -> Unit) {
+private fun TurnGestures(
+    pager: ChapterPager,
+    onTurn: (Boolean) -> Unit,
+    onLeaveChapter: (Boolean) -> Unit,
+    onMiddle: () -> Unit,
+) {
     val turn by rememberUpdatedState(onTurn)
+    val leave by rememberUpdatedState(onLeaveChapter)
     val middle by rememberUpdatedState(onMiddle)
     Box(
         Modifier
@@ -163,12 +187,21 @@ private fun TurnGestures(onTurn: (Boolean) -> Unit, onMiddle: () -> Unit) {
                     }
                 }
             }
-            .pointerInput(Unit) {
+            .pointerInput(pager) {
                 var travel = 0f
+                val velocity = VelocityTracker()
                 detectHorizontalDragGestures(
-                    onDragStart = { travel = 0f },
-                    onDragEnd = { if (abs(travel) > SWIPE_PX) turn(travel < 0) },
-                ) { _, delta -> travel += delta }
+                    onDragStart = {
+                        travel = 0f
+                        velocity.resetTracking()
+                    },
+                    onDragEnd = { pager.release(travel, velocity.calculateVelocity().x)?.let(leave) },
+                    onDragCancel = { pager.slideTo(pager.page) },
+                ) { change, dx ->
+                    travel += dx
+                    velocity.addPosition(change.uptimeMillis, change.position)
+                    pager.dragBy(dx)
+                }
             },
     )
 }
@@ -212,55 +245,115 @@ private fun TextBottomBar(
 }
 
 /**
- * Where the reader is inside the loaded chapter, and the moves within it. [pages] is measured by
- * the page's own script once the chapter lays out; [landOnLastPage] makes a backwards chapter
- * change arrive at the end of the previous chapter rather than its start.
+ * Where the reader is inside the loaded chapter, and every move within it. Pages are columns one
+ * WebView-width apart, and moving between them scrolls the WebView natively: a drag moves the
+ * page with the finger frame by frame, a release or a tap animates to the chosen page. A chapter
+ * fades in once it has laid out, rather than popping from blank.
+ *
+ * [landOnLastPage] makes a backwards chapter change arrive at the end of the previous chapter.
  */
-private class ChapterPager {
+private class ChapterPager(private val scope: CoroutineScope, private val web: WebView) {
     var page by mutableIntStateOf(0)
     var pages by mutableIntStateOf(1)
     var landOnLastPage = false
+    private var motion: Job? = null
 
-    fun load(web: WebView, entry: String, fontPx: Int) {
-        web.tag = fontPx
-        web.loadUrl(ORIGIN + entry.split('/').joinToString("/") { Uri.encode(it) })
+    /**
+     * One page in physical pixels, computed exactly as the chapter's columns are laid out (the CSS
+     * page width times the density), so page N never drifts from where its column really is.
+     */
+    private fun stride(): Int {
+        val cssWidth = (web.tag as? PageBox)?.width ?: 0
+        val exact = (cssWidth * web.resources.displayMetrics.density).roundToInt()
+        return if (exact > 0) exact else web.width
     }
 
-    fun show(web: WebView, target: Int) {
-        page = target
-        web.evaluateJavascript("window.scrollTo({left: $target * window.innerWidth, behavior: 'smooth'});", null)
+    fun load(entry: String, fontPx: Int) {
+        motion?.cancel()
+        web.animate().cancel()
+        web.alpha = 0f
+        // Only once the view has its real size: the page box is given to the chapter in CSS
+        // pixels from here, never measured by the page (see readingCss).
+        web.doOnLayout { view ->
+            val density = view.resources.displayMetrics.density
+            view.tag = PageBox(fontPx, (view.width / density).toInt(), (view.height / density).toInt())
+            (view as WebView).loadUrl(ORIGIN + entry.split('/').joinToString("/") { Uri.encode(it) })
+        }
     }
 
-    /** Called when a chapter has laid out: count its pages and land on the first or the last. */
-    fun measured(web: WebView, count: Int) {
+    /** Called when a chapter has laid out: count its pages, land on the first or the last. */
+    fun measured(count: Int) {
         pages = count.coerceAtLeast(1)
-        val target = if (landOnLastPage) pages - 1 else 0
+        page = if (landOnLastPage) pages - 1 else 0
         landOnLastPage = false
+        web.scrollTo(page * stride(), 0)
+        web.animate().alpha(1f).setDuration(Motion.MEDIUM_MS.toLong()).start()
+    }
+
+    /** Follows the finger, never past the chapter's first or last page. */
+    fun dragBy(dx: Float) {
+        motion?.cancel()
+        val max = (pages - 1) * stride()
+        web.scrollTo((web.scrollX - dx).toInt().coerceIn(0, max), 0)
+    }
+
+    /**
+     * Where a released drag settles: the next or previous page when it travelled far enough or
+     * was flung, else back where it started. A drag outward from the chapter's first or last page
+     * returns the direction to leave the chapter in, for the caller to load the neighbour.
+     */
+    fun release(travel: Float, velocity: Float): Boolean? {
+        val forward = travel < 0
+        val committed = abs(travel) > stride() * COMMIT_FRACTION || abs(velocity) > FLING_PX_PER_S
+        val target = if (committed) page + (if (forward) 1 else -1) else page
+        if (target !in 0 until pages) {
+            slideTo(page)
+            return forward
+        }
+        slideTo(target)
+        return null
+    }
+
+    fun slideTo(target: Int) {
         page = target
-        web.evaluateJavascript("window.scrollTo(${target} * window.innerWidth, 0);", null)
+        motion?.cancel()
+        val from = web.scrollX.toFloat()
+        motion = scope.launch {
+            val spec = tween<Float>(Motion.MEDIUM_MS, easing = Motion.Emphasized)
+            animate(from, (target * stride()).toFloat(), animationSpec = spec) { x, _ -> web.scrollTo(x.toInt(), 0) }
+        }
     }
 }
 
 @Composable
-private fun rememberBookWebView(book: TextEpubBook, pager: ChapterPager): WebView {
+private fun rememberBookWebView(book: TextEpubBook): BookWebView {
     val context = LocalContext.current
     val web = remember(book) {
-        WebView(context).apply {
+        BookWebView(context).apply {
             setBackgroundColor(AndroidColor.BLACK)
             // Script only for measuring and turning pages; the book's own is the book's.
             settings.javaScriptEnabled = true
             settings.allowFileAccess = false
             settings.allowContentAccess = false
             settings.blockNetworkLoads = true
+            // Font size is the reader's (A-/A+), never the system's text boosting.
+            settings.textZoom = FULL_TEXT_ZOOM
+            settings.useWideViewPort = true
+            settings.loadWithOverviewMode = false
             isVerticalScrollBarEnabled = false
             isHorizontalScrollBarEnabled = false
             // Gestures are Compose's (TurnGestures); the WebView only draws.
             setOnTouchListener { _, _ -> true }
-            webViewClient = BookClient(book) { view, count -> pager.measured(view, count) }
+            webViewClient = BookClient(book) { view, count -> (view as BookWebView).onMeasured(count) }
         }
     }
     DisposableEffect(web) { onDispose { web.destroy() } }
     return web
+}
+
+/** A WebView that tells its pager when a chapter has been measured. */
+private class BookWebView(context: android.content.Context) : WebView(context) {
+    var onMeasured: (Int) -> Unit = {}
 }
 
 /**
@@ -279,18 +372,20 @@ private class BookClient(
         val entry = Uri.decode(url.removePrefix(ORIGIN).substringBefore('#').substringBefore('?'))
         val bytes = book.read(entry) ?: return notFound()
         val type = mimeOf(entry)
-        val body = if (type.contains("html")) withReadingStyle(bytes, fontPxOf(view)) else bytes
+        val body = if (type.contains("html")) withReadingStyle(bytes, boxOf(view)) else bytes
         return WebResourceResponse(type, "UTF-8", ByteArrayInputStream(body))
     }
 
     override fun onPageFinished(view: WebView, url: String) {
         // After fonts and images settle a little, so the count is the laid-out count.
         view.postDelayed({
-            view.evaluateJavascript(MEASURE_JS) { result -> onMeasured(view, result.trim('"').toIntOrNull() ?: 1) }
+            view.evaluateJavascript(measureJs(boxOf(view).width)) { result ->
+                onMeasured(view, result.trim('"').toIntOrNull() ?: 1)
+            }
         }, LAYOUT_SETTLE_MS)
     }
 
-    private fun fontPxOf(view: WebView): Int = (view.tag as? Int) ?: DEFAULT_FONT_PX
+    private fun boxOf(view: WebView): PageBox = (view.tag as? PageBox) ?: PageBox(DEFAULT_FONT_PX, 0, 0)
 
     private fun notFound() =
         WebResourceResponse(
@@ -304,9 +399,11 @@ private class BookClient(
 }
 
 /** The chapter's own markup with the reading stylesheet added last, so it wins. */
-private fun withReadingStyle(bytes: ByteArray, fontPx: Int): ByteArray {
+private fun withReadingStyle(bytes: ByteArray, box: PageBox): ByteArray {
     val html = String(bytes, Charsets.UTF_8)
-    val style = "<style>${readingCss(fontPx)}</style>"
+    // A mobile viewport: without it the WebView lays the chapter out as a ~1400 px desktop page
+    // and boosts the text to compensate, and the columns come out a screen and a half wide.
+    val style = "<meta name=\"viewport\" content=\"$VIEWPORT\"/><style>${readingCss(box)}</style>"
     val at = html.lastIndexOf("</head>", ignoreCase = true)
     val out = if (at >= 0) html.substring(0, at) + style + html.substring(at) else style + html
     return out.toByteArray(Charsets.UTF_8)
@@ -316,20 +413,46 @@ private fun withReadingStyle(bytes: ByteArray, fontPx: Int): ByteArray {
  * Dark, calm and paginated: the body is one screen tall and flows into screen-wide columns, so
  * the page stride is exactly the window width. Colours are forced over the book's own, which are
  * almost always black on white.
+ *
+ * The page box comes from the app, in CSS pixels, never from the page: vw/vh are zero before the
+ * WebView is laid out, and the window's own width grows to fit the very columns that overflow
+ * it — measuring it fed the columns back into their own width.
  */
-private fun readingCss(fontPx: Int) = """
-    html { height: 100%; overflow: hidden; background: #000 !important; }
-    body {
-        margin: 0 !important; height: 100vh; box-sizing: border-box;
-        padding: 56px ${SIDE_PX}px 48px ${SIDE_PX}px !important;
-        column-width: calc(100vw - ${SIDE_PX * 2}px); column-gap: ${SIDE_PX * 2}px; column-fill: auto;
-        background: #000 !important; color: #E6E6E6 !important;
-        font-size: ${fontPx}px !important; line-height: 1.6 !important;
-        font-family: sans-serif; -webkit-text-size-adjust: none;
+private fun readingCss(box: PageBox) = """
+    :root { --w: ${box.width}px; --h: ${box.height}px; }
+    html {
+        height: 100% !important; width: 100% !important;
+        /* Scrollable sideways (by the app, never by touch) so the WebView's own scroll moves
+           between columns; hidden overflow pinned the page to its first column. */
+        overflow-x: scroll !important; overflow-y: hidden !important; scrollbar-width: none;
+        margin: 0 !important; padding: 0 !important; background: #000 !important;
+        display: block !important; position: static !important;
     }
+    body {
+        display: block !important; position: static !important; float: none !important;
+        width: auto !important; max-width: none !important; min-height: 0 !important;
+        margin: 0 !important; height: var(--h, 100vh) !important; box-sizing: border-box !important;
+        padding: ${TOP_PX}px ${SIDE_PX}px ${BOTTOM_PX}px ${SIDE_PX}px !important;
+        column-width: calc(var(--w, 100vw) - ${SIDE_PX * 2}px) !important;
+        column-gap: ${SIDE_PX * 2}px !important; column-fill: auto !important; column-count: auto !important;
+        overflow: visible !important;
+        background: #000 !important; color: #E6E6E6 !important;
+        font-size: ${box.fontPx}px !important; line-height: 1.6 !important;
+        font-family: sans-serif; -webkit-text-size-adjust: 100% !important; text-size-adjust: 100% !important;
+    }
+    ::-webkit-scrollbar { display: none; }
     body * { color: inherit !important; background-color: transparent !important; max-width: 100%; }
+    /* A book's own layout can hold a block together (a table of contents in one list, a fixed
+       height, flex): in columns that block then runs off the page instead of onto the next. */
+    body *:not(img):not(svg):not(image) {
+        break-inside: auto !important; height: auto !important; max-height: none !important;
+        overflow: visible !important; position: static !important;
+    }
+    div, section, nav, article, header, footer, aside, main { display: block !important; }
     a { color: #BDBDBD !important; }
-    img, svg, image { max-height: 85vh; object-fit: contain; height: auto; }
+    img, svg, image {
+        max-height: calc(var(--h, 100vh) - ${TOP_PX + BOTTOM_PX}px) !important; object-fit: contain; height: auto;
+    }
     p { orphans: 2; widows: 2; }
     h1, h2, h3 { line-height: 1.25 !important; break-after: avoid; }
 """.trimIndent()
@@ -351,13 +474,28 @@ private fun mimeOf(entry: String): String = when (entry.substringAfterLast('.').
 
 /** A private origin: https so the WebView treats it as secure, a reserved name so it is never real. */
 private const val ORIGIN = "https://book.absolutex.invalid/"
-private const val MEASURE_JS = "Math.max(1, Math.round(document.documentElement.scrollWidth / window.innerWidth))"
+/** Counts the columns the chapter produced, one page each, at the page width the app gave it. */
+private fun measureJs(pageWidth: Int) =
+    "Math.max(1, Math.ceil((Math.max(document.body.scrollWidth, document.documentElement.scrollWidth) - 2) / $pageWidth))"
+
+/** The chapter's page box in CSS pixels, and its text size. */
+private data class PageBox(val fontPx: Int, val width: Int, val height: Int)
+
+/** A fixed, unscalable viewport: the layout width must not grow to fit the overflowing columns. */
+private const val VIEWPORT = "width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no"
 private const val LAYOUT_SETTLE_MS = 120L
+private const val FULL_TEXT_ZOOM = 100
 private const val DEFAULT_FONT_PX = 18
 private const val MIN_FONT_PX = 12
 private const val MAX_FONT_PX = 32
 private const val FONT_STEP_PX = 2
 private const val SIDE_PX = 22
+private const val TOP_PX = 56
+
+/** Clear of the gesture bar, which the page draws under. */
+private const val BOTTOM_PX = 88
 private const val THIRDS = 3
-private const val SWIPE_PX = 60f
+/** How far a drag must travel, as a share of the page, to turn it on release. */
+private const val COMMIT_FRACTION = 0.2f
+private const val FLING_PX_PER_S = 800f
 private const val HTTP_NOT_FOUND = 404
