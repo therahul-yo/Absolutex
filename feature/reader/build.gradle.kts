@@ -25,6 +25,7 @@ dependencies {
     implementation(project(":core:decode"))
     implementation(project(":core:gpu"))
     implementation(project(":source:api"))
+    implementation(project(":source:epub"))
     implementation(project(":source:folder"))
     implementation(project(":source:libarchive"))
     implementation(project(":source:pdf"))

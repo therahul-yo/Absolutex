@@ -189,7 +189,7 @@ class LibraryScanner(
          * Containers worth opening (§2). Kept here rather than in FilenameParser: the parser
          * strips extensions it recognises, this decides what is a book in the first place.
          */
-        val CONTAINER_EXTENSIONS = setOf("cbz", "cbr", "cb7", "cbt", "zip", "rar", "7z", "tar", "pdf")
+        val CONTAINER_EXTENSIONS = setOf("cbz", "cbr", "cb7", "cbt", "zip", "rar", "7z", "tar", "pdf", "epub")
 
         const val MIN_IMAGES_FOR_FOLDER_BOOK = 2
 
