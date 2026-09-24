@@ -37,6 +37,9 @@ dependencies {
     // NavigationSuiteScaffold (§7): one declaration adapts between bottom bar, rail and drawer
     // across phone/tablet/foldable. Already in the catalog; core:ui dropped it when nothing used it.
     implementation(libs.compose.material3.adaptive.nav)
+    // Shared-element cover flight (CoverTransitionHost): SharedTransitionLayout and the
+    // caller-managed shared-element modifiers both ends use. BOM-managed, like foundation.
+    implementation(libs.compose.animation)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.hilt.navigation.compose)

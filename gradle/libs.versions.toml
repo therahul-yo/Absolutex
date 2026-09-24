@@ -98,6 +98,8 @@ compose-ui-tooling-preview   = { module = "androidx.compose.ui:ui-tooling-previe
 compose-material3            = { module = "androidx.compose.material3:material3" }
 # Lists, grids and gestures for the library screens. BOM-managed, so no version to pin here.
 compose-foundation           = { module = "androidx.compose.foundation:foundation" }
+# Shared-element cover flight between the library grid and the reader sheet. BOM-managed.
+compose-animation            = { module = "androidx.compose.animation:animation" }
 # Filled Add/Refresh/Delete for the servers UI. BOM-managed like foundation; resolved (not
 # memorised) against composeBom 2026.08.00 by the :feature:remote build.
 # Licence: Apache-2.0, same as the rest of Compose (androidx.compose.material group).

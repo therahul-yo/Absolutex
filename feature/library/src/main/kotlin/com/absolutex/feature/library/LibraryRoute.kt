@@ -67,6 +67,12 @@ fun LibraryRoute(
     onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
     paused: Boolean = false,
+    /**
+     * The open book's cover key while its reader sheet is up, so the matching card hides its
+     * art for the shared-element flight (see [sharedCoverElement]). Null while browsing.
+     * Untouched by [paused]: freezing the grid's data and hiding one card's art are separate.
+     */
+    openCoverPath: String? = null,
 ) {
     val viewModel: LibraryViewModel = hiltViewModel()
     val live by viewModel.ui.collectAsStateWithLifecycle()
@@ -84,6 +90,7 @@ fun LibraryRoute(
         onAddLocation = onAddLocation,
         onOpenSettings = onOpenSettings,
         modifier = modifier,
+        openCoverPath = openCoverPath,
     )
 }
 
@@ -122,6 +129,7 @@ internal fun LibraryScreen(
     onAddLocation: () -> Unit,
     onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
+    openCoverPath: String? = null,
 ) {
     val haptics = rememberHaptics()
     // §7: one declaration adapts to bottom bar, rail or drawer across phone, tablet and foldable.
@@ -143,7 +151,7 @@ internal fun LibraryScreen(
         },
         modifier = modifier,
     ) {
-        LibraryBody(state, actions, onOpenBook, onAddLocation, onOpenSettings)
+        LibraryBody(state, actions, onOpenBook, onAddLocation, onOpenSettings, openCoverPath = openCoverPath)
     }
 }
 
@@ -154,6 +162,7 @@ private fun LibraryBody(
     onOpenBook: (String) -> Unit,
     onAddLocation: () -> Unit,
     onOpenSettings: () -> Unit,
+    openCoverPath: String? = null,
 ) {
     val snackbar = remember { SnackbarHostState() }
     // Resolved here and not inside the effect: the words are a string resource, and the effect's
@@ -182,7 +191,7 @@ private fun LibraryBody(
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
             LibraryControls(state, actions)
-            LibraryContent(state, actions, onOpenBook, onAddLocation)
+            LibraryContent(state, actions, onOpenBook, onAddLocation, openCoverPath = openCoverPath)
         }
     }
 }
@@ -233,6 +242,7 @@ private fun LibraryContent(
     actions: LibraryActions,
     onOpenBook: (String) -> Unit,
     onAddLocation: () -> Unit,
+    openCoverPath: String? = null,
 ) {
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val error = state.error
@@ -252,6 +262,7 @@ private fun LibraryContent(
         selectionActive = state.selectionActive,
         onOpen = { book -> onOpenBook(book.path) },
         onToggleSelection = actions.onToggleSelection,
+        openCoverPath = openCoverPath,
     )
     // Material fade-through between tabs: the old tab fades out fast, the new one fades in just
     // after, and each renders its own state — the outgoing grid never flashes the new tab's books.

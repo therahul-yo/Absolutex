@@ -102,6 +102,9 @@ dependencies {
     // app/src (verified by grep); hilt-navigation-compose is KEPT, it provides hiltViewModel.
     implementation(libs.androidx.hilt.navigation.compose)
     implementation(libs.androidx.navigation.compose)
+    // Shared-element cover flight: the SharedTransitionLayout both the library grid and the
+    // reader sheet compose under. BOM-managed.
+    implementation(libs.compose.animation)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.androidx.profileinstaller)   // §3: baseline profiles are mandatory

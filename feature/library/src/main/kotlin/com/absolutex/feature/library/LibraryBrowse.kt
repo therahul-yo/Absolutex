@@ -59,6 +59,11 @@ internal data class RowContext(
     val selectionActive: Boolean,
     val onOpen: (LibraryBookUi) -> Unit,
     val onToggleSelection: (String) -> Unit,
+    /**
+     * The open book's cover key, so the matching card can hide its art while the reader sheet
+     * flies it (see [sharedCoverElement]). Null while browsing, when every cover stays drawn.
+     */
+    val openCoverPath: String? = null,
 )
 
 /**
@@ -162,7 +167,11 @@ internal fun CoverCard(book: LibraryBookUi, isSelected: Boolean, context: RowCon
     SelectableSurface(book, isSelected, context, modifier) {
         Column {
             Box {
-                BookCover(book, Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
+                BookCover(
+                    book,
+                    Modifier.fillMaxWidth().sharedCoverElement(context.openCoverPath, book.path),
+                    shape = MaterialTheme.shapes.medium,
+                )
                 if (!book.isBook && book.readState == ReadState.UNREAD) NewBadge(Modifier.align(Alignment.TopStart))
                 SelectedMark(isSelected)
             }
@@ -194,7 +203,12 @@ internal fun CoverCard(book: LibraryBookUi, isSelected: Boolean, context: RowCon
 private fun HeroCard(book: LibraryBookUi, isSelected: Boolean, context: RowContext, modifier: Modifier) {
     SelectableSurface(book, isSelected, context, modifier.padding(bottom = Space.Gap)) {
         Box {
-            BookCover(book, Modifier.fillMaxWidth(), aspect = HERO_ASPECT, shape = MaterialTheme.shapes.large)
+            BookCover(
+                book,
+                Modifier.fillMaxWidth().sharedCoverElement(context.openCoverPath, book.path),
+                aspect = HERO_ASPECT,
+                shape = MaterialTheme.shapes.large,
+            )
             Column(
                 Modifier
                     .align(Alignment.BottomCenter)
@@ -230,7 +244,7 @@ private fun BookRow(state: LibraryUiState, book: LibraryBookUi, context: RowCont
         ) {
             val detailed = state.layout == BrowseLayout.DETAILED_LIST
             Box(Modifier.width(if (detailed) ThumbWidth else SmallThumbWidth)) {
-                BookCover(book, Modifier.fillMaxWidth())
+                BookCover(book, Modifier.fillMaxWidth().sharedCoverElement(context.openCoverPath, book.path))
                 SelectedMark(selected)
             }
             if (detailed) {
