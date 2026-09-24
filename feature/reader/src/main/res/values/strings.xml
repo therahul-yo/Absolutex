@@ -54,4 +54,9 @@
     <string name="reader_text_position">Chapter %1$d of %2$d · %3$d/%4$d</string>
     <string name="reader_text_smaller">Smaller text</string>
     <string name="reader_text_larger">Larger text</string>
+    <string name="reader_text_chapter">Chapter %1$d of %2$d</string>
+    <string name="reader_text_scroll">Read as one long scroll</string>
+    <string name="reader_text_pages">Read page by page</string>
+    <string name="reader_text_prev_chapter">Previous chapter</string>
+    <string name="reader_text_next_chapter">Next chapter</string>
 </resources>
