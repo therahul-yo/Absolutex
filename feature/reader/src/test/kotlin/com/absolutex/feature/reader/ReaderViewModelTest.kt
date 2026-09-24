@@ -462,7 +462,7 @@ class ReaderViewModelTest {
         val shedFired = CompletableDeferred<Unit>()
 
         val opener = object : BookOpener {
-            override suspend fun open(uri: Uri): Pair<Closeable, String> {
+            override suspend fun open(uri: Uri, password: String?): Pair<Closeable, String> {
                 val src = object : ComicSource {
                     override val pages = (0 until 10).map { Page(it, "p$it.jpg") }
                     override fun openPage(index: Int): InputStream = throw oom
