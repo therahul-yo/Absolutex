@@ -1,5 +1,6 @@
 package com.absolutex.feature.reader
 
+import android.content.res.Configuration.ORIENTATION_LANDSCAPE
 import com.absolutex.core.ui.Motion
 import androidx.compose.foundation.shape.ZeroCornerSize
 import androidx.compose.animation.slideOutVertically
@@ -213,7 +214,7 @@ internal fun readerBackgroundFor(
     settledPage: Int,
 ): Color = if (autoBackground) pageBackgrounds[settledPage] ?: Color.Black else Color.Black
 
-internal const val CHROME_ALPHA = 0.9f
+internal const val CHROME_ALPHA = 0.97f
 
 /** The most of the screen the chrome may take, so a page is always partly visible behind it. */
 internal const val CHROME_MAX_HEIGHT = 0.7f
@@ -245,7 +246,8 @@ private fun Pages(
 ) {
     val flow = prefs.readingFlow
     // The pager counts screens; everything else (progress, seeking, keys) speaks book pages.
-    val spreads = remember(pageCount, prefs.pageLayout) { Spreads.of(pageCount, prefs.pageLayout) }
+    val layout = prefs.pageLayout.forScreen(LocalConfiguration.current.orientation == ORIENTATION_LANDSCAPE)
+    val spreads = remember(pageCount, layout) { Spreads.of(pageCount, layout) }
     val pagerState = rememberPagerState(initialPage = Spreads.indexOf(spreads, startPage)) { spreads.size }
     // A layout change regroups the pages: land on the page being read, not on whatever spread
     // happens to sit at the old index. Rebuilding the whole reader instead would also throw away
@@ -320,7 +322,7 @@ private fun Pages(
         ReaderPager(flow, pagerState, scrollable, page)
         ReaderChrome(
             visible = chrome, page = Spreads.at(spreads, pagerState.currentPage).first, pageCount = pageCount,
-            title = title, onSettings = onSettings, onSeek = jump,
+            title = title, onSettings = onSettings, onSeek = jump, onDismiss = { chrome = false },
             bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip }, toc = toc,
             onExport = { vm.exportPage(Spreads.at(spreads, pagerState.currentPage).first) },
             fitFor = fitContext, prefs = prefs,
@@ -395,7 +397,7 @@ private fun Strip(
         }
         ReaderChrome(
             visible = chrome, page = listState.firstVisibleItemIndex, pageCount = pageCount,
-            title = title, onSettings = onSettings, onSeek = jump,
+            title = title, onSettings = onSettings, onSeek = jump, onDismiss = { chrome = false },
             bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip }, toc = toc,
             onExport = { vm.exportPage(listState.firstVisibleItemIndex) },
             fitFor = null, prefs = prefs,
@@ -495,7 +497,8 @@ private fun ReaderWindow(prefs: ReaderPrefs, immersive: Boolean) {
         activity?.requestedOrientation = when (prefs.rotationLock) {
             RotationLock.SYSTEM -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             RotationLock.PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            RotationLock.LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            // Either way up: a phone turned left or right is landscape all the same.
+            RotationLock.LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         }
         onDispose { if (previous != null) activity.requestedOrientation = previous }
     }

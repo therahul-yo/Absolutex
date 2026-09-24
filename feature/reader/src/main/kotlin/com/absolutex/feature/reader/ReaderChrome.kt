@@ -1,5 +1,16 @@
 package com.absolutex.feature.reader
 
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.background
+import androidx.compose.animation.core.Animatable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import com.absolutex.core.ui.Motion
@@ -57,6 +68,7 @@ internal fun ReaderChrome(
     title: String,
     onSettings: (() -> Unit)?,
     onSeek: (Int) -> Unit,
+    onDismiss: () -> Unit,
     bookId: String,
     strip: (suspend (index: Int, width: Int) -> Bitmap?)?,
     toc: List<TocEntry>,
@@ -81,7 +93,7 @@ internal fun ReaderChrome(
         exit = slideOutVertically(Motion.exit()) { it } + fadeOut(Motion.exit()),
         modifier = Modifier.align(Alignment.BottomCenter),
     ) {
-        BottomChrome(page, pageCount, onSeek, bookId, strip, toc, onExport, fitFor, prefs)
+        BottomChrome(page, pageCount, onSeek, onDismiss, bookId, strip, toc, onExport, fitFor, prefs)
     }
     }
 }
@@ -92,6 +104,7 @@ private fun BottomChrome(
     page: Int,
     pageCount: Int,
     onSeek: (Int) -> Unit,
+    onDismiss: () -> Unit,
     bookId: String,
     strip: (suspend (index: Int, width: Int) -> Bitmap?)?,
     toc: List<TocEntry>,
@@ -119,20 +132,22 @@ private fun BottomChrome(
     // Opening the options scrolls to them: they sit below the seek bar, which in landscape is past
     // the cap, and a control that appears to do nothing is worse than no control.
     LaunchedEffect(options) {
-        if (options) {
-            withFrameNanos { }
-            chromeScroll.animateScrollTo(chromeScroll.maxValue)
-        }
+        if (options) withFrameNanos { }.also { chromeScroll.animateScrollTo(chromeScroll.maxValue) }
     }
+    val pull = remember { Animatable(0f) } // the sheet's drag offset; see [DragHandle]
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = CHROME_ALPHA),
         shape = MaterialTheme.shapes.extraLarge.copy(bottomStart = ZeroCornerSize, bottomEnd = ZeroCornerSize),
-        modifier = Modifier.fillMaxWidth().heightIn(max = maxChrome),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = maxChrome)
+            .graphicsLayer { translationY = pull.value },
     ) {
         Column(
             Modifier.verticalScroll(chromeScroll).navigationBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 8.dp),
+                .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
         ) {
+            DragHandle(pull, onDismiss)
             if (contents) TocPanel(toc, onJump = { onSeek(it); contents = false })
             ChromeActions(
                 indicator = stringResource(R.string.reader_page_indicator, shown, pageCount),
@@ -170,3 +185,42 @@ private fun BottomChrome(
         }
     }
 }
+
+/**
+ * The sheet's grab handle: a short pill with a tall, full-width touch area. Dragging it moves the
+ * sheet with the finger ([pull] is the sheet's offset); past a threshold or on a downward fling it
+ * closes, and let go early it springs back. Only the handle drags, so the strip, the seek bar and
+ * the options keep their own gestures.
+ */
+@Composable
+private fun DragHandle(pull: Animatable<Float, *>, onDismiss: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val closeAt = with(LocalDensity.current) { DISMISS_DISTANCE.toPx() }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(HANDLE_TOUCH_HEIGHT)
+            .draggable(
+                state = rememberDraggableState { delta ->
+                    scope.launch { pull.snapTo((pull.value + delta).coerceAtLeast(0f)) }
+                },
+                orientation = Orientation.Vertical,
+                onDragStopped = { velocity ->
+                    val close = pull.value > closeAt || velocity > DISMISS_VELOCITY
+                    if (close) onDismiss() else pull.animateTo(0f, Motion.press())
+                },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .size(width = 32.dp, height = 4.dp)
+                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = HANDLE_ALPHA), CircleShape),
+        )
+    }
+}
+
+private val DISMISS_DISTANCE = 72.dp
+private val HANDLE_TOUCH_HEIGHT = 28.dp
+private const val DISMISS_VELOCITY = 1200f
+private const val HANDLE_ALPHA = 0.5f

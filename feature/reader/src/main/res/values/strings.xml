@@ -39,4 +39,7 @@
     <string name="reader_bookmark_add">Bookmark</string>
     <string name="reader_bookmark_remove">Remove bookmark</string>
     <string name="reader_bookmark_page">p. %1$d</string>
+    <string name="reader_rotation_auto">Follow system</string>
+    <string name="reader_rotation_portrait">Portrait</string>
+    <string name="reader_rotation_landscape">Landscape</string>
 </resources>

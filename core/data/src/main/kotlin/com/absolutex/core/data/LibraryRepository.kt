@@ -163,6 +163,13 @@ class LibraryRepository internal constructor(
         return ChangeResult.Upserted(path = path)
     }
 
+    /**
+     * Drops every book a removed SAF location contributed. The prefix ends at "/document/" so
+     * `…/tree/downloads` never also matches a sibling tree such as `…/tree/downloads2`. Every row
+     * is older than a scan that never ends, so the stale-row delete removes them all.
+     */
+    suspend fun forgetLocation(treeUri: String): Int = dao.deleteStaleIn("$treeUri/document/", Long.MAX_VALUE)
+
     /** Updates the favourites flag for a single book path (§5.1 favourites shelf). */
     suspend fun upsertFavorite(path: String, favorite: Boolean) {
         dao.updateFavorite(path, favorite)

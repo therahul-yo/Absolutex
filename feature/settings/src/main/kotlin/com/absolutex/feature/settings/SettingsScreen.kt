@@ -52,10 +52,12 @@ fun SettingsScreen(
     onAddLocation: () -> Unit = {},
     modifier: Modifier = Modifier,
     vm: SettingsViewModel = hiltViewModel(),
+    locationsVm: LocationsViewModel = hiltViewModel(),
 ) {
     val app by vm.appPrefs.collectAsStateWithLifecycle()
     val reader by vm.readerPrefs.collectAsStateWithLifecycle()
     val rendering by vm.renderingPrefs.collectAsStateWithLifecycle()
+    val locations by locationsVm.locations.collectAsStateWithLifecycle()
     // The screen previews the theme it configures: what you toggle is what you get.
     val dark = when (app.nightMode) {
         NightMode.ON -> true
@@ -79,7 +81,9 @@ fun SettingsScreen(
                 onReader = vm::updateReader,
                 onCacheSize = vm::setCacheSize,
                 onRendering = vm::updateRendering,
+                onRemoveLocation = locationsVm::remove,
             ),
+            locations = locations,
             onOpenRemote = onOpenRemote,
             onAddLocation = onAddLocation,
             modifier = modifier,
@@ -97,6 +101,7 @@ fun SettingsContent(
     onOpenRemote: () -> Unit = {},
     onAddLocation: () -> Unit = {},
     modifier: Modifier = Modifier,
+    locations: List<StorageLocation> = emptyList(),
 ) {
     // The large title collapses into the bar as the page scrolls, as Material 3 settings do.
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
@@ -118,6 +123,7 @@ fun SettingsContent(
 
             GroupHeader(R.string.settings_group_library)
             SettingsCard {
+                locations.forEach { LocationRow(it, actions.onRemoveLocation) }
                 AddStorageLocationRow(onAdd = onAddLocation)
                 LibraryGroup(app, actions)
             }

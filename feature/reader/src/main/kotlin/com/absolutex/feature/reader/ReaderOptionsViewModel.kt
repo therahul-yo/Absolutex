@@ -1,5 +1,6 @@
 package com.absolutex.feature.reader
 
+import com.absolutex.core.data.settings.RotationLock
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
@@ -51,6 +52,11 @@ class ReaderOptionsViewModel @Inject constructor(
 
     fun setLayout(bookId: String, layout: PageLayout) = editBook(bookId) { it.copy(pageLayout = layout.name) }
 
+    /** Rotation is app-wide, like in settings: it is how the device is held, not a trait of a book. */
+    fun setRotation(lock: RotationLock) {
+        viewModelScope.launch { writer.updateReader { it.copy(rotationLock = lock) } }
+    }
+
     private fun editBook(bookId: String, edit: (BookPrefs) -> BookPrefs) {
         if (bookId.isEmpty()) return
         viewModelScope.launch { books.upsert(edit(books.get(bookId) ?: BookPrefs(bookId))) }
@@ -87,6 +93,12 @@ internal fun BookOptionsRow(
             OptionButton(stringResource(flowLabel(flow)), flow == prefs.readingFlow) {
                 vm.setFlow(bookId, flow)
             }
+        }
+    }
+    // Rotation sat only in the settings screen, so from inside a book there was no way to turn it.
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        RotationLock.entries.forEach { lock ->
+            OptionButton(stringResource(rotationLabel(lock)), lock == prefs.rotationLock) { vm.setRotation(lock) }
         }
     }
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -141,4 +153,10 @@ private fun fitLabel(mode: FitMode): Int = when (mode) {
     FitMode.FIT_WIDTH -> R.string.reader_fit_width
     FitMode.FIT_HEIGHT -> R.string.reader_fit_height
     FitMode.FULL_SIZE -> R.string.reader_fit_full
+}
+
+private fun rotationLabel(lock: RotationLock): Int = when (lock) {
+    RotationLock.SYSTEM -> R.string.reader_rotation_auto
+    RotationLock.PORTRAIT -> R.string.reader_rotation_portrait
+    RotationLock.LANDSCAPE -> R.string.reader_rotation_landscape
 }

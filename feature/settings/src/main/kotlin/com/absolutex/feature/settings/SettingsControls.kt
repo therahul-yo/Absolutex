@@ -89,10 +89,13 @@ fun SwitchSettingRow(
             .semantics(mergeDescendants = true) { stateDescription = description },
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        val title = stringResource(titleRes)
         Column(Modifier.weight(1f).padding(end = 16.dp)) {
-            Text(text = stringResource(titleRes), style = MaterialTheme.typography.bodyLarge)
+            Text(text = title, style = MaterialTheme.typography.bodyLarge)
+            // The description strings open with the title (they were written to be spoken), so the
+            // visible line drops it rather than printing it twice.
             Text(
-                text = description,
+                text = description.removePrefix("$title. "),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -249,8 +252,8 @@ fun AboutRow(modifier: Modifier = Modifier) {
  * was gone for good: no second folder could ever be added, and a location pointing somewhere
  * that no longer holds books left the library permanently empty with nothing to do about it.
  *
- * Adding is all this offers. Removing is not needed: `ShellViewModel.rescanLocations` already
- * drops a location whose grant the system no longer holds, so a revoked folder cleans itself up.
+ * The folders already added are listed above this row ([LocationRow]), each removable; a folder
+ * whose grant the system revoked is also dropped on its own by `ShellViewModel.rescanLocations`.
  */
 @Composable
 fun AddStorageLocationRow(onAdd: () -> Unit, modifier: Modifier = Modifier) {

@@ -86,4 +86,8 @@
     <!-- §5.1 release blocker: open-source attribution for binary-only distributions. -->
     <string name="licences_title">Open-source licences</string>
     <string name="licences_attribution">This software is based in part on the work of the Independent JPEG Group, and in part on the work of the FreeType Team (https://freetype.org).</string>
+    <string name="settings_location_remove">Remove %1$s</string>
+    <string name="settings_location_remove_body">Its books leave your library. The files stay on your phone.</string>
+    <string name="settings_location_remove_confirm">Remove</string>
+    <string name="settings_location_remove_cancel">Cancel</string>
 </resources>

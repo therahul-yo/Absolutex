@@ -32,9 +32,14 @@ internal fun ReaderTopBar(title: String, onSettings: (() -> Unit)?, modifier: Mo
     val back = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = CHROME_ALPHA),
-        modifier = modifier.fillMaxWidth().statusBarsPadding(),
+        modifier = modifier.fillMaxWidth(),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp)) {
+        // Status-bar padding inside the surface, not outside it: outside, the bar floated below a
+        // strip of bare page with the clock over it.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.statusBarsPadding().padding(horizontal = 4.dp),
+        ) {
             IconButton(onClick = { back?.onBackPressed() }) {
                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.reader_close))
             }

@@ -91,7 +91,8 @@ internal data class LibraryUiState(
  * toggle, a layout change or a grid-column change must not pay for a re-sort of the library.
  */
 internal fun LibraryUiState.recomputed(): LibraryUiState {
-    val inSection = allBooks.inSection(section)
+    // A search looks through the whole library: a match hiding in another tab read as "no matches".
+    val inSection = if (query.isNotBlank()) allBooks else allBooks.inSection(section)
     // Recent is a history, so it runs newest first whatever the sort chips say.
     val visible = if (section == HomeSection.RECENT) {
         inSection.sortedByDescending { it.lastReadAt ?: 0L }

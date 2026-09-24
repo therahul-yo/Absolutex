@@ -1,5 +1,7 @@
 package com.absolutex.feature.library
 
+import com.absolutex.core.data.settings.AppPrefs
+import com.absolutex.core.data.FOLDER_FORMAT
 import com.absolutex.core.data.BookPath
 import com.absolutex.core.data.LibraryBook
 import com.absolutex.core.data.LibraryRepository
@@ -52,7 +54,8 @@ internal class RoomLibraryFeed @Inject constructor(
             // row instead would be quadratic on a large library.
             val byIdentity = progress.associateBy { it.bookId }
             // Deduplicated before mapping, so the expensive part runs once per book that is shown.
-            books.deduplicatedByIdentity().map { it.toUi(byIdentity, prefs.useOriginalFilename) }
+            books.filter { it.isShown(prefs) }.deduplicatedByIdentity()
+                .map { it.toUi(byIdentity, prefs.useOriginalFilename) }
             // Mapping thousands of rows is real work and Room emits on its own executor; Default
             // keeps it off both the main thread and Room's.
         }.flowOn(Dispatchers.Default)
@@ -65,6 +68,7 @@ internal class RoomLibraryFeed @Inject constructor(
         // here could only ever remove rows the DAO already chose correctly, never add the ones it
         // missed, so a full parsed-label search (e.g. #1 vs stored 001) stays noted for M5 instead.
         return repository.search(query)
+            .filter { it.isShown(prefs) }
             .deduplicatedByIdentity()
             .map { it.toUi(progress, prefs.useOriginalFilename) }
     }
@@ -189,4 +193,20 @@ internal abstract class LibraryFeedModule {
         @Provides
         fun provideWatcherFactory(): @JvmSuppressWildcards (File) -> Flow<LibraryChange> = defaultWatcherFactory()
     }
+}
+
+/** Archive formats that are not comic formats: a .zip may hold anything, a .cbz holds a comic. */
+private val GENERIC_ARCHIVES = setOf("zip", "rar", "7z", "tar")
+
+/**
+ * Whether §5.1's two library switches let this row show. Both were stored and shown in settings
+ * but never read, so every plain archive and image folder was listed whatever they said. Applied
+ * here rather than at scan time so flipping a switch takes effect at once, with no rescan. A row
+ * whose format is not known yet (scanned before the column existed) stays visible until its next
+ * scan fills it in.
+ */
+internal fun LibraryBook.isShown(prefs: AppPrefs): Boolean = when {
+    format == FOLDER_FORMAT || isImageFolder -> prefs.openImageFolders
+    format in GENERIC_ARCHIVES -> prefs.openGenericArchives
+    else -> true
 }

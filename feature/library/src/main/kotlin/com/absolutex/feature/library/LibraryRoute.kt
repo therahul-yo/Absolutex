@@ -1,5 +1,6 @@
 package com.absolutex.feature.library
 
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.AnimatedContent
 import com.absolutex.core.ui.rememberHaptics
@@ -246,7 +247,19 @@ private fun LibraryContent(
         onOpen = { book -> onOpenBook(book.path) },
         onToggleSelection = actions.onToggleSelection,
     )
-    Box(Modifier.fillMaxSize()) {
-        LibraryPane(state, context, landscape)
+    // Material fade-through between tabs: the old tab fades out fast, the new one fades in just
+    // after, and each renders its own state — the outgoing grid never flashes the new tab's books.
+    // Each tab also starts at its own top rather than inheriting the last tab's scroll offset.
+    AnimatedContent(
+        targetState = state,
+        contentKey = { it.section },
+        transitionSpec = {
+            fadeIn(tween(Motion.MEDIUM_MS, delayMillis = Motion.SHORT_MS / 2)) togetherWith
+                fadeOut(tween(Motion.SHORT_MS))
+        },
+        modifier = Modifier.fillMaxSize(),
+        label = "tab",
+    ) { shown ->
+        LibraryPane(shown, context, landscape)
     }
 }
