@@ -28,6 +28,15 @@ interface BookFactsDao {
 
     @Query("UPDATE library_book SET isFavorite = :favourite WHERE contentKey = :contentKey")
     suspend fun setFavourite(contentKey: String, favourite: Boolean): Int
+
+    /**
+     * Persists the page count for the book at [path], but only if the stored value is still null —
+     * the count from the first opener wins, and a later re-scan (which re-rows the book) must not
+     * overwrite it with the same value. A scan cannot learn a page count without opening, so this
+     * column stays null until the cover path (or the reader) opens the book.
+     */
+    @Query("UPDATE library_book SET pageCount = :count WHERE path = :path AND pageCount IS NULL")
+    suspend fun updatePageCount(path: String, count: Int): Int
 }
 
 /** [LibraryBook.format] for a reflowable, text EPUB — a document rather than a comic. */

@@ -56,7 +56,18 @@ class BookCovers @Inject constructor(
             runCatchingCancellable {
                 val bytes = withContext(DecodeDispatchers.extract) {
                     try {
-                        context.openBook(bookUri(path)).use { coverBytes(it, widthPx) }
+                        context.openBook(bookUri(path)).use { book ->
+                            val cover = coverBytes(book, widthPx)
+                            // Persist the page count while the book is open: a scan cannot learn
+                            // one without opening, and a later rescan must not overwrite it.
+                            val count = when (book) {
+                                is PdfDocument -> book.pageCount
+                                is ComicSource -> book.pages.size
+                                else -> null
+                            }
+                            if (count != null) facts.updatePageCount(path, count)
+                            cover
+                        }
                     } catch (e: ReflowableEpubException) {
                         // A text book: it belongs with the documents, and its package names a
                         // cover image rather than having a first page to show.
