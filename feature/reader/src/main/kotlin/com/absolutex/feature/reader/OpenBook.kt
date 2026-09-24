@@ -123,6 +123,23 @@ private fun filePages(dir: File): List<FolderEntry> =
         ?.map { page -> FolderEntry(page.name, page.length()) { page.inputStream() } }
         .orEmpty()
 
+/**
+ * The name a reader recognises. A SAF document's last path segment is its document id — on this
+ * provider "msf:1000092392" — so the title bar showed that; the provider's DISPLAY_NAME is the
+ * filename. A file path or a remote Uri already ends in its name. Degrades to the old behaviour.
+ */
+internal fun Context.displayNameOf(uri: Uri): String {
+    val fromProvider = if (uri.scheme == "content") {
+        runCatching {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        }.getOrNull()
+    } else {
+        null
+    }
+    return fromProvider ?: uri.lastPathSegment?.substringAfterLast('/').orEmpty()
+}
+
 private fun Context.documentIdentity(uri: Uri): String = contentResolver.query(
     uri,
     arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE, DocumentsContract.Document.COLUMN_MIME_TYPE),

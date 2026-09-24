@@ -22,8 +22,8 @@ data class RenderingPrefs(
     val upscaler: Upscaler = Upscaler.PLATFORM,
     /**
      * Auto background colour (milestone 5): the letterbox tints to the page's own edge colour
-     * instead of staying flat black. Default on — PageCanvas always samples it at effectively no
-     * cost (it rides the M4 crop thumbnail), so off is the one settings edit, not the default.
+     * instead of staying flat black. Off by default: a comic reads against black, and a page
+     * with white margins would otherwise light the whole screen white. On is a settings choice.
      */
-    val autoBackground: Boolean = true,
+    val autoBackground: Boolean = false,
 )
