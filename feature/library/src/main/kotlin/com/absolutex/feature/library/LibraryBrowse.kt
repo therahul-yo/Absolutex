@@ -1,5 +1,7 @@
 package com.absolutex.feature.library
 
+import androidx.compose.ui.layout.layout
+import androidx.compose.material3.TextButton
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
@@ -70,10 +73,20 @@ internal fun LibraryPane(
     context: RowContext,
     landscape: Boolean,
     modifier: Modifier = Modifier,
+    onSeeAll: () -> Unit = {},
 ) {
     val books = state.visibleBooks
     val hero = books.firstOrNull()?.takeIf { state.section == HomeSection.RECENT }
     val rest = if (hero == null) books else books.drop(1)
+    // Continue reading: in-progress comics on the Comics tab, newest first.
+    // Not while searching: the strip is a shortcut home, not a search result.
+    val continueReading = if (state.section == HomeSection.COMICS && state.query.isBlank()) {
+        state.allBooks.filter { !it.isBook && it.readState == ReadState.IN_PROGRESS }
+            .sortedByDescending { it.lastReadAt ?: 0L }
+            .take(CONTINUE_LIMIT)
+    } else {
+        emptyList()
+    }
     val padding = PaddingValues(horizontal = Space.Edge, vertical = Space.Gap)
     if (state.layout == BrowseLayout.GRID) {
         LazyVerticalGrid(
@@ -83,7 +96,7 @@ internal fun LibraryPane(
             horizontalArrangement = Arrangement.spacedBy(Space.Row),
             verticalArrangement = Arrangement.spacedBy(Space.Row),
         ) {
-            gridContent(state, hero, rest, context)
+            gridContent(state, hero, rest, context, continueReading, onSeeAll)
         }
     } else {
         LazyColumn(
@@ -91,7 +104,7 @@ internal fun LibraryPane(
             contentPadding = padding,
             verticalArrangement = Arrangement.spacedBy(Space.Gap),
         ) {
-            listContent(state, hero, rest, context)
+            listContent(state, hero, rest, context, continueReading, onSeeAll)
         }
     }
 }
@@ -101,7 +114,14 @@ private fun LazyGridScope.gridContent(
     hero: LibraryBookUi?,
     rest: List<LibraryBookUi>,
     context: RowContext,
+    continueReading: List<LibraryBookUi>,
+    onSeeAll: () -> Unit,
 ) {
+    if (continueReading.isNotEmpty()) {
+        item(key = "continue_reading", span = { GridItemSpan(maxLineSpan) }) {
+            ContinueReadingStrip(continueReading, context, onSeeAll, Modifier)
+        }
+    }
     hero?.let { book ->
         item(key = "hero:${book.path}", span = { GridItemSpan(maxLineSpan) }) {
             HeroCard(book, book.path in state.selected, context, Modifier)
@@ -117,7 +137,14 @@ private fun LazyListScope.listContent(
     hero: LibraryBookUi?,
     rest: List<LibraryBookUi>,
     context: RowContext,
+    continueReading: List<LibraryBookUi>,
+    onSeeAll: () -> Unit,
 ) {
+    if (continueReading.isNotEmpty()) {
+        item(key = "continue_reading") {
+            ContinueReadingStrip(continueReading, context, onSeeAll, Modifier.fillMaxWidth())
+        }
+    }
     hero?.let { book ->
         item(key = "hero:${book.path}") {
             HeroCard(book, book.path in state.selected, context, Modifier)
@@ -131,7 +158,7 @@ private fun LazyListScope.listContent(
  * facts a shelf of files needs, in the order the eye wants them.
  */
 @Composable
-private fun CoverCard(book: LibraryBookUi, isSelected: Boolean, context: RowContext, modifier: Modifier) {
+internal fun CoverCard(book: LibraryBookUi, isSelected: Boolean, context: RowContext, modifier: Modifier) {
     SelectableSurface(book, isSelected, context, modifier) {
         Column {
             Box {
