@@ -1,5 +1,6 @@
 package com.absolutex.feature.reader
 
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.WindowInsets
@@ -85,7 +86,7 @@ internal fun TextEpubReader(
     onSettings: (() -> Unit)?,
     vm: TextEpubViewModel = hiltViewModel(),
 ) {
-    val opened by produceState<Pair<TextEpubBook, Int>?>(null, uri) { value = vm.open(uri) }
+    val opened by produceState<Pair<TextEpubBook, TextResume>?>(null, uri) { value = vm.open(uri) }
     val current = opened
     Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
         if (current == null) {
@@ -99,20 +100,25 @@ internal fun TextEpubReader(
 @Composable
 private fun TextBook(
     book: TextEpubBook,
-    startChapter: Int,
+    resume: TextResume,
     title: String,
     onSettings: (() -> Unit)?,
     vm: TextEpubViewModel,
 ) {
-    var chapter by rememberSaveable { mutableIntStateOf(startChapter) }
+    var chapter by rememberSaveable { mutableIntStateOf(resume.chapter) }
     var fontPx by rememberSaveable { mutableIntStateOf(DEFAULT_FONT_PX) }
     var chrome by rememberSaveable { mutableStateOf(false) }
     // Pages turn like a book; scroll reads a chapter as one long page (the user's choice).
-    var scroll by rememberSaveable { mutableStateOf(false) }
+    var scroll by rememberSaveable { mutableStateOf(resume.scroll) }
     val haptics = rememberHaptics()
     val scope = rememberCoroutineScope()
     val web = rememberBookWebView(book)
-    val pager = remember(book, web) { ChapterPager(scope, web).also { p -> web.onMeasured = p::measured } }
+    val pager = remember(book, web) {
+        ChapterPager(scope, web).also { p ->
+            web.onMeasured = p::measured
+            p.resumeAt = resume.fraction
+        }
+    }
     val labels = ChapterLinks(
         stringResource(R.string.reader_text_prev_chapter),
         stringResource(R.string.reader_text_next_chapter),
@@ -139,11 +145,7 @@ private fun TextBook(
     web.scrollMode = scroll
     web.onTap = { chrome = !chrome }
     web.onChapterLink = leaveChapter
-    DisposableEffect(chapter, fontPx, scroll) {
-        pager.load(book.spine[chapter], PageBox(fontPx, 0, 0, scroll, labels))
-        vm.saveChapter(book, chapter)
-        onDispose { }
-    }
+    LoadAndRemember(book, pager, PageBox(fontPx, 0, 0, scroll, labels), chapter, vm)
     Box(Modifier.fillMaxSize()) {
         AndroidView(factory = { web }, modifier = Modifier.fillMaxSize())
         StatusBarStrip()
@@ -151,7 +153,7 @@ private fun TextBook(
         if (!scroll) {
             TurnGestures(pager, onTurn = turn, onLeaveChapter = leaveChapter, onMiddle = { chrome = !chrome })
         }
-        TextChrome(chrome, title, onSettings) {
+        TextChrome(chrome, title, book.identity, onSettings) {
             TextBottomBar(
                 chapter = chapter,
                 chapters = book.spine.size,
@@ -164,6 +166,27 @@ private fun TextBook(
             )
         }
     }
+}
+
+/**
+ * Loads [chapter] with [box] whenever either changes, and keeps the reader's place: the chapter in
+ * the shared progress, the fraction through it and the pages/scroll choice in the reader's own.
+ */
+@Composable
+private fun LoadAndRemember(
+    book: TextEpubBook,
+    pager: ChapterPager,
+    box: PageBox,
+    chapter: Int,
+    vm: TextEpubViewModel,
+) {
+    DisposableEffect(chapter, box.fontPx, box.scroll) {
+        pager.load(chapter, book.spine[chapter], box)
+        vm.saveChapter(book, chapter)
+        vm.saveScroll(box.scroll)
+        onDispose { vm.savePosition(book, chapter, pager.fraction()) }
+    }
+    LaunchedEffect(chapter, pager.page) { vm.savePosition(book, chapter, pager.fraction()) }
 }
 
 /** A solid strip behind the status bar: scrolling text passed under the clock and icons. */
@@ -183,6 +206,7 @@ private fun BoxScope.StatusBarStrip() {
 private fun BoxScope.TextChrome(
     shown: Boolean,
     title: String,
+    bookId: String,
     onSettings: (() -> Unit)?,
     bottom: @Composable () -> Unit,
 ) {
@@ -191,7 +215,7 @@ private fun BoxScope.TextChrome(
         enter = slideInVertically(Motion.enter()) { -it } + fadeIn(Motion.enter()),
         exit = slideOutVertically(Motion.exit()) { -it } + fadeOut(Motion.exit()),
         modifier = Modifier.align(Alignment.TopCenter),
-    ) { ReaderTopBar(title, onSettings) }
+    ) { ReaderTopBar(title, onSettings, bookId = bookId) }
     AnimatedVisibility(
         shown,
         enter = slideInVertically(Motion.enter()) { it } + fadeIn(Motion.enter()),
@@ -315,6 +339,10 @@ private class ChapterPager(private val scope: CoroutineScope, private val web: W
     var page by mutableIntStateOf(0)
     var pages by mutableIntStateOf(1)
     var landOnLastPage = false
+
+    /** How far into the next laid-out chapter to land, as a fraction; null lands at its start. */
+    var resumeAt: Float? = null
+    private var loadedChapter = -1
     private var motion: Job? = null
 
     /**
@@ -327,7 +355,21 @@ private class ChapterPager(private val scope: CoroutineScope, private val web: W
         return if (exact > 0) exact else web.width
     }
 
-    fun load(entry: String, box: PageBox) {
+    /**
+     * How far through the chapter the reader is: the page's share of the chapter, or, scrolling,
+     * the scroll's share of its height.
+     */
+    fun fraction(): Float {
+        val scrolling = (web.tag as? PageBox)?.scroll == true
+        if (!scrolling) return if (pages <= 1) 0f else page.toFloat() / (pages - 1)
+        val range = web.contentHeight * web.resources.displayMetrics.density - web.height
+        return if (range <= 0f) 0f else (web.scrollY / range).coerceIn(0f, 1f)
+    }
+
+    fun load(chapter: Int, entry: String, box: PageBox) {
+        // Reloading the same chapter (text size, pages/scroll) keeps the place in it.
+        if (chapter == loadedChapter && resumeAt == null) resumeAt = fraction()
+        loadedChapter = chapter
         motion?.cancel()
         web.animate().cancel()
         web.alpha = 0f
@@ -344,15 +386,16 @@ private class ChapterPager(private val scope: CoroutineScope, private val web: W
     fun measured(count: Int) {
         val scrolling = (web.tag as? PageBox)?.scroll == true
         pages = if (scrolling) 1 else count.coerceAtLeast(1)
-        page = if (landOnLastPage) pages - 1 else 0
+        // Going back a chapter lands at its end, as a book does; a resume lands where it left off.
+        val at = if (landOnLastPage) 1f else resumeAt ?: 0f
+        page = (at * (pages - 1)).roundToInt()
         if (scrolling) {
-            // Going back a chapter while scrolling lands at its end, as paging does.
-            val y = if (landOnLastPage) "document.body.scrollHeight" else "0"
-            web.evaluateJavascript("window.scrollTo(0, $y)", null)
+            web.evaluateJavascript("window.scrollTo(0, $at * (document.body.scrollHeight - innerHeight))", null)
         } else {
             web.scrollTo(page * stride(), 0)
         }
         landOnLastPage = false
+        resumeAt = null
         web.animate().alpha(1f).setDuration(Motion.MEDIUM_MS.toLong()).start()
     }
 

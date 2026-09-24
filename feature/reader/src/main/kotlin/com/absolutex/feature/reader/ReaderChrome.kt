@@ -89,7 +89,7 @@ internal fun ReaderChrome(
             enter = slideInVertically(Motion.enter()) { -it } + fadeIn(Motion.enter()),
             exit = slideOutVertically(Motion.exit()) { -it } + fadeOut(Motion.exit()),
             modifier = Modifier.align(Alignment.TopCenter),
-        ) { ReaderTopBar(title, onSettings) }
+        ) { ReaderTopBar(title, onSettings, bookId = bookId) }
     AnimatedVisibility(
         visible,
         enter = slideInVertically(Motion.enter()) { it } + fadeIn(Motion.enter()),

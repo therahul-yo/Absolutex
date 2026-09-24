@@ -1,5 +1,6 @@
 package com.absolutex.core.data
 
+import kotlinx.coroutines.flow.Flow
 import androidx.room.Dao
 import androidx.room.Query
 
@@ -16,6 +17,17 @@ interface BookFactsDao {
      */
     @Query("UPDATE library_book SET format = :format WHERE path = :path AND format != :format")
     suspend fun updateFormat(path: String, format: String): Int
+
+    /**
+     * Whether the book with this identity is a favourite, or null when the library does not hold
+     * it (a book opened from a file manager). By identity, not path: it is what the reader knows,
+     * and the same book found in two locations is one favourite.
+     */
+    @Query("SELECT MAX(isFavorite) FROM library_book WHERE contentKey = :contentKey")
+    fun observeFavourite(contentKey: String): Flow<Boolean?>
+
+    @Query("UPDATE library_book SET isFavorite = :favourite WHERE contentKey = :contentKey")
+    suspend fun setFavourite(contentKey: String, favourite: Boolean): Int
 }
 
 /** [LibraryBook.format] for a reflowable, text EPUB — a document rather than a comic. */
