@@ -88,9 +88,9 @@ internal data class LibraryBookUi(
     val date: Long
         get() = lastModified.takeIf { it > 0 } ?: addedAt
 
-    /** A PDF is a book; everything else this app opens — archives, EPUB comics, folders — a comic. */
+    /** A PDF is a book; a reflowable EPUB ("epub-text") is too — only fixed-layout comic EPUBs stay comics. */
     val isBook: Boolean
-        get() = format == "pdf"
+        get() = format == "pdf" || format == "epub-text"
 
 
     val readState: ReadState

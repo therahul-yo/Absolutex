@@ -1,0 +1,296 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 8,
+    "identityHash": "79a4adabbc6368ca723270bf53fc3521",
+    "entities": [
+      {
+        "tableName": "reading_progress",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`bookId` TEXT NOT NULL, `pageIndex` INTEGER NOT NULL, `pageCount` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`bookId`))",
+        "fields": [
+          {
+            "fieldPath": "bookId",
+            "columnName": "bookId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pageIndex",
+            "columnName": "pageIndex",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pageCount",
+            "columnName": "pageCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "bookId"
+          ]
+        }
+      },
+      {
+        "tableName": "library_book",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`path` TEXT NOT NULL, `contentKey` TEXT NOT NULL, `series` TEXT, `title` TEXT, `issue` REAL, `issueRaw` TEXT, `volume` INTEGER, `year` INTEGER, `sizeBytes` INTEGER NOT NULL, `lastModified` INTEGER NOT NULL, `isImageFolder` INTEGER NOT NULL, `pageCount` INTEGER, `addedAt` INTEGER NOT NULL, `seenAtScan` INTEGER NOT NULL, `isFavorite` INTEGER NOT NULL DEFAULT 0, `format` TEXT NOT NULL DEFAULT '', PRIMARY KEY(`path`))",
+        "fields": [
+          {
+            "fieldPath": "path",
+            "columnName": "path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "contentKey",
+            "columnName": "contentKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "series",
+            "columnName": "series",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "issue",
+            "columnName": "issue",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "issueRaw",
+            "columnName": "issueRaw",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "volume",
+            "columnName": "volume",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "year",
+            "columnName": "year",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "sizeBytes",
+            "columnName": "sizeBytes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastModified",
+            "columnName": "lastModified",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isImageFolder",
+            "columnName": "isImageFolder",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pageCount",
+            "columnName": "pageCount",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "addedAt",
+            "columnName": "addedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "seenAtScan",
+            "columnName": "seenAtScan",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isFavorite",
+            "columnName": "isFavorite",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "format",
+            "columnName": "format",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "path"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_library_book_series",
+            "unique": false,
+            "columnNames": [
+              "series"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_library_book_series` ON `${TABLE_NAME}` (`series`)"
+          },
+          {
+            "name": "index_library_book_contentKey",
+            "unique": false,
+            "columnNames": [
+              "contentKey"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_library_book_contentKey` ON `${TABLE_NAME}` (`contentKey`)"
+          }
+        ]
+      },
+      {
+        "tableName": "bookmark",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`bookId` TEXT NOT NULL, `pageIndex` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`bookId`, `pageIndex`))",
+        "fields": [
+          {
+            "fieldPath": "bookId",
+            "columnName": "bookId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pageIndex",
+            "columnName": "pageIndex",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "bookId",
+            "pageIndex"
+          ]
+        }
+      },
+      {
+        "tableName": "book_prefs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`bookId` TEXT NOT NULL, `readingFlow` TEXT, `pageLayout` TEXT, epubAnchor TEXT, PRIMARY KEY(`bookId`))",
+        "fields": [
+          {
+            "fieldPath": "bookId",
+            "columnName": "bookId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "readingFlow",
+            "columnName": "readingFlow",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "pageLayout",
+            "columnName": "pageLayout",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "epubAnchor",
+            "columnName": "epubAnchor",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "bookId"
+          ]
+        }
+      },
+      {
+        "tableName": "page_view",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL DEFAULT 0, `bookKey` TEXT NOT NULL DEFAULT '', `page` INTEGER NOT NULL DEFAULT 0, `atEpochMs` INTEGER NOT NULL DEFAULT 0)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "bookKey",
+            "columnName": "bookKey",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "page",
+            "columnName": "page",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "atEpochMs",
+            "columnName": "atEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_page_view_bookKey",
+            "unique": false,
+            "columnNames": [
+              "bookKey"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_page_view_bookKey` ON `${TABLE_NAME}` (`bookKey`)"
+          },
+          {
+            "name": "index_page_view_atEpochMs",
+            "unique": false,
+            "columnNames": [
+              "atEpochMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_page_view_atEpochMs` ON `${TABLE_NAME}` (`atEpochMs`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '79a4adabbc6368ca723270bf53fc3521')"
+    ]
+  }
+}

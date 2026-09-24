@@ -24,6 +24,8 @@ data class BookPrefs(
     @PrimaryKey val bookId: String,
     val readingFlow: String? = null,
     val pageLayout: String? = null,
+    /** Exact anchor for reflowable EPUB progress: "spineIndex:charOffset" (§5.2, text EPUB reader). */
+    val epubAnchor: String? = null,
 )
 
 @Dao

@@ -197,12 +197,42 @@ class LibraryRepository internal constructor(
         pageCount = imageCount.takeIf { it > 0 },
         addedAt = scanId,
         seenAtScan = scanId,
-        format = if (isImageFolder) FOLDER_FORMAT else displayName.substringAfterLast('.', "").lowercase(),
+        format = when {
+            isImageFolder -> FOLDER_FORMAT
+            displayName.endsWith(".epub", ignoreCase = true) -> detectEpubFormat(path)
+            else -> displayName.substringAfterLast('.', "").lowercase()
+        },
     )
 
     private companion object {
         /** Big enough to amortise the transaction, small enough that the UI fills as it goes. */
         const val BATCH = 100
+    }
+}
+
+private fun detectEpubFormat(filePath: String): String {
+    val file = java.io.File(filePath)
+    return try {
+        java.util.zip.ZipFile(file).use { zip ->
+            val names = mutableListOf<String>()
+            val entries = zip.entries()
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                names.add(entry.name)
+            }
+            val firstSpineDoc = names.firstOrNull { it.endsWith(".html", ignoreCase = true) || it.endsWith(".xhtml", ignoreCase = true) || it.contains("chapter") }
+            if (firstSpineDoc != null) {
+                val docBytes = names.getOrNull(0)?.let { name ->
+                    zip.getInputStream(zip.getEntry(name))?.use { it.readBytes() }
+                }
+                val hasText = docBytes != null && (String(docBytes, Charsets.UTF_8).contains("<p>") || String(docBytes, Charsets.UTF_8).contains("<body>"))
+                if (hasText) "epub-text" else "epub"
+            } else {
+                "epub"
+            }
+        }
+    } catch (e: Exception) {
+        "epub"
     }
 }
 
