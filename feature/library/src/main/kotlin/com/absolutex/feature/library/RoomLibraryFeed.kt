@@ -1,5 +1,6 @@
 package com.absolutex.feature.library
 
+import com.absolutex.core.data.TEXT_EPUB_FORMAT
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.FOLDER_FORMAT
 import com.absolutex.core.data.BookPath
@@ -217,4 +218,4 @@ internal fun LibraryBook.isShown(prefs: AppPrefs): Boolean = when {
 }
 
 /** PDFs and text EPUBs: files named by people, not by a comic's series-and-issue convention. */
-internal fun LibraryBook.isDocument(): Boolean = format == "pdf" || format == "epub-text"
+internal fun LibraryBook.isDocument(): Boolean = format == "pdf" || format == TEXT_EPUB_FORMAT

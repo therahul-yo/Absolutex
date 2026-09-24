@@ -35,6 +35,9 @@ object DataModule {
     fun libraryDao(db: AbsolutexDatabase): LibraryDao = db.libraryDao()
 
     @Provides
+    fun bookFactsDao(db: AbsolutexDatabase): BookFactsDao = db.bookFactsDao()
+
+    @Provides
     fun bookmarkDao(db: AbsolutexDatabase): BookmarkDao = db.bookmarkDao()
 
     @Provides

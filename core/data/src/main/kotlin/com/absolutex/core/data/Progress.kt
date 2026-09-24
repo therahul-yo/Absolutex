@@ -74,6 +74,7 @@ interface ProgressDao {
 abstract class AbsolutexDatabase : RoomDatabase() {
     abstract fun progressDao(): ProgressDao
     abstract fun libraryDao(): LibraryDao
+    abstract fun bookFactsDao(): BookFactsDao
     abstract fun bookmarkDao(): BookmarkDao
     abstract fun bookPrefsDao(): BookPrefsDao
     abstract fun pageViewDao(): PageViewDao

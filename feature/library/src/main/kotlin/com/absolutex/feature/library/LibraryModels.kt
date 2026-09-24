@@ -1,5 +1,6 @@
 package com.absolutex.feature.library
 
+import com.absolutex.core.data.TEXT_EPUB_FORMAT
 import java.io.File
 
 /**
@@ -92,7 +93,7 @@ internal data class LibraryBookUi(
 
     /** A PDF is a book; everything else this app opens — archives, EPUB comics, folders — a comic. */
     val isBook: Boolean
-        get() = format == "pdf"
+        get() = format == "pdf" || format == TEXT_EPUB_FORMAT
 
 
     val readState: ReadState

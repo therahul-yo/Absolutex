@@ -27,6 +27,8 @@ import javax.inject.Inject
 class TextEpubBook internal constructor(
     val spine: List<String>,
     val identity: String,
+    /** The cover image's entry, when the package declares one. */
+    val coverEntryName: String?,
     private val entries: ArchiveEntries,
 ) {
     private val cache = ConcurrentHashMap<String, ByteArray>()
@@ -44,7 +46,7 @@ class TextEpubBook internal constructor(
         fun open(context: Context, uri: Uri): TextEpubBook? {
             val entries = ArchiveEntries.list { context.openDescriptor(uri) } ?: return null
             val book = EpubPackage.parse(entries.names) { entries.read(it) } as? EpubBook.Reflowable ?: return null
-            return TextEpubBook(book.spine, context.identityOf(uri), entries)
+            return TextEpubBook(book.spine, context.identityOf(uri), book.coverEntryName, entries)
         }
     }
 }

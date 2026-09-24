@@ -37,7 +37,8 @@ internal fun FormatAndDate(book: LibraryBookUi, modifier: Modifier = Modifier) {
                     if (book.format == FOLDER_FORMAT) {
                         stringResource(R.string.library_format_folder)
                     } else {
-                        stringResource(R.string.library_format_pill, book.format.uppercase())
+                        // Comic or text, an EPUB is an EPUB to the person holding it.
+                        stringResource(R.string.library_format_pill, book.format.substringBefore('-').uppercase())
                     },
                     style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
