@@ -146,14 +146,7 @@ private fun TextBook(
     }
     Box(Modifier.fillMaxSize()) {
         AndroidView(factory = { web }, modifier = Modifier.fillMaxSize())
-        // A solid strip behind the status bar: scrolling text passed under the clock and icons.
-        Box(
-            Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth()
-                .windowInsetsTopHeight(WindowInsets.statusBars)
-                .background(Color.Black),
-        )
+        StatusBarStrip()
         // Scrolling, the WebView takes its own touches (see BookWebView); paging, Compose does.
         if (!scroll) {
             TurnGestures(pager, onTurn = turn, onLeaveChapter = leaveChapter, onMiddle = { chrome = !chrome })
@@ -171,6 +164,18 @@ private fun TextBook(
             )
         }
     }
+}
+
+/** A solid strip behind the status bar: scrolling text passed under the clock and icons. */
+@Composable
+private fun BoxScope.StatusBarStrip() {
+    Box(
+        Modifier
+            .align(Alignment.TopCenter)
+            .fillMaxWidth()
+            .windowInsetsTopHeight(WindowInsets.statusBars)
+            .background(Color.Black),
+    )
 }
 
 /** The top bar and [bottom], sliding in from their own edges while [shown]. */
