@@ -57,6 +57,11 @@ class ReaderOptionsViewModel @Inject constructor(
         viewModelScope.launch { writer.updateReader { it.copy(rotationLock = lock) } }
     }
 
+    /** App-wide, like rotation: dark pages suit the room the reader is in, not one book. */
+    fun setDarkPages(on: Boolean) {
+        viewModelScope.launch { writer.updateReader { it.copy(darkPages = on) } }
+    }
+
     private fun editBook(bookId: String, edit: (BookPrefs) -> BookPrefs) {
         if (bookId.isEmpty()) return
         viewModelScope.launch { books.upsert(edit(books.get(bookId) ?: BookPrefs(bookId))) }
@@ -100,6 +105,7 @@ internal fun BookOptionsRow(
         RotationLock.entries.forEach { lock ->
             OptionButton(stringResource(rotationLabel(lock)), lock == prefs.rotationLock) { vm.setRotation(lock) }
         }
+        OptionButton(stringResource(R.string.reader_dark_pages), prefs.darkPages) { vm.setDarkPages(!prefs.darkPages) }
     }
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         PageLayout.entries.forEach { layout ->

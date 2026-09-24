@@ -222,6 +222,7 @@ class PrefCodecTest {
                 PrefCodec.KEY_USE_CUTOUT,
                 PrefCodec.KEY_PAGE_LAYOUT,
                 PrefCodec.KEY_THUMBNAIL_STRIP,
+                PrefCodec.KEY_DARK_PAGES,
                 PrefCodec.KEY_TRANSITION,
                 PrefCodec.KEY_PAGE_TURN_MS,
                 PrefCodec.KEY_SCROLL_STEP,
@@ -368,6 +369,7 @@ class PrefCodecTest {
         assertEquals("use_cutout", PrefCodec.KEY_USE_CUTOUT)
         assertEquals("page_layout", PrefCodec.KEY_PAGE_LAYOUT)
         assertEquals("thumbnail_strip", PrefCodec.KEY_THUMBNAIL_STRIP)
+        assertEquals("dark_pages", PrefCodec.KEY_DARK_PAGES)
         assertEquals("page_transition", PrefCodec.KEY_TRANSITION)
         assertEquals("page_turn_ms", PrefCodec.KEY_PAGE_TURN_MS)
         assertEquals("scroll_step_percent", PrefCodec.KEY_SCROLL_STEP)

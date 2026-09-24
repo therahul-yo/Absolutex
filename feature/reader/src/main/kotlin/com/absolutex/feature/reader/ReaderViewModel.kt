@@ -94,6 +94,8 @@ data class ReaderUiState(
     val passwordIncorrect: Boolean = false,
     /** A reflowable text EPUB: the screen shows the text reader instead of pages. */
     val textEpub: Boolean = false,
+    /** A PDF: a document, which reads best as a continuous scroll unless the book says otherwise. */
+    val isPdf: Boolean = false,
 )
 
 @HiltViewModel
@@ -375,6 +377,7 @@ class ReaderViewModel internal constructor(
                         bookId = bookId,
                         currentPage = settledPage,
                         recoveryNotice = recoveryNoticeFor(context, source0),
+                        isPdf = source0 is PdfDocument,
                     )
                     // After the state that gates the first page: contents are chrome, and a PDF
                     // outline is a JNI call whose cost must not land in the tap-to-first-page budget.

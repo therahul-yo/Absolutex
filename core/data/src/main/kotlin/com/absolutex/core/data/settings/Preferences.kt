@@ -48,6 +48,11 @@ data class ReaderPrefs(
     val pageLayout: PageLayout = PageLayout.SINGLE,
     /** The chrome carries a strip of page thumbnails (§5.2). */
     val thumbnailStrip: Boolean = true,
+    /**
+     * Pages draw inverted, dark paper and light ink: a white document page at night is a lamp.
+     * Off by default, since a colour comic inverted is a negative.
+     */
+    val darkPages: Boolean = false,
     /** How a page gives way to the next (§5.2). SLIDE is the pager's own, and the plainest. */
     val transition: PageTransition = PageTransition.SLIDE,
     /** How long a page turn animates, in milliseconds (§5.2 animation tuning). */
