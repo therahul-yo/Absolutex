@@ -143,7 +143,7 @@ internal fun SortSpec.select(key: SortKey): SortSpec =
 internal fun List<LibraryBookUi>.inSection(section: HomeSection): List<LibraryBookUi> =
     when (section) {
         HomeSection.COMICS -> filter { !it.isBook }
-        HomeSection.BOOKS -> filter { it.isBook }
+        HomeSection.DOCUMENTS -> filter { it.isBook }
         HomeSection.RECENT -> filter { it.readState != ReadState.UNREAD }
         HomeSection.FAVORITES -> filter { it.isFavorite }
     }

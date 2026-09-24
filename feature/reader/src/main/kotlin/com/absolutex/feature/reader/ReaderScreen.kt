@@ -192,6 +192,7 @@ fun ReaderScreen(
             ui.recoveryNotice?.let { notice ->
                 Surface(
                     color = MaterialTheme.colorScheme.surface.copy(alpha = CHROME_ALPHA),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding(),
                 ) {
                     Text(notice, modifier = Modifier.padding(16.dp))

@@ -1,11 +1,6 @@
 package com.absolutex.feature.library
 
 import androidx.compose.ui.res.stringResource
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -36,7 +31,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,7 +41,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.absolutex.core.ui.A11y
-import com.absolutex.core.ui.Motion
 import com.absolutex.core.ui.rememberHaptics
 
 private val ThumbWidth = 64.dp
@@ -57,7 +50,6 @@ private val SmallThumbWidth = 36.dp
 private const val HERO_ASPECT = 0.8f
 private const val SCRIM_ALPHA = 0.55f
 private const val HERO_SCRIM_ALPHA = 0.85f
-private const val CHECK_START_SCALE = 0.6f
 
 /** What a row needs to render and report itself, bundled so parameter lists stay short. */
 internal data class RowContext(
@@ -112,11 +104,11 @@ private fun LazyGridScope.gridContent(
 ) {
     hero?.let { book ->
         item(key = "hero:${book.path}", span = { GridItemSpan(maxLineSpan) }) {
-            HeroCard(book, book.path in state.selected, context, Modifier.animateItem())
+            HeroCard(book, book.path in state.selected, context, Modifier)
         }
     }
     items(rest, key = { it.path }) { book ->
-        CoverCard(book, book.path in state.selected, context, Modifier.animateItem())
+        CoverCard(book, book.path in state.selected, context, Modifier)
     }
 }
 
@@ -128,10 +120,10 @@ private fun LazyListScope.listContent(
 ) {
     hero?.let { book ->
         item(key = "hero:${book.path}") {
-            HeroCard(book, book.path in state.selected, context, Modifier.animateItem())
+            HeroCard(book, book.path in state.selected, context, Modifier)
         }
     }
-    items(rest, key = { it.path }) { book -> BookRow(state, book, context, Modifier.animateItem()) }
+    items(rest, key = { it.path }) { book -> BookRow(state, book, context, Modifier) }
 }
 
 /**
@@ -256,24 +248,22 @@ private fun ReadingProgress(fraction: Float, modifier: Modifier = Modifier) {
     )
 }
 
-/** A check over the art of a selected book, popping in; the card's label already says so aloud. */
+/**
+ * A check over the art of a selected book; the card's label already says so aloud. Composed only
+ * while selected — an AnimatedVisibility on every card cost its transition setup on every card of
+ * every screen, which is most of what made the grid slow to come back after closing a book.
+ */
 @Composable
 private fun BoxScope.SelectedMark(selected: Boolean) {
-    AnimatedVisibility(
-        selected,
-        enter = fadeIn(Motion.enter()) + scaleIn(Motion.enter(), initialScale = CHECK_START_SCALE),
-        exit = fadeOut(Motion.exit()),
-        modifier = Modifier.matchParentSize(),
+    if (!selected) return
+    Box(
+        Modifier
+            .matchParentSize()
+            .clip(MaterialTheme.shapes.medium)
+            .background(MaterialTheme.colorScheme.scrim.copy(alpha = SCRIM_ALPHA)),
+        contentAlignment = Alignment.Center,
     ) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .clip(MaterialTheme.shapes.medium)
-                .background(MaterialTheme.colorScheme.scrim.copy(alpha = SCRIM_ALPHA)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-        }
+        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
     }
 }
 
@@ -295,11 +285,7 @@ private fun SelectableSurface(
 ) {
     val label = book.accessibilityLabel(isSelected, context.selectionActive)
     val haptics = rememberHaptics()
-    val container by animateColorAsState(
-        with(MaterialTheme.colorScheme) { if (isSelected) surfaceContainerHighest else surfaceContainerLow },
-        Motion.enter(),
-        label = "selected",
-    )
+    val container = with(MaterialTheme.colorScheme) { if (isSelected) surfaceContainerHighest else surfaceContainerLow }
     Surface(
         color = container,
         shape = MaterialTheme.shapes.large,

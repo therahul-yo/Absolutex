@@ -1,5 +1,10 @@
 package com.absolutex
 
+import androidx.compose.ui.Modifier
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Box
+import androidx.compose.animation.core.tween
 import android.content.ComponentCallbacks2
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -148,16 +153,14 @@ private fun NavGraphBuilder.remoteDestinations(nav: NavHostController) {
 internal fun advanceFromReader(
     scope: CoroutineScope,
     vm: ShellViewModel,
-    nav: NavHostController,
+    open: (Uri) -> Unit,
     bookId: String,
     inFlight: AtomicBoolean,
 ) {
     if (!inFlight.compareAndSet(false, true)) return
     scope.launch {
         try {
-            vm.nextBook(bookId)?.let { next ->
-                nav.navigate(readerRoute(bookUri(next.path))) { popUpTo(READER_ROUTE) { inclusive = true } }
-            }
+            vm.nextBook(bookId)?.let { next -> open(bookUri(next.path)) }
         } finally {
             inFlight.set(false)
         }
@@ -182,6 +185,13 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
     // composing the NavHost does — resuming from this effect crashed on every launch with a saved
     // book, and only a device showed it.
     var resume by remember { mutableStateOf<Uri?>(null) }
+    // The book open over the library, if any. A string so it survives process death; the sheet
+    // (BookSheet) is what shows it — the reader route is only for a book launched from outside.
+    var openBook by rememberSaveable { mutableStateOf<String?>(null) }
+    val openOverLibrary: (Uri) -> Unit = { uri ->
+        openBook = uri.toString()
+        nav.popBackStack(LIBRARY_ROUTE, inclusive = false)
+    }
     LaunchedEffect(Unit) {
         if (directUri == null) resume = vm.resumableBook()
     }
@@ -209,7 +219,7 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
             } else {
                 vm.rememberBook(picked.toString())
             }
-            nav.navigate(readerRoute(picked))
+            openOverLibrary(picked)
         }
     }
 
@@ -219,29 +229,25 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
             // from a file manager never reaches here, and §3 measures its first page from the tap.
             // Scanning during that window cost ~90 ms of cold start on the reference phone.
             LaunchedEffect(Unit) { vm.rescanLocations() }
-            LibraryRoute(
-                // A library row holds whatever the scan found it by: a document Uri from a SAF
-                // location, or a device path from a filesystem one. The reader opens either.
-                onOpenBook = { path ->
+            LibraryWithBook(
+                openBook = openBook?.let(Uri::parse),
+                onOpenBook = { uri ->
                     // Every route that opens a book remembers it for §5.2 resume (see also the
-                    // single-document picker below and the launch Uri in onCreate) — the library
-                    // is the app's main, everyday route and used to be the one route that didn't.
-                    vm.rememberBook(bookUri(path).toString())
-                    nav.navigate(readerRoute(bookUri(path)))
+                    // single-document picker above and the launch Uri in onCreate).
+                    vm.rememberBook(uri.toString())
+                    openBook = uri.toString()
                 },
+                onCloseBook = { openBook = null },
                 onAddLocation = { folderPicker.launch(null) },
-                // The library is the launch destination, so this is the only route to settings a
-                // fresh install has: the reader's own settings action needs a book open first,
-                // and an empty library has none.
                 onOpenSettings = { nav.navigate(SETTINGS_ROUTE) },
-            )
+            ) { book -> ReaderDestination(book, readerVm, vm, nav, openOverLibrary) }
         }
         composable(READER_ROUTE) { entry ->
             val uri = entry.arguments?.getString("uri")?.let { Uri.parse(Uri.decode(it)) }
             // The activity's ReaderViewModel, not the destination's own: MainActivity.onCreate
             // starts opening a launch Uri before anything composes, and a per-destination
             // ViewModel would throw that head start away and open the book a second time.
-            if (uri != null) ReaderDestination(uri, readerVm, vm, nav)
+            if (uri != null) ReaderDestination(uri, readerVm, vm, nav, openOverLibrary)
         }
         // The settings row is the only way in to the remote servers list: the transports, the
         // list and the form all shipped before anything navigated to them. The route name is the
@@ -262,16 +268,28 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
     // then blame the wrong book's grant and bookmark for a book that in fact opened fine. Waiting
     // for this resume's own loading cycle to finish, right here, is what scopes the failure check
     // to the book resume actually opened.
+    ResumeEffect(resume, readerVm, vm, onOpen = { openBook = it }, onDone = { resume = null })
+}
+
+/** Opens [resume] over the library and, if it fails to open, forgets it and closes it again. */
+@Composable
+private fun ResumeEffect(
+    resume: Uri?,
+    readerVm: ReaderViewModel,
+    vm: ShellViewModel,
+    onOpen: (String?) -> Unit,
+    onDone: () -> Unit,
+) {
     LaunchedEffect(resume) {
         val target = resume ?: return@LaunchedEffect
-        nav.navigate(readerRoute(target))
+        onOpen(target.toString())
         readerVm.ui.first { it.loading }
         val settled = readerVm.ui.first { !it.loading }
         if (settled.error != null) {
             vm.clearLastBook(target.toString())
-            nav.popBackStack(LIBRARY_ROUTE, inclusive = false)
+            onOpen(null)
         }
-        resume = null
+        onDone()
     }
 }
 
@@ -284,6 +302,34 @@ private fun sharedAxisOut(forward: Boolean): ExitTransition =
         fadeOut(Motion.exit())
 
 /**
+ * The library with any open book as a sheet over it ([BookSheet]). Under an open book the library
+ * holds still: it would otherwise recompose the hidden grid on every page the reader saves.
+ */
+@Composable
+private fun LibraryWithBook(
+    openBook: Uri?,
+    onOpenBook: (Uri) -> Unit,
+    onCloseBook: () -> Unit,
+    onAddLocation: () -> Unit,
+    onOpenSettings: () -> Unit,
+    reader: @Composable (Uri) -> Unit,
+) {
+    Box(Modifier.fillMaxSize()) {
+        LibraryRoute(
+            // A library row holds whatever the scan found it by: a document Uri from a SAF
+            // location, or a device path from a filesystem one. The reader opens either.
+            onOpenBook = { path -> onOpenBook(bookUri(path)) },
+            onAddLocation = onAddLocation,
+            // The library is the launch destination, so this is the only route to settings a
+            // fresh install has: the reader's own settings action needs a book open first.
+            onOpenSettings = onOpenSettings,
+            paused = openBook != null,
+        )
+        BookSheet(openBook, onClose = onCloseBook, content = reader)
+    }
+}
+
+/**
  * NavHost with shared-axis transitions: a screen you go into arrives from the right while the one
  * you leave recedes a little the other way, so depth reads as direction, and back reverses it.
  * Durations scale with the system animator setting, so "remove animations" turns this off.
@@ -292,6 +338,8 @@ private fun sharedAxisOut(forward: Boolean): ExitTransition =
 private fun AxisNavHost(nav: NavHostController, start: String, graph: NavGraphBuilder.() -> Unit) = NavHost(
     nav,
     startDestination = start,
+    // Books opened from the library are not destinations at all: they are a sheet over it
+    // (BookSheet), so opening and closing one never tears down or rebuilds the library.
     enterTransition = { sharedAxisIn(forward = true) },
     exitTransition = { sharedAxisOut(forward = true) },
     popEnterTransition = { sharedAxisIn(forward = false) },

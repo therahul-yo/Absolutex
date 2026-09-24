@@ -1,5 +1,7 @@
 package com.absolutex.feature.library
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.AnimatedContent
@@ -62,9 +64,16 @@ fun LibraryRoute(
     onAddLocation: () -> Unit,
     onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
+    paused: Boolean = false,
 ) {
     val viewModel: LibraryViewModel = hiltViewModel()
-    val state by viewModel.ui.collectAsStateWithLifecycle()
+    val live by viewModel.ui.collectAsStateWithLifecycle()
+    // Paused (a book open over the library), the screen keeps its last state instead of following
+    // the feed: every page the reader saves changes a progress row, and each would otherwise
+    // recompose a grid nobody can see. Unpausing picks up everything that changed meanwhile.
+    var frozen by remember { mutableStateOf(live) }
+    if (!paused) frozen = live
+    val state = if (paused) frozen else live
     val actions = remember(viewModel) { viewModel.actions() }
     LibraryScreen(
         state = state,

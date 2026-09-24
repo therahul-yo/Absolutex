@@ -2,8 +2,8 @@ package com.absolutex.feature.library
 
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.automirrored.outlined.MenuBook
-import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ButtonDefaults
@@ -162,7 +162,7 @@ private fun emptyBody(reason: LibraryEmptyReason, section: HomeSection, query: S
 @Composable
 private fun sectionEmptyBody(section: HomeSection): String = when (section) {
     HomeSection.COMICS -> stringResource(R.string.library_empty_comics_body)
-    HomeSection.BOOKS -> stringResource(R.string.library_empty_books_body)
+    HomeSection.DOCUMENTS -> stringResource(R.string.library_empty_documents_body)
     HomeSection.RECENT -> stringResource(R.string.library_empty_recent_body)
     HomeSection.FAVORITES -> stringResource(R.string.library_empty_favorites_body)
 }
@@ -170,7 +170,7 @@ private fun sectionEmptyBody(section: HomeSection): String = when (section) {
 @Composable
 internal fun HomeSection.label(): String = when (this) {
     HomeSection.COMICS -> stringResource(R.string.library_section_comics)
-    HomeSection.BOOKS -> stringResource(R.string.library_section_books)
+    HomeSection.DOCUMENTS -> stringResource(R.string.library_section_documents)
     HomeSection.RECENT -> stringResource(R.string.library_section_recent)
     HomeSection.FAVORITES -> stringResource(R.string.library_section_favorites)
 }
@@ -178,7 +178,7 @@ internal fun HomeSection.label(): String = when (this) {
 /** A tab's icon: filled when it is the current section, outlined otherwise, as Material does. */
 internal fun HomeSection.icon(selected: Boolean): ImageVector = when (this) {
     HomeSection.COMICS -> if (selected) Icons.Filled.AutoStories else Icons.Outlined.AutoStories
-    HomeSection.BOOKS -> if (selected) Icons.AutoMirrored.Filled.MenuBook else Icons.AutoMirrored.Outlined.MenuBook
+    HomeSection.DOCUMENTS -> if (selected) Icons.Filled.Description else Icons.Outlined.Description
     HomeSection.RECENT -> if (selected) Icons.Filled.History else Icons.Outlined.History
     HomeSection.FAVORITES -> if (selected) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder
 }

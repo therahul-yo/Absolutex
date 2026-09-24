@@ -31,7 +31,11 @@ import androidx.compose.ui.unit.dp
 internal fun ReaderTopBar(title: String, onSettings: (() -> Unit)?, modifier: Modifier = Modifier) {
     val back = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     Surface(
-        color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = CHROME_ALPHA),
+        // Opaque, with the content colour stated: a colour with its alpha changed is no scheme
+        // colour, so contentColorFor fell back to black and plain icons (settings, bookmark)
+        // drew black on the dark bar. And a see-through bar let page text bleed into the controls.
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         modifier = modifier.fillMaxWidth(),
     ) {
         // Status-bar padding inside the surface, not outside it: outside, the bar floated below a

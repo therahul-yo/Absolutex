@@ -13,8 +13,11 @@ internal enum class ReadState { UNREAD, IN_PROGRESS, FINISHED }
 /** The three browse presentations §5.1 asks for. */
 internal enum class BrowseLayout { SIMPLE_LIST, DETAILED_LIST, GRID }
 
-/** The home tabs: comics and books apart, what was read lately, and favourites (§5.1). */
-internal enum class HomeSection { COMICS, BOOKS, RECENT, FAVORITES }
+/**
+ * The home tabs, in the order they matter: comics first (this is a comic reader), then what was
+ * read lately and favourites, and documents — PDFs and text EPUBs — last (§5.1).
+ */
+internal enum class HomeSection { COMICS, RECENT, FAVORITES, DOCUMENTS }
 
 /** Which sort the browse views are under. [com.absolutex.core.scan.SortKey] names the field. */
 internal data class SortSpec(val key: com.absolutex.core.scan.SortKey, val ascending: Boolean)

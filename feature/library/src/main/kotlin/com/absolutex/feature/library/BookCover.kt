@@ -1,10 +1,14 @@
 package com.absolutex.feature.library
 
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableIntStateOf
 import android.graphics.Bitmap
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -45,24 +49,25 @@ internal fun BookCover(
 ) {
     val covers = LocalBookCovers.current
     val missing = stringResource(R.string.library_cover_placeholder)
-    BoxWithConstraints(
+    // The width comes from onSizeChanged rather than BoxWithConstraints: that subcomposes every
+    // card, and a library screen full of them cost ~77 ms of layout on the frame it came back.
+    var widthPx by remember { mutableIntStateOf(0) }
+    Box(
         modifier
             .aspectRatio(aspect)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .onSizeChanged { widthPx = it.width },
     ) {
-        val widthPx = constraints.maxWidth
         // The key changes when the file does, so a replaced book never keeps its old cover.
         val key = "${book.path}|${book.sizeBytes}|${book.lastModified}"
         val art by produceState<ImageBitmap?>(null, key, widthPx) {
-            value = covers.cover(book.path, key, widthPx)?.asImageBitmap()
+            if (widthPx > 0) value = covers.cover(book.path, key, widthPx)?.asImageBitmap()
         }
         val shown by animateFloatAsState(if (art == null) 0f else 1f, Motion.enter(), label = "cover")
         val current = art
         if (current == null) {
-            androidx.compose.foundation.layout.Box(
-                Modifier.fillMaxSize().clearAndSetSemantics { contentDescription = missing },
-            )
+            Box(Modifier.fillMaxSize().clearAndSetSemantics { contentDescription = missing })
         } else {
             Image(
                 current,

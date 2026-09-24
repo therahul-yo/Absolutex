@@ -52,8 +52,8 @@ class SectionFilterTest {
         assertEquals(all + epub + folder + unscanned, comics)
     }
 
-    @Test fun `books are the pdfs`() {
-        assertEquals(listOf(pdf), (all + pdf + epub).inSection(HomeSection.BOOKS))
+    @Test fun `documents are the pdfs`() {
+        assertEquals(listOf(pdf), (all + pdf + epub).inSection(HomeSection.DOCUMENTS))
     }
 
     @Test fun `recent is anything opened, finished or not`() {
