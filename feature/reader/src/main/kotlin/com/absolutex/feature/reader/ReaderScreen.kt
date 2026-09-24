@@ -273,7 +273,11 @@ private fun Pages(
     // it is coarser.
     val currentSpreads by rememberUpdatedState(spreads)
     LaunchedEffect(pagerState) {
-        snapshotFlow { pagerState.settledPage }.collect { vm.settlePage(currentSpreads[it].first, backgroundPage) }
+        snapshotFlow { pagerState.settledPage }.collect { settled ->
+            // A settled index that outran a just-shrunk spreads list is stale, not a page: skip
+            // it rather than write the wrong page to progress. The re-targeting effect follows.
+            currentSpreads.getOrNull(settled)?.let { vm.settlePage(it.first, backgroundPage) }
+        }
     }
 
     // §3's "tap book -> first page rendered" ends here, not at the first frame: the window is up
@@ -304,14 +308,14 @@ private fun Pages(
         }
     }
     // A zoomed or overflowing page owns its drags and turns itself at the edge (see PageCanvas).
-    val scrollable = spreads[pagerState.currentPage].none { locks[it] == true }
+    val scrollable = Spreads.at(spreads, pagerState.currentPage).none { locks[it] == true }
     Box(Modifier.fillMaxSize().then(keys)) {
         ReaderPager(flow, pagerState, scrollable, page)
         ReaderChrome(
-            visible = chrome, page = spreads[pagerState.currentPage].first, pageCount = pageCount,
+            visible = chrome, page = Spreads.at(spreads, pagerState.currentPage).first, pageCount = pageCount,
             title = title, onSettings = onSettings, onSeek = jump,
             bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip }, toc = toc,
-            onExport = { vm.exportPage(spreads[pagerState.currentPage].first) },
+            onExport = { vm.exportPage(Spreads.at(spreads, pagerState.currentPage).first) },
             fitFor = fitContext, prefs = prefs,
         )
     }
