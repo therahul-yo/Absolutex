@@ -24,9 +24,12 @@ class PrefCodecTest {
     @Test
     fun `an empty store decodes to the documented defaults`() {
         val app = PrefCodec.decodeApp(MapPrefBag())
-        assertEquals(NightMode.SYSTEM, app.nightMode)
-        assertTrue(app.dynamicColour)
-        assertFalse(app.trueBlack)
+        // Black out of the box: dark, the curated Ink palette rather than wallpaper colours, and
+        // true black. A reader who wants otherwise changes three switches; nobody should have to
+        // change three switches to get the look the app is designed around.
+        assertEquals(NightMode.ON, app.nightMode)
+        assertFalse(app.dynamicColour)
+        assertTrue(app.trueBlack)
         assertEquals(AppPrefs.DEFAULT_CACHE_MIB, app.cacheSizeMiB)
         assertFalse(app.showHiddenFolders)
         assertFalse(app.openGenericArchives)
@@ -287,7 +290,7 @@ class PrefCodecTest {
             )
         )
         val app = PrefCodec.decodeApp(bag)
-        assertEquals("the broken field defaults", NightMode.SYSTEM, app.nightMode)
+        assertEquals("the broken field defaults", AppPrefs().nightMode, app.nightMode)
         assertTrue("its neighbours survive", app.trueBlack)
         assertEquals(256, app.cacheSizeMiB)
     }

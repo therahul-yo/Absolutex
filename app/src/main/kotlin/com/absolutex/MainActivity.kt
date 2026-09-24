@@ -1,6 +1,13 @@
 package com.absolutex
 
 import android.content.ComponentCallbacks2
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import com.absolutex.core.ui.Motion
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
@@ -196,7 +203,7 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
         }
     }
 
-    NavHost(nav, startDestination = if (directUri != null) readerRoute(directUri) else LIBRARY_ROUTE) {
+    AxisNavHost(nav, if (directUri != null) readerRoute(directUri) else LIBRARY_ROUTE) {
         composable(LIBRARY_ROUTE) {
             // Rescanning belongs to the screen that shows the result, not to launch: a book opened
             // from a file manager never reaches here, and §3 measures its first page from the tap.
@@ -257,3 +264,27 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
         resume = null
     }
 }
+
+private fun sharedAxisIn(forward: Boolean): EnterTransition =
+    slideInHorizontally(Motion.enter()) { w -> (if (forward) w else -w) / Motion.SHARED_AXIS_FRACTION } +
+        fadeIn(Motion.enter())
+
+private fun sharedAxisOut(forward: Boolean): ExitTransition =
+    slideOutHorizontally(Motion.exit()) { w -> (if (forward) -w else w) / Motion.SHARED_AXIS_FRACTION } +
+        fadeOut(Motion.exit())
+
+/**
+ * NavHost with shared-axis transitions: a screen you go into arrives from the right while the one
+ * you leave recedes a little the other way, so depth reads as direction, and back reverses it.
+ * Durations scale with the system animator setting, so "remove animations" turns this off.
+ */
+@Composable
+private fun AxisNavHost(nav: NavHostController, start: String, graph: NavGraphBuilder.() -> Unit) = NavHost(
+    nav,
+    startDestination = start,
+    enterTransition = { sharedAxisIn(forward = true) },
+    exitTransition = { sharedAxisOut(forward = true) },
+    popEnterTransition = { sharedAxisIn(forward = false) },
+    popExitTransition = { sharedAxisOut(forward = false) },
+    builder = graph,
+)
