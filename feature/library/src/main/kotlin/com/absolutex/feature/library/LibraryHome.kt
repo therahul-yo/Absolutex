@@ -1,5 +1,9 @@
 package com.absolutex.feature.library
 
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ButtonDefaults
@@ -8,15 +12,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.FiberNew
 import androidx.compose.material.icons.outlined.FavoriteBorder
-import androidx.compose.material.icons.outlined.CollectionsBookmark
 import androidx.compose.material.icons.outlined.AutoStories
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.FiberNew
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.CollectionsBookmark
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.layout.Arrangement
@@ -35,17 +33,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import com.absolutex.core.ui.A11y
 
-/** Shelf title and count, rendered as an item of the one lazy container. */
-@Composable
-internal fun ShelfHeader(shelf: Shelf) {
-    Column(Modifier.padding(horizontal = Space.Edge, vertical = Space.Row)) {
-        Text(shelf.title, style = MaterialTheme.typography.titleMedium)
-        Text(
-            pluralStringResource(R.plurals.library_shelf_count, shelf.size, shelf.size),
-            style = MaterialTheme.typography.bodySmall,
-        )
-    }
-}
 
 /**
  * The words for a notice.
@@ -174,27 +161,25 @@ private fun emptyBody(reason: LibraryEmptyReason, section: HomeSection, query: S
 
 @Composable
 private fun sectionEmptyBody(section: HomeSection): String = when (section) {
-    HomeSection.READING -> stringResource(R.string.library_empty_reading_body)
-    HomeSection.UNREAD -> stringResource(R.string.library_empty_unread_body)
+    HomeSection.COMICS -> stringResource(R.string.library_empty_comics_body)
+    HomeSection.BOOKS -> stringResource(R.string.library_empty_books_body)
+    HomeSection.RECENT -> stringResource(R.string.library_empty_recent_body)
     HomeSection.FAVORITES -> stringResource(R.string.library_empty_favorites_body)
-    HomeSection.SERIES, HomeSection.FOLDERS -> stringResource(R.string.library_empty_library_body)
 }
 
 @Composable
 internal fun HomeSection.label(): String = when (this) {
-    HomeSection.READING -> stringResource(R.string.library_section_reading)
-    HomeSection.SERIES -> stringResource(R.string.library_section_series)
-    HomeSection.FOLDERS -> stringResource(R.string.library_section_folders)
-    HomeSection.UNREAD -> stringResource(R.string.library_section_unread)
+    HomeSection.COMICS -> stringResource(R.string.library_section_comics)
+    HomeSection.BOOKS -> stringResource(R.string.library_section_books)
+    HomeSection.RECENT -> stringResource(R.string.library_section_recent)
     HomeSection.FAVORITES -> stringResource(R.string.library_section_favorites)
 }
 
 /** A tab's icon: filled when it is the current section, outlined otherwise, as Material does. */
 internal fun HomeSection.icon(selected: Boolean): ImageVector = when (this) {
-    HomeSection.READING -> if (selected) Icons.Filled.AutoStories else Icons.Outlined.AutoStories
-    HomeSection.SERIES -> if (selected) Icons.Filled.CollectionsBookmark else Icons.Outlined.CollectionsBookmark
-    HomeSection.FOLDERS -> if (selected) Icons.Filled.Folder else Icons.Outlined.Folder
-    HomeSection.UNREAD -> if (selected) Icons.Filled.FiberNew else Icons.Outlined.FiberNew
+    HomeSection.COMICS -> if (selected) Icons.Filled.AutoStories else Icons.Outlined.AutoStories
+    HomeSection.BOOKS -> if (selected) Icons.AutoMirrored.Filled.MenuBook else Icons.AutoMirrored.Outlined.MenuBook
+    HomeSection.RECENT -> if (selected) Icons.Filled.History else Icons.Outlined.History
     HomeSection.FAVORITES -> if (selected) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder
 }
 

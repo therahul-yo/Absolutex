@@ -78,3 +78,7 @@ internal fun LibraryBookUi.accessibilityLabel(isSelected: Boolean, selectionActi
     }
     return parts.joinToString(separator = ", ")
 }
+
+/** The date a card shows, in the device's short date format. */
+internal fun LibraryBookUi.dateLabel(): String =
+    java.text.DateFormat.getDateInstance(java.text.DateFormat.SHORT).format(java.util.Date(date))

@@ -46,10 +46,6 @@ internal data class LibraryUiState(
      * is a full sort per long-press.
      */
     val visibleBooks: List<LibraryBookUi>,
-    /** Series shelves over [visibleBooks]. */
-    val seriesShelves: List<Shelf>,
-    /** Folder shelves over [visibleBooks], grouped by path and titled by leaf name. */
-    val folderShelves: List<Shelf>,
 ) {
 
     val selectionActive: Boolean get() = selected.isNotEmpty()
@@ -74,17 +70,15 @@ internal data class LibraryUiState(
             allBooks = emptyList(),
             query = "",
             sort = SortSpec(SortKey.NAME, ascending = true),
-            layout = BrowseLayout.DETAILED_LIST,
+            layout = BrowseLayout.GRID,
             grid = GridSpec.Default,
-            section = HomeSection.READING,
+            section = HomeSection.COMICS,
             selected = emptySet(),
             hasLocations = true,
             capabilities = LibraryCapabilities.None,
             error = null,
             message = null,
             visibleBooks = emptyList(),
-            seriesShelves = emptyList(),
-            folderShelves = emptyList(),
         )
     }
 }
@@ -97,44 +91,14 @@ internal data class LibraryUiState(
  * toggle, a layout change or a grid-column change must not pay for a re-sort of the library.
  */
 internal fun LibraryUiState.recomputed(): LibraryUiState {
-    val visible = allBooks.inSection(section).sortedBy(sort)
-    return copy(
-        visibleBooks = visible,
-        seriesShelves = seriesShelvesOf(visible),
-        folderShelves = folderShelvesOf(visible),
-    )
-}
-
-/**
- * Series shelves. Books whose series never parsed fall back to their folder, as the index does.
- */
-internal fun seriesShelvesOf(books: List<LibraryBookUi>): List<Shelf> =
-    books.groupBy { it.series ?: it.folderName }
-        .map { (series, shelf) -> Shelf(series, shelf) }
-        .sortedWith(SHELF_ORDER)
-
-/**
- * Folder shelves, grouped by **path** rather than by leaf name.
- *
- * Grouping by leaf name merged `/Comics/DC/2024` and `/Comics/Marvel/2024` into one shelf called
- * "2024" — two unrelated folders' worth of books under a header that describes neither. The key is
- * the path, which is unique; the header still shows the leaf name the user recognises from disk.
- */
-internal fun folderShelvesOf(books: List<LibraryBookUi>): List<Shelf> =
-    books.groupBy { it.folderPath }
-        .map { (path, shelf) -> Shelf(id = path, books = shelf, title = shelf.first().folderName) }
-        .sortedWith(SHELF_ORDER)
-
-/**
- * Natural order on the visible title, with the group key as a tiebreak.
- *
- * The tiebreak matters now that folders are grouped by path: two shelves can legitimately carry
- * the same title ("2024" under two parents), and an unstable order would reshuffle them on every
- * recomputation.
- */
-private val SHELF_ORDER: Comparator<Shelf> = Comparator { left, right ->
-    val byTitle = NaturalOrder.compare(left.title, right.title)
-    if (byTitle != 0) byTitle else NaturalOrder.compare(left.id, right.id)
+    val inSection = allBooks.inSection(section)
+    // Recent is a history, so it runs newest first whatever the sort chips say.
+    val visible = if (section == HomeSection.RECENT) {
+        inSection.sortedByDescending { it.lastReadAt ?: 0L }
+    } else {
+        inSection.sortedBy(sort)
+    }
+    return copy(visibleBooks = visible)
 }
 
 /**
@@ -152,10 +116,15 @@ private val SHELF_ORDER: Comparator<Shelf> = Comparator { left, right ->
 internal fun List<LibraryBookUi>.sortedBy(spec: SortSpec): List<LibraryBookUi> {
     val ordered = when (spec.key) {
         // Natural order, so "Issue 2" precedes "Issue 10" — sorting these as plain strings
-        // interleaves every double-digit issue with the single digits.
-        SortKey.NAME -> sortedWith(compareBy(NaturalOrder) { it.originalFilename })
+        // interleaves every double-digit issue with the single digits. By the title on screen,
+        // not the filename: a SAF book's "filename" is a numeric document id, and ordering by it
+        // looked random.
+        SortKey.NAME -> sortedWith(
+            compareBy<LibraryBookUi, String>(NaturalOrder) { it.displayName }
+                .thenBy(NaturalOrder) { it.originalFilename },
+        )
         SortKey.SIZE -> sortedBy { it.sizeBytes }
-        SortKey.DATE -> sortedBy { it.lastModified }
+        SortKey.DATE -> sortedBy { it.date }
     }
     return if (spec.ascending) ordered else ordered.reversed()
 }
@@ -169,13 +138,13 @@ internal fun List<LibraryBookUi>.sortedBy(spec: SortSpec): List<LibraryBookUi> {
 internal fun SortSpec.select(key: SortKey): SortSpec =
     if (this.key == key) copy(ascending = !ascending) else SortSpec(key, ascending = true)
 
-/** The subset a home section shows. SERIES and FOLDERS show everything, grouped by the screen. */
+/** The subset a home section shows: comics and books split by format, recent is anything opened. */
 internal fun List<LibraryBookUi>.inSection(section: HomeSection): List<LibraryBookUi> =
     when (section) {
-        HomeSection.READING -> filter { it.readState == ReadState.IN_PROGRESS }
-        HomeSection.UNREAD -> filter { it.readState == ReadState.UNREAD }
+        HomeSection.COMICS -> filter { !it.isBook }
+        HomeSection.BOOKS -> filter { it.isBook }
+        HomeSection.RECENT -> filter { it.readState != ReadState.UNREAD }
         HomeSection.FAVORITES -> filter { it.isFavorite }
-        HomeSection.SERIES, HomeSection.FOLDERS -> this
     }
 
 internal fun LibraryUiState.toggleSelection(path: String): LibraryUiState =

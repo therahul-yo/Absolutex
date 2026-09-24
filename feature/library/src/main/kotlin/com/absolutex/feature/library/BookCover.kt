@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
@@ -36,13 +37,18 @@ internal const val COVER_ASPECT = 2f / 3f
  * which book it is, so reading the art out again is noise.
  */
 @Composable
-internal fun BookCover(book: LibraryBookUi, modifier: Modifier = Modifier) {
+internal fun BookCover(
+    book: LibraryBookUi,
+    modifier: Modifier = Modifier,
+    aspect: Float = COVER_ASPECT,
+    shape: Shape = MaterialTheme.shapes.small,
+) {
     val covers = LocalBookCovers.current
     val missing = stringResource(R.string.library_cover_placeholder)
     BoxWithConstraints(
         modifier
-            .aspectRatio(COVER_ASPECT)
-            .clip(MaterialTheme.shapes.small)
+            .aspectRatio(aspect)
+            .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
         val widthPx = constraints.maxWidth

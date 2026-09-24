@@ -1,26 +1,19 @@
 package com.absolutex.feature.library
 
-import com.absolutex.core.ui.rememberHaptics
-import com.absolutex.core.ui.Motion
-import androidx.compose.ui.draw.clip
-import androidx.compose.runtime.getValue
-import androidx.compose.material3.Icon
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.Icons
-import androidx.compose.foundation.background
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -34,22 +27,36 @@ import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.absolutex.core.ui.A11y
+import com.absolutex.core.ui.Motion
+import com.absolutex.core.ui.rememberHaptics
 
 private val ThumbWidth = 64.dp
 private val SmallThumbWidth = 36.dp
+
+/** The hero card is wider than a cover is tall-proportioned, so the art is cropped a little. */
+private const val HERO_ASPECT = 0.8f
+private const val SCRIM_ALPHA = 0.55f
+private const val HERO_SCRIM_ALPHA = 0.85f
+private const val CHECK_START_SCALE = 0.6f
 
 /** What a row needs to render and report itself, bundled so parameter lists stay short. */
 internal data class RowContext(
@@ -59,75 +66,134 @@ internal data class RowContext(
 )
 
 /**
- * The whole browse surface: one lazy container, whatever the layout and whether or not the
- * section is grouped into shelves.
+ * The whole browse surface: one lazy container, whatever the layout.
  *
- * Deliberately *one* — an earlier shape nested a per-shelf list inside an outer list, which is
- * the classic Compose crash: a vertically scrollable measured with infinite height. Shelf headers
- * are items in the same container instead, spanning the full width in the grid.
- *
- * @param shelves null for a flat section; a grouped section passes its shelves.
+ * Recent leads with its newest book as a large hero card — the "continue reading" slot — and the
+ * rest follow in the chosen layout.
  */
 @Composable
 internal fun LibraryPane(
     state: LibraryUiState,
-    shelves: List<Shelf>?,
     context: RowContext,
     landscape: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val books = state.visibleBooks
+    val hero = books.firstOrNull()?.takeIf { state.section == HomeSection.RECENT }
+    val rest = if (hero == null) books else books.drop(1)
+    val padding = PaddingValues(horizontal = Space.Edge, vertical = Space.Gap)
     if (state.layout == BrowseLayout.GRID) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(state.grid.columnsFor(landscape)),
             modifier = modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = Space.Edge, vertical = Space.Gap),
+            contentPadding = padding,
             horizontalArrangement = Arrangement.spacedBy(Space.Row),
             verticalArrangement = Arrangement.spacedBy(Space.Row),
         ) {
-            gridContent(state, shelves, context)
+            gridContent(state, hero, rest, context)
         }
     } else {
         LazyColumn(
             modifier = modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = Space.Edge, vertical = Space.Gap),
+            contentPadding = padding,
             verticalArrangement = Arrangement.spacedBy(Space.Gap),
         ) {
-            listContent(state, shelves, context)
+            listContent(state, hero, rest, context)
         }
     }
 }
 
 private fun LazyGridScope.gridContent(
     state: LibraryUiState,
-    shelves: List<Shelf>?,
+    hero: LibraryBookUi?,
+    rest: List<LibraryBookUi>,
     context: RowContext,
 ) {
-    if (shelves == null) {
-        items(state.visibleBooks, key = { it.path }) { book ->
-            GridCell(book, book.path in state.selected, context, Modifier.animateItem())
+    hero?.let { book ->
+        item(key = "hero:${book.path}", span = { GridItemSpan(maxLineSpan) }) {
+            HeroCard(book, book.path in state.selected, context, Modifier.animateItem())
         }
-        return
     }
-    shelves.forEach { shelf ->
-        item(key = "shelf:${shelf.id}", span = { GridItemSpan(maxLineSpan) }) { ShelfHeader(shelf) }
-        items(shelf.books, key = { it.path }) { book ->
-            GridCell(book, book.path in state.selected, context, Modifier.animateItem())
-        }
+    items(rest, key = { it.path }) { book ->
+        CoverCard(book, book.path in state.selected, context, Modifier.animateItem())
     }
 }
 
 private fun LazyListScope.listContent(
     state: LibraryUiState,
-    shelves: List<Shelf>?,
+    hero: LibraryBookUi?,
+    rest: List<LibraryBookUi>,
     context: RowContext,
 ) {
-    if (shelves == null) {
-        items(state.visibleBooks, key = { it.path }) { book -> BookRow(state, book, context, Modifier.animateItem()) }
-        return
+    hero?.let { book ->
+        item(key = "hero:${book.path}") {
+            HeroCard(book, book.path in state.selected, context, Modifier.animateItem())
+        }
     }
-    shelves.forEach { shelf ->
-        item(key = "shelf:${shelf.id}") { ShelfHeader(shelf) }
-        items(shelf.books, key = { it.path }) { book -> BookRow(state, book, context, Modifier.animateItem()) }
+    items(rest, key = { it.path }) { book -> BookRow(state, book, context, Modifier.animateItem()) }
+}
+
+/**
+ * The grid card: the cover large and rounded, then title, size, a format pill and the date — the
+ * facts a shelf of files needs, in the order the eye wants them.
+ */
+@Composable
+private fun CoverCard(book: LibraryBookUi, isSelected: Boolean, context: RowContext, modifier: Modifier) {
+    SelectableSurface(book, isSelected, context, modifier) {
+        Column {
+            Box {
+                BookCover(book, Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
+                SelectedMark(isSelected)
+            }
+            book.progressFraction?.let { ReadingProgress(it, Modifier.padding(horizontal = Space.Gap)) }
+            Column(
+                Modifier.padding(horizontal = Space.Row, vertical = Space.Gap),
+                verticalArrangement = Arrangement.spacedBy(Space.Tight),
+            ) {
+                Text(
+                    book.displayName,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    book.sizeLabel(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                FormatAndDate(book, Modifier.padding(top = Space.Tight))
+            }
+        }
+    }
+}
+
+/** Continue reading: the newest book full width, its facts over a scrim at the foot of the art. */
+@Composable
+private fun HeroCard(book: LibraryBookUi, isSelected: Boolean, context: RowContext, modifier: Modifier) {
+    SelectableSurface(book, isSelected, context, modifier.padding(bottom = Space.Gap)) {
+        Box {
+            BookCover(book, Modifier.fillMaxWidth(), aspect = HERO_ASPECT, shape = MaterialTheme.shapes.large)
+            Column(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(HERO_SCRIM_ALPHA))))
+                    .padding(Space.Edge),
+                verticalArrangement = Arrangement.spacedBy(Space.Tight),
+            ) {
+                Text(
+                    book.displayName,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(book.positionLabel(), style = MaterialTheme.typography.labelLarge, color = Color.White)
+                book.progressFraction?.let { ReadingProgress(it) }
+                FormatAndDate(book, Modifier.padding(top = Space.Tight))
+            }
+            SelectedMark(isSelected)
+        }
     }
 }
 
@@ -140,11 +206,14 @@ private fun BookRow(state: LibraryUiState, book: LibraryBookUi, context: RowCont
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Space.Row),
         ) {
-            if (state.layout == BrowseLayout.DETAILED_LIST) {
-                SelectableCover(book, selected, Modifier.width(ThumbWidth))
+            val detailed = state.layout == BrowseLayout.DETAILED_LIST
+            Box(Modifier.width(if (detailed) ThumbWidth else SmallThumbWidth)) {
+                BookCover(book, Modifier.fillMaxWidth())
+                SelectedMark(selected)
+            }
+            if (detailed) {
                 DetailedBookContent(book, Modifier.weight(1f))
             } else {
-                SelectableCover(book, selected, Modifier.width(SmallThumbWidth))
                 Text(
                     book.displayName,
                     style = MaterialTheme.typography.titleMedium,
@@ -172,67 +241,43 @@ private fun DetailedBookContent(book: LibraryBookUi, modifier: Modifier) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Text(
-            book.positionLabel(),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        FormatAndDate(book)
         book.progressFraction?.let { ReadingProgress(it) }
     }
 }
 
 @Composable
-private fun ReadingProgress(fraction: Float) {
+private fun ReadingProgress(fraction: Float, modifier: Modifier = Modifier) {
     LinearProgressIndicator(
         progress = { fraction },
         trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-        modifier = Modifier.fillMaxWidth().padding(top = Space.Tight),
+        modifier = modifier.fillMaxWidth().padding(top = Space.Tight),
     )
 }
 
-/** A cover that shows a check over itself when its book is selected. */
+/** A check over the art of a selected book, popping in; the card's label already says so aloud. */
 @Composable
-private fun SelectableCover(book: LibraryBookUi, selected: Boolean, modifier: Modifier) {
-    Box(modifier.clip(MaterialTheme.shapes.extraSmall)) {
-        BookCover(book, Modifier.fillMaxWidth())
-        AnimatedVisibility(
-            selected,
-            enter = fadeIn(Motion.enter()) + scaleIn(Motion.enter(), initialScale = CHECK_START_SCALE),
-            exit = fadeOut(Motion.exit()),
-            modifier = Modifier.matchParentSize(),
+private fun BoxScope.SelectedMark(selected: Boolean) {
+    AnimatedVisibility(
+        selected,
+        enter = fadeIn(Motion.enter()) + scaleIn(Motion.enter(), initialScale = CHECK_START_SCALE),
+        exit = fadeOut(Motion.exit()),
+        modifier = Modifier.matchParentSize(),
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .clip(MaterialTheme.shapes.medium)
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = SCRIM_ALPHA)),
+            contentAlignment = Alignment.Center,
         ) {
-            Box(
-                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = SCRIM_ALPHA)),
-                contentAlignment = Alignment.Center,
-            ) {
-                // Decorative: the surface already announces selected state in one spoken label.
-                Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            }
+            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
         }
     }
 }
-
-@Composable
-private fun GridCell(book: LibraryBookUi, isSelected: Boolean, context: RowContext, modifier: Modifier) {
-    SelectableSurface(book, isSelected, context, modifier) {
-        Column(Modifier.padding(Space.Gap), verticalArrangement = Arrangement.spacedBy(Space.Gap)) {
-            SelectableCover(book, isSelected, Modifier.fillMaxWidth())
-            Text(
-                book.displayName,
-                style = MaterialTheme.typography.labelLarge,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            book.progressFraction?.let { ReadingProgress(it) }
-        }
-    }
-}
-
-private const val SCRIM_ALPHA = 0.55f
-private const val CHECK_START_SCALE = 0.6f
 
 /**
- * Tap and long-press behaviour shared by rows and grid cells.
+ * Tap and long-press behaviour shared by every card and row.
  *
  * Long-press starts selection; once it has started a plain tap toggles instead of opening. That
  * is the convention every file manager uses, and the only way to extend a selection without
@@ -256,10 +301,10 @@ private fun SelectableSurface(
     )
     Surface(
         color = container,
-        shape = MaterialTheme.shapes.medium,
+        shape = MaterialTheme.shapes.large,
         modifier = modifier
             .fillMaxWidth()
-            .clip(MaterialTheme.shapes.medium)
+            .clip(MaterialTheme.shapes.large)
             .combinedClickable(
                 onClick = {
                     if (context.selectionActive) context.onToggleSelection(book.path) else context.onOpen(book)
@@ -269,10 +314,9 @@ private fun SelectableSurface(
                     context.onToggleSelection(book.path)
                 },
             )
-            // One spoken label per row: unlabelled, TalkBack reads six text nodes one swipe at a
+            // One spoken label per card: unlabelled, TalkBack reads six text nodes one swipe at a
             // time and never announces the selected state at all.
             .clearAndSetSemantics { contentDescription = label },
         content = content,
     )
 }
-

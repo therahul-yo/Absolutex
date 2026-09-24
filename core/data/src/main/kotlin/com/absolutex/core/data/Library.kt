@@ -42,7 +42,18 @@ data class LibraryBook(
     /** §5.1 favourites shelf: user-toggled flag that survives scans. */
     @ColumnInfo(defaultValue = "0")
     val isFavorite: Boolean = false,
+    /**
+     * The container's type as a lowercase extension ("cbr", "pdf", "epub"), or "folder" for an
+     * image folder. Taken from the file name at scan time: a SAF path is a document id with no
+     * extension, so this is the only place the library can learn what kind of book a row is.
+     * Empty on rows written before the column existed, until their next scan.
+     */
+    @ColumnInfo(defaultValue = "")
+    val format: String = "",
 )
+
+/** [LibraryBook.format] for an image folder, which has no extension of its own. */
+const val FOLDER_FORMAT = "folder"
 
 /** Just the columns the upsert has to preserve across a rescan. */
 data class BookOrigin(val path: String, val addedAt: Long, val isFavorite: Boolean)

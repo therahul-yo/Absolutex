@@ -3,10 +3,9 @@
     <string name="library_title">Library</string>
     <string name="library_open_settings">Settings</string>
 
-    <string name="library_section_reading">Reading</string>
-    <string name="library_section_series">Series</string>
-    <string name="library_section_folders">Folders</string>
-    <string name="library_section_unread">Unread</string>
+    <string name="library_section_comics">Comics</string>
+    <string name="library_section_books">Books</string>
+    <string name="library_section_recent">Recent</string>
     <string name="library_section_favorites">Favourites</string>
 
     <string name="library_search_hint">Search your library</string>
@@ -36,8 +35,9 @@
     <string name="library_empty_search_title">No matches</string>
     <string name="library_empty_search_body">Nothing in your library matches “%1$s”.</string>
     <string name="library_empty_section_title">Nothing here yet</string>
-    <string name="library_empty_reading_body">Books you are part-way through will show up here.</string>
-    <string name="library_empty_unread_body">Every book in your library has been started.</string>
+    <string name="library_empty_comics_body">No comics yet. CBZ, CBR, CB7, EPUB comics and image folders all show up here.</string>
+    <string name="library_empty_books_body">No books yet. PDFs in your folders show up here.</string>
+    <string name="library_empty_recent_body">Anything you open shows up here, newest first.</string>
     <string name="library_empty_favorites_body">Mark a book as a favourite and it will appear here.</string>
 
     <string name="library_selection_clear">Leave selection mode</string>
@@ -85,7 +85,6 @@
     <string name="library_book_on_page">On page %1$d of %2$d</string>
     <string name="library_book_finished">Finished</string>
     <string name="library_book_unread">Unread</string>
-    <string name="library_book_filename">File: %1$s</string>
     <plurals name="library_shelf_count">
         <item quantity="one">%1$d book</item>
         <item quantity="other">%1$d books</item>

@@ -190,6 +190,7 @@ class LibraryRepository internal constructor(
         pageCount = imageCount.takeIf { it > 0 },
         addedAt = scanId,
         seenAtScan = scanId,
+        format = if (isImageFolder) FOLDER_FORMAT else displayName.substringAfterLast('.', "").lowercase(),
     )
 
     private companion object {

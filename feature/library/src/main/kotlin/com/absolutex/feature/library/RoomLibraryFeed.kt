@@ -139,6 +139,8 @@ internal class RoomLibraryFeed @Inject constructor(
             pageCount = pageCount ?: position?.pageCount?.takeIf { it > 0 },
             currentPage = position?.pageIndex,
             isFavorite = isFavorite,
+            format = format,
+            lastReadAt = position?.updatedAt,
         )
     }
 

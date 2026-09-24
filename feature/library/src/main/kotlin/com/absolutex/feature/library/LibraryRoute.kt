@@ -1,5 +1,7 @@
 package com.absolutex.feature.library
 
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.AnimatedContent
 import com.absolutex.core.ui.rememberHaptics
 import com.absolutex.core.ui.Motion
 import com.absolutex.core.ui.A11y
@@ -133,7 +135,6 @@ internal fun LibraryScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LibraryBody(
     state: LibraryUiState,
@@ -155,41 +156,49 @@ private fun LibraryBody(
     }
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    // The section name is the title; it cross-fades rather than jumping.
-                    Crossfade(state.section, animationSpec = Motion.enter(), label = "title") { section ->
-                        Text(section.label(), style = MaterialTheme.typography.headlineMedium)
-                    }
-                },
-                actions = {
-                    // An icon-only control, so the description is the only thing a screen reader
-                    // has to go on. Tonal and full-size so it reads as a button, not a stray glyph.
-                    FilledTonalIconButton(
-                        onClick = onOpenSettings,
-                        modifier = Modifier.padding(end = Space.Gap).size(A11y.MinTouchTarget),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Settings,
-                            contentDescription = stringResource(R.string.library_open_settings),
-                        )
-                    }
-                },
-            )
+            // Selection swaps the bar in place — no second bar pushing the list down.
+            AnimatedContent(
+                state.selectionActive,
+                transitionSpec = { fadeIn(Motion.enter()) togetherWith fadeOut(Motion.exit()) },
+                label = "bar",
+            ) { selecting ->
+                if (selecting) SelectionTopBar(state, actions) else LibraryTopBar(state.section, onOpenSettings)
+            }
         },
         snackbarHost = { SnackbarHost(snackbar) },
         // Scaffold consumes the system bars for us; the app draws edge to edge (§7).
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
-            AnimatedVisibility(
-                state.selectionActive,
-                enter = expandVertically(Motion.enter()) + fadeIn(Motion.enter()),
-                exit = shrinkVertically(Motion.exit()) + fadeOut(Motion.exit()),
-            ) { SelectionBar(state, actions) }
             LibraryControls(state, actions)
             LibraryContent(state, actions, onOpenBook, onAddLocation)
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LibraryTopBar(section: HomeSection, onOpenSettings: () -> Unit) {
+    TopAppBar(
+        title = {
+            // The section name is the title; it cross-fades rather than jumping.
+            Crossfade(section, animationSpec = Motion.enter(), label = "title") { shown ->
+                Text(shown.label(), style = MaterialTheme.typography.headlineMedium)
+            }
+        },
+        actions = {
+            // An icon-only control, so the description is the only thing a screen reader has to
+            // go on. Tonal and full-size so it reads as a button, not a stray glyph.
+            FilledTonalIconButton(
+                onClick = onOpenSettings,
+                modifier = Modifier.padding(end = Space.Gap).size(A11y.MinTouchTarget),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Settings,
+                    contentDescription = stringResource(R.string.library_open_settings),
+                )
+            }
+        },
+    )
 }
 
 @Composable
@@ -237,12 +246,7 @@ private fun LibraryContent(
         onOpen = { book -> onOpenBook(book.path) },
         onToggleSelection = actions.onToggleSelection,
     )
-    val shelves = when (state.section) {
-        HomeSection.SERIES -> state.seriesShelves
-        HomeSection.FOLDERS -> state.folderShelves
-        else -> null
-    }
     Box(Modifier.fillMaxSize()) {
-        LibraryPane(state, shelves, context, landscape)
+        LibraryPane(state, context, landscape)
     }
 }
