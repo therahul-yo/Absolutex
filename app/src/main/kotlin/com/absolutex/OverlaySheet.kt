@@ -1,6 +1,5 @@
 package com.absolutex
 
-import android.net.Uri
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -20,7 +19,8 @@ import com.absolutex.core.ui.Motion
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
- * An open book, as a sheet over the library rather than a screen that replaces it.
+ * A screen shown as a sheet over the library rather than a destination that replaces it: an open
+ * book rising from the bottom, or settings sliding in from the end edge.
  *
  * Closing a book used to navigate back to a library that had been torn down on the way in, so the
  * first frame of every close rebuilt the whole grid — 55–90 ms against an 8.3 ms budget, which is
@@ -31,18 +31,21 @@ import kotlin.coroutines.cancellation.CancellationException
  * to [PEEK], and either finishes closing on release or springs back if the gesture is cancelled.
  * Only transforms change per frame, so the book itself is never recomposed by the motion.
  *
+ * @param value what to show, or null for nothing. Changing it while shown swaps the content in
+ *   place (a book's auto-advance); clearing it slides the sheet away and then drops its content.
+ * @param fromEnd slide horizontally from the end edge (settings) instead of up from the bottom.
  * @param onGone called once the sheet has fully left the screen after a close.
- * @param uri the book to show, or null for none. Changing it while shown swaps the book in place
- *   (auto-advance); clearing it slides the sheet away and then drops its content.
  */
 @Composable
-internal fun BookSheet(
-    uri: Uri?,
+internal fun <T : Any> OverlaySheet(
+    value: T?,
     onClose: () -> Unit,
-    onGone: () -> Unit,
-    content: @Composable (Uri) -> Unit,
+    onGone: () -> Unit = {},
+    fromEnd: Boolean = false,
+    content: @Composable (T) -> Unit,
 ) {
-    var shown by remember { mutableStateOf(uri) }
+    val uri = value
+    var shown by remember { mutableStateOf(value) }
     // 0 = covering the library, 1 = fully below the screen.
     val offset = remember { Animatable(if (uri == null) 1f else 0f) }
     LaunchedEffect(uri) {
@@ -64,18 +67,18 @@ internal fun BookSheet(
             throw e
         }
     }
-    val book = shown ?: return
+    val current = shown ?: return
     Box(
         Modifier
             .fillMaxSize()
             .graphicsLayer {
-                translationY = size.height * offset.value
+                if (fromEnd) translationX = size.width * offset.value else translationY = size.height * offset.value
                 // Rounded only while it moves: at rest the page runs edge to edge.
                 val lifted = offset.value > 0f
                 shape = RoundedCornerShape(if (lifted) CORNER else 0.dp)
                 clip = lifted
             },
-    ) { content(book) }
+    ) { content(current) }
 }
 
 /** How far the sheet follows a back swipe before the release decides; enough to see the library. */

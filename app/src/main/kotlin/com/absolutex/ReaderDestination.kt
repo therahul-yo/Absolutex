@@ -4,10 +4,8 @@ import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.navigation.NavHostController
 import com.absolutex.feature.reader.ReaderScreen
 import com.absolutex.feature.reader.ReaderViewModel
-import com.absolutex.feature.settings.SETTINGS_ROUTE
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -23,15 +21,15 @@ internal fun ReaderDestination(
     uri: Uri,
     readerVm: ReaderViewModel,
     vm: ShellViewModel,
-    nav: NavHostController,
     open: (Uri) -> Unit,
+    onSettings: () -> Unit,
 ) {
     val readerScope = rememberCoroutineScope()
     val advanceInFlight = remember { AtomicBoolean(false) }
     ReaderScreen(
         uri = uri,
         vm = readerVm,
-        onSettings = { nav.navigate(SETTINGS_ROUTE) },
+        onSettings = onSettings,
         onFinished = { advanceFromReader(readerScope, vm, open, readerVm.ui.value.bookId, advanceInFlight) },
     )
 }

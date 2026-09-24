@@ -1,5 +1,6 @@
 package com.absolutex
 
+import com.absolutex.feature.settings.SettingsScreen
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.layout.fillMaxSize
@@ -188,6 +189,8 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
     // The book open over the library, if any. A string so it survives process death; the sheet
     // (BookSheet) is what shows it — the reader route is only for a book launched from outside.
     var openBook by rememberSaveable { mutableStateOf<String?>(null) }
+    // Settings, as a sheet over the library (and over a book, when opened from one).
+    var settingsOpen by rememberSaveable { mutableStateOf(false) }
     val openOverLibrary: (Uri) -> Unit = { uri ->
         openBook = uri.toString()
         nav.popBackStack(LIBRARY_ROUTE, inclusive = false)
@@ -204,21 +207,7 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { picked ->
         if (picked != null) {
-            // OpenDocument offers a persistable grant, but not every provider honours
-            // it — take() then throws SecurityException. Attempt, then VERIFY against
-            // persistedUriPermissions: only a verified Uri survives process death, and
-            // only a verified Uri is remembered for §5.2 resume.
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    picked, Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                )
-            }.onFailure { android.util.Log.w("Shell", "persistable grant refused", it) }
-            val persisted = context.contentResolver.persistedUriPermissions.any { it.uri == picked }
-            if (!persisted) {
-                android.util.Log.w("Shell", "grant not persisted; opening for this session only")
-            } else {
-                vm.rememberBook(picked.toString())
-            }
+            if (keepGrant(context, picked)) vm.rememberBook(picked.toString())
             openOverLibrary(picked)
         }
     }
@@ -229,8 +218,9 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
             // from a file manager never reaches here, and §3 measures its first page from the tap.
             // Scanning during that window cost ~90 ms of cold start on the reference phone.
             LaunchedEffect(Unit) { vm.rescanLocations() }
-            LibraryWithBook(
+            LibraryWithOverlays(
                 openBook = openBook?.let(Uri::parse),
+                settingsOpen = settingsOpen,
                 onOpenBook = { uri ->
                     // Every route that opens a book remembers it for §5.2 resume (see also the
                     // single-document picker above and the launch Uri in onCreate).
@@ -238,16 +228,25 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
                     openBook = uri.toString()
                 },
                 onCloseBook = { openBook = null },
+                onSettings = { settingsOpen = it },
                 onAddLocation = { folderPicker.launch(null) },
-                onOpenSettings = { nav.navigate(SETTINGS_ROUTE) },
-            ) { book -> ReaderDestination(book, readerVm, vm, nav, openOverLibrary) }
+                reader = { book ->
+                    ReaderDestination(book, readerVm, vm, openOverLibrary) { settingsOpen = true }
+                },
+                settings = {
+                    SettingsScreen(
+                        onOpenRemote = { nav.navigate(REMOTE_LIST_ROUTE) },
+                        onAddLocation = { folderPicker.launch(null) },
+                    )
+                },
+            )
         }
         composable(READER_ROUTE) { entry ->
             val uri = entry.arguments?.getString("uri")?.let { Uri.parse(Uri.decode(it)) }
             // The activity's ReaderViewModel, not the destination's own: MainActivity.onCreate
             // starts opening a launch Uri before anything composes, and a per-destination
             // ViewModel would throw that head start away and open the book a second time.
-            if (uri != null) ReaderDestination(uri, readerVm, vm, nav, openOverLibrary)
+            if (uri != null) ReaderDestination(uri, readerVm, vm, openOverLibrary) { nav.navigate(SETTINGS_ROUTE) }
         }
         // The settings row is the only way in to the remote servers list: the transports, the
         // list and the form all shipped before anything navigated to them. The route name is the
@@ -302,35 +301,60 @@ private fun sharedAxisOut(forward: Boolean): ExitTransition =
         fadeOut(Motion.exit())
 
 /**
- * The library with any open book as a sheet over it ([BookSheet]). Under an open book the library
+ * Takes a persistable grant on a picked document and reports whether it actually held.
+ *
+ * OpenDocument offers a persistable grant, but not every provider honours it — take() then throws
+ * SecurityException. Attempt, then VERIFY against persistedUriPermissions: only a verified Uri
+ * survives process death, and only a verified Uri is remembered for §5.2 resume.
+ */
+private fun keepGrant(context: android.content.Context, picked: Uri): Boolean {
+    runCatching {
+        context.contentResolver.takePersistableUriPermission(picked, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }.onFailure { android.util.Log.w("Shell", "persistable grant refused", it) }
+    val persisted = context.contentResolver.persistedUriPermissions.any { it.uri == picked }
+    if (!persisted) android.util.Log.w("Shell", "grant not persisted; opening for this session only")
+    return persisted
+}
+
+/**
+ * The library with an open book and settings as sheets over it ([OverlaySheet]). Neither ever
+ * tears the library down, so closing either has no library to rebuild. Under a sheet the library
  * holds still: it would otherwise recompose the hidden grid on every page the reader saves.
  */
 @Composable
-private fun LibraryWithBook(
+private fun LibraryWithOverlays(
     openBook: Uri?,
+    settingsOpen: Boolean,
     onOpenBook: (Uri) -> Unit,
     onCloseBook: () -> Unit,
+    onSettings: (Boolean) -> Unit,
     onAddLocation: () -> Unit,
-    onOpenSettings: () -> Unit,
     reader: @Composable (Uri) -> Unit,
+    settings: @Composable () -> Unit,
 ) {
-    // Covered until the sheet has fully left, not merely been asked to: un-pausing catches the
-    // library up on everything read meanwhile, and doing that on the first frame of the close
-    // stalled it for 60 ms. After the motion, nobody sees the frame it costs.
-    var covered by remember { mutableStateOf(openBook != null) }
-    if (openBook != null) covered = true
+    // Covered until a sheet has fully left, not merely been asked to: un-pausing catches the
+    // library up on everything read meanwhile, and doing that inside the close animation stalled
+    // it for 60 ms. After the motion, nobody sees the frame it costs.
+    var bookCovers by remember { mutableStateOf(openBook != null) }
+    var settingsCovers by remember { mutableStateOf(settingsOpen) }
+    if (openBook != null) bookCovers = true
+    if (settingsOpen) settingsCovers = true
     Box(Modifier.fillMaxSize()) {
         LibraryRoute(
             // A library row holds whatever the scan found it by: a document Uri from a SAF
             // location, or a device path from a filesystem one. The reader opens either.
             onOpenBook = { path -> onOpenBook(bookUri(path)) },
             onAddLocation = onAddLocation,
-            // The library is the launch destination, so this is the only route to settings a
-            // fresh install has: the reader's own settings action needs a book open first.
-            onOpenSettings = onOpenSettings,
-            paused = covered,
+            onOpenSettings = { onSettings(true) },
+            paused = bookCovers || settingsCovers,
         )
-        BookSheet(openBook, onClose = onCloseBook, onGone = { covered = false }, content = reader)
+        OverlaySheet(openBook, onClose = onCloseBook, onGone = { bookCovers = false }, content = reader)
+        OverlaySheet(
+            if (settingsOpen) Unit else null,
+            onClose = { onSettings(false) },
+            onGone = { settingsCovers = false },
+            fromEnd = true,
+        ) { settings() }
     }
 }
 
