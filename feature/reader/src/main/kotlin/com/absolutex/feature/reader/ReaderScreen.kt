@@ -1,5 +1,6 @@
 package com.absolutex.feature.reader
 
+import com.absolutex.core.data.BookPrefs
 import android.content.res.Configuration.ORIENTATION_LANDSCAPE
 import com.absolutex.core.ui.Motion
 import androidx.compose.foundation.shape.ZeroCornerSize
@@ -132,7 +133,7 @@ fun ReaderScreen(
     // A book's own choices win over the global ones (§5.2), and only for this book.
     val options: ReaderOptionsViewModel = hiltViewModel()
     val book by remember(ui.bookId) { options.bookPrefs(ui.bookId) }.collectAsStateWithLifecycle(null)
-    val prefs = global.overriddenBy(book)
+    val prefs = readingPrefsFor(global, book, ui.isPdf)
     // Hoisted above the Pages/Strip split so choosing the continuous-vertical layout from the
     // open chrome does not close it: Pages and Strip are different call sites, and a `remember`
     // owned by either one is torn down the moment the `when` below takes the other branch.
@@ -693,4 +694,14 @@ private fun PageSlotContent(
             }
         }
     }
+}
+
+/**
+ * The book's effective reading prefs: its own choices over the global ones, and a PDF with no
+ * layout of its own scrolls continuously, as documents do — comics keep turning pages. A layout
+ * chosen for the book in Options still wins.
+ */
+private fun readingPrefsFor(global: ReaderPrefs, book: BookPrefs?, isPdf: Boolean): ReaderPrefs {
+    val merged = global.overriddenBy(book)
+    return if (isPdf && book?.pageLayout == null) merged.copy(pageLayout = PageLayout.CONTINUOUS_VERTICAL) else merged
 }
