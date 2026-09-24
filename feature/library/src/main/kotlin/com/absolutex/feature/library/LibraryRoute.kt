@@ -266,6 +266,6 @@ private fun LibraryContent(
         modifier = Modifier.fillMaxSize(),
         label = "tab",
     ) { shown ->
-        LibraryPane(shown, context, landscape)
+        LibraryPane(shown, context, landscape, onSeeAll = { actions.onSectionChange(HomeSection.RECENT) })
     }
 }

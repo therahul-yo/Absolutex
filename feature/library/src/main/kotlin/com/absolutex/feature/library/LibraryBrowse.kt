@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
@@ -70,10 +71,16 @@ internal fun LibraryPane(
     context: RowContext,
     landscape: Boolean,
     modifier: Modifier = Modifier,
+    onSeeAll: () -> Unit = {},
 ) {
     val books = state.visibleBooks
     val hero = books.firstOrNull()?.takeIf { state.section == HomeSection.RECENT }
     val rest = if (hero == null) books else books.drop(1)
+    // Continue reading: in-progress comics on the Comics tab, newest first.
+    val continueReading = if (state.section == HomeSection.COMICS) {
+        state.allBooks.filter { !it.isBook && it.readState == ReadState.IN_PROGRESS }
+            .sortedByDescending { it.lastReadAt ?: 0L }
+    } else emptyList()
     val padding = PaddingValues(horizontal = Space.Edge, vertical = Space.Gap)
     if (state.layout == BrowseLayout.GRID) {
         LazyVerticalGrid(
@@ -83,7 +90,7 @@ internal fun LibraryPane(
             horizontalArrangement = Arrangement.spacedBy(Space.Row),
             verticalArrangement = Arrangement.spacedBy(Space.Row),
         ) {
-            gridContent(state, hero, rest, context)
+            gridContent(state, hero, rest, context, continueReading, onSeeAll)
         }
     } else {
         LazyColumn(
@@ -91,7 +98,7 @@ internal fun LibraryPane(
             contentPadding = padding,
             verticalArrangement = Arrangement.spacedBy(Space.Gap),
         ) {
-            listContent(state, hero, rest, context)
+            listContent(state, hero, rest, context, continueReading, onSeeAll)
         }
     }
 }
@@ -101,7 +108,14 @@ private fun LazyGridScope.gridContent(
     hero: LibraryBookUi?,
     rest: List<LibraryBookUi>,
     context: RowContext,
+    continueReading: List<LibraryBookUi>,
+    onSeeAll: () -> Unit,
 ) {
+    if (continueReading.isNotEmpty()) {
+        item(key = "continue_reading", span = { GridItemSpan(maxLineSpan) }) {
+            ContinueReadingStrip(continueReading, context, onSeeAll, Modifier)
+        }
+    }
     hero?.let { book ->
         item(key = "hero:${book.path}", span = { GridItemSpan(maxLineSpan) }) {
             HeroCard(book, book.path in state.selected, context, Modifier)
@@ -117,7 +131,14 @@ private fun LazyListScope.listContent(
     hero: LibraryBookUi?,
     rest: List<LibraryBookUi>,
     context: RowContext,
+    continueReading: List<LibraryBookUi>,
+    onSeeAll: () -> Unit,
 ) {
+    if (continueReading.isNotEmpty()) {
+        item(key = "continue_reading") {
+            ContinueReadingStrip(continueReading, context, onSeeAll, Modifier.fillMaxWidth())
+        }
+    }
     hero?.let { book ->
         item(key = "hero:${book.path}") {
             HeroCard(book, book.path in state.selected, context, Modifier)
@@ -136,7 +157,6 @@ private fun CoverCard(book: LibraryBookUi, isSelected: Boolean, context: RowCont
         Column {
             Box {
                 BookCover(book, Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
-                if (!book.isBook && book.readState == ReadState.UNREAD) NewBadge(Modifier.align(Alignment.TopStart))
                 SelectedMark(isSelected)
             }
             book.progressFraction?.let { ReadingProgress(it, Modifier.padding(horizontal = Space.Gap)) }
@@ -150,10 +170,9 @@ private fun CoverCard(book: LibraryBookUi, isSelected: Boolean, context: RowCont
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                // A comic card says how far in you are; a document, how big it is.
                 Text(
-                    (if (book.isBook) null else book.progressLabel()) ?: book.sizeLabel(),
-                    style = MaterialTheme.typography.labelMedium,
+                    book.sizeLabel(),
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 FormatAndDate(book, Modifier.padding(top = Space.Tight))
@@ -310,19 +329,46 @@ private fun SelectableSurface(
     )
 }
 
-/** A small solid tag on a comic that has never been opened. */
+/** Horizontal strip of in-progress comics on the Comics tab (§5.1). */
 @Composable
-private fun NewBadge(modifier: Modifier) {
-    Surface(
-        shape = MaterialTheme.shapes.extraSmall,
-        color = MaterialTheme.colorScheme.inverseSurface,
-        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-        modifier = modifier.padding(Space.Gap),
-    ) {
-        Text(
-            stringResource(R.string.library_badge_new).uppercase(),
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-        )
+private fun ContinueReadingStrip(
+    books: List<LibraryBookUi>,
+    context: RowContext,
+    onSeeAll: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (books.isEmpty()) return
+    Column(modifier.padding(bottom = Space.Gap)) {
+        Row(
+            Modifier.padding(horizontal = Space.Edge).padding(bottom = Space.Tight),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                "Continue reading",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            androidx.compose.material3.TextButton(onClick = onSeeAll) {
+                Text("See all")
+            }
+        }
+        LazyRow(
+            modifier = Modifier.padding(start = Space.Edge, end = Space.Edge),
+            horizontalArrangement = Arrangement.spacedBy(Space.Row),
+            contentPadding = PaddingValues(horizontal = Space.Edge),
+        ) {
+            items(books, key = { it.path }) { book ->
+                CoverCard(
+                    book,
+                    false,
+                    RowContext(
+                        selectionActive = false,
+                        onOpen = context.onOpen,
+                        onToggleSelection = {},
+                    ),
+                    Modifier.width(120.dp),
+                )
+            }
+        }
     }
 }
