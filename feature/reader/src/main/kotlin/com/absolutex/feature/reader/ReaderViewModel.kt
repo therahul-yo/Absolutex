@@ -84,6 +84,8 @@ data class ReaderUiState(
     val passwordRequired: Boolean = false,
     /** The prompt is a retry: a password was offered and PDFium refused it. */
     val passwordIncorrect: Boolean = false,
+    /** A reflowable text EPUB: the screen shows the text reader instead of pages. */
+    val textEpub: Boolean = false,
 )
 
 @HiltViewModel
@@ -676,6 +678,9 @@ private suspend fun openAttempt(
         OpenAttempt.Opened(source, identity, remote)
     } catch (e: CancellationException) {
         throw e
+    } catch (e: ReflowableEpubException) {
+        Log.i(TAG, "text EPUB; opening in the text reader", e)
+        OpenAttempt.Show(ReaderUiState(loading = false, textEpub = true, title = bookOpener.titleOf(uri)))
     } catch (e: PdfPasswordException) {
         // An encrypted PDF, with no password offered or the wrong one: prompt rather
         // than fail. The generic error rides along, so cancelling the prompt leaves

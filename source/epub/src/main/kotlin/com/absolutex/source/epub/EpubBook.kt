@@ -27,10 +27,14 @@ sealed interface EpubBook {
      * A reflowable text EPUB: a spine of documents that carry no page image.
      *
      * Not a failure and not a malformed file — a novel is simply a different product from a comic
-     * reader. It is its own case so the reader can say so, instead of opening a book with no pages
-     * and leaving the user looking at nothing.
+     * reader. It carries its spine so the text reader can lay the book out chapter by chapter.
      */
-    data object Reflowable : EpubBook
+    data class Reflowable(
+        /** The spine: the book's documents, in reading order, as archive entry names. */
+        val spine: List<String>,
+        /** The cover image's entry name, when the package declares one. */
+        val coverEntryName: String?,
+    ) : EpubBook
 
     /** No container.xml, no package document, or neither could be read. */
     data object Malformed : EpubBook

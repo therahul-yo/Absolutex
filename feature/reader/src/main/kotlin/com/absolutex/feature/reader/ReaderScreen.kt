@@ -161,6 +161,7 @@ fun ReaderScreen(
     ) {
         when {
             ui.loading -> CircularProgressIndicator()
+            ui.textEpub -> TextEpubReader(uri, ui.title, onSettings)
             // Generic string from the ViewModel — never a raw Uri or entry name.
             ui.error != null -> Column(
                 modifier = Modifier.padding(24.dp),

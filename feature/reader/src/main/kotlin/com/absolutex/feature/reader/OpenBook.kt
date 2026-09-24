@@ -78,7 +78,8 @@ private fun Context.openEpub(uri: Uri): Closeable? {
     }
     return when (val result = EpubComicSource.open(entries.names) { cache[it] ?: entries.read(it) }) {
         is EpubComicSource.Result.Comic -> result.source
-        EpubComicSource.Result.TextEpub -> throw IOException("reflowable EPUB, not a comic")
+        // Not a failure: a text book, which the reader hands to its text view (TextEpubReader).
+        EpubComicSource.Result.TextEpub -> throw ReflowableEpubException()
         EpubComicSource.Result.NotAnEpub -> null
     }
 }
@@ -206,3 +207,6 @@ private fun Context.documentFolderPages(documentUri: Uri): List<FolderEntry> =
                 contentResolver.openInputStream(Uri.parse(page.uri)) ?: throw IOException("page is unreadable")
             }
         }
+
+/** The book is a reflowable text EPUB: open it in the text reader, not as a comic. */
+internal class ReflowableEpubException : IOException("reflowable EPUB")

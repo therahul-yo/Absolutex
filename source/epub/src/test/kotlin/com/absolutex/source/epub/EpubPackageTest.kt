@@ -81,7 +81,7 @@ class EpubPackageTest {
             spine = listOf("p1"),
             pageDoc = { "<html><body><img src=\"../img/missing.jpg\"/></body></html>" },
         )
-        assertSame(EpubBook.Reflowable, parse(files))
+        assertTrue((parse(files)) is EpubBook.Reflowable)
     }
 
     @Test fun `a reference that is not an image is not a page`() {
@@ -90,14 +90,21 @@ class EpubPackageTest {
             pageDoc = { "<html><body><img src=\"../notes.txt\"/></body></html>" },
             extra = mapOf("OEBPS/notes.txt" to "not an image"),
         )
-        assertSame(EpubBook.Reflowable, parse(files))
+        assertTrue((parse(files)) is EpubBook.Reflowable)
     }
 
     // ---- the text-EPUB verdict -----------------------------------------------------------
 
     @Test fun `a reflowable text epub is detected, not opened as an empty book`() {
         val files = epub(spine = listOf("p1", "p2"), pageDoc = { "<html><body><p>Call me Ishmael.</p></body></html>" })
-        assertSame(EpubBook.Reflowable, parse(files))
+        assertTrue((parse(files)) is EpubBook.Reflowable)
+    }
+
+    @Test fun `a reflowable book keeps its spine in reading order`() {
+        val files = epub(spine = listOf("p1", "p2"), pageDoc = { "<html><body><p>prose</p></body></html>" })
+        val book = parse(files) as EpubBook.Reflowable
+        assertEquals(2, book.spine.size)
+        assertTrue(book.spine[0].endsWith("p1.xhtml") && book.spine[1].endsWith("p2.xhtml"))
     }
 
     @Test fun `a book where only some documents carry an image is reflowable`() {
@@ -105,7 +112,7 @@ class EpubPackageTest {
         // would silently drop its prose.
         val files = buildEpub(spine = listOf("p1", "p2")).toMutableMap()
         files["OEBPS/text/p2.xhtml"] = "<html><body><p>prose, no picture</p></body></html>"
-        assertSame(EpubBook.Reflowable, EpubPackage.parse(files.keys.toList(), reader(files)))
+        assertTrue((EpubPackage.parse(files.keys.toList(), reader(files))) is EpubBook.Reflowable)
     }
 
     // ---- malformed --------------------------------------------------------------------

@@ -50,4 +50,8 @@
     <string name="reader_rotation_auto">Follow system</string>
     <string name="reader_rotation_portrait">Portrait</string>
     <string name="reader_rotation_landscape">Landscape</string>
+    <!-- Text-book position: chapter N of M, then page within the chapter. -->
+    <string name="reader_text_position">Chapter %1$d of %2$d · %3$d/%4$d</string>
+    <string name="reader_text_smaller">Smaller text</string>
+    <string name="reader_text_larger">Larger text</string>
 </resources>
