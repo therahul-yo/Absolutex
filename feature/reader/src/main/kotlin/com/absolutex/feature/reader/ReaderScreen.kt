@@ -631,7 +631,10 @@ private fun PageSlotContent(
     // lifecycle-aware collector writes it into draw-observed state, so a slider drag
     // repaints at 120 Hz without recomposing PageCanvas (or any sibling slot).
     val lifecycleOwner = LocalLifecycleOwner.current
-    val colourState = remember { mutableStateOf(ColourParams.NEUTRAL) }
+    // Seeded from the StateFlow's current value, not NEUTRAL: the collector only runs after
+    // the first composition, so a neutral seed shows uncorrected → graded on every first
+    // frame for anyone with a colour grade (lead follow-up on #46).
+    val colourState = remember(vm) { mutableStateOf(vm.renderingPrefs.value.colour) }
     LaunchedEffect(vm) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             vm.renderingPrefs.collect { colourState.value = it.colour }

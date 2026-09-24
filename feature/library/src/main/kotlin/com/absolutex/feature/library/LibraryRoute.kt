@@ -1,5 +1,8 @@
 package com.absolutex.feature.library
 
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material3.IconButton
@@ -160,6 +163,7 @@ internal fun LibraryScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LibraryBody(
     state: LibraryUiState,
@@ -180,22 +184,26 @@ private fun LibraryBody(
         snackbar.showSnackbar(noticeText)
         actions.onMessageShown()
     }
+    val scroll = TopAppBarDefaults.enterAlwaysScrollBehavior()
     Scaffold(
+        modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         topBar = {
-            // Selection swaps the bar in place — no second bar pushing the list down.
-            AnimatedContent(
-                state.selectionActive,
-                transitionSpec = { fadeIn(Motion.enter()) togetherWith fadeOut(Motion.exit()) },
-                label = "bar",
-            ) { selecting ->
-                if (selecting) SelectionTopBar(state, actions) else LibraryTopBar(state.section, onOpenSettings)
+            CollapsingHeader(scroll) {
+                // Selection swaps the bar in place — no second bar pushing the list down.
+                AnimatedContent(
+                    state.selectionActive,
+                    transitionSpec = { fadeIn(Motion.enter()) togetherWith fadeOut(Motion.exit()) },
+                    label = "bar",
+                ) { selecting ->
+                    if (selecting) SelectionTopBar(state, actions) else LibraryTopBar(state.section, onOpenSettings)
+                }
+                LibraryControls(state, actions)
             }
         },
         snackbarHost = { SnackbarHost(snackbar) },
         // Scaffold consumes the system bars for us; the app draws edge to edge (§7).
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
-            LibraryControls(state, actions)
             LibraryContent(state, actions, onOpenBook, onAddLocation, openCoverPath = openCoverPath)
         }
     }
@@ -205,6 +213,8 @@ private fun LibraryBody(
 @Composable
 private fun LibraryTopBar(section: HomeSection, onOpenSettings: () -> Unit) {
     TopAppBar(
+        // The status-bar inset is the collapsing header's (CollapsingHeader), not the bar's.
+        windowInsets = WindowInsets(0),
         title = {
             // The section name is the title; it cross-fades rather than jumping.
             Crossfade(section, animationSpec = Motion.enter(), label = "title") { shown ->

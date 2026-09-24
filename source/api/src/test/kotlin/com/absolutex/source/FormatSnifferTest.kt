@@ -38,6 +38,22 @@ class FormatSnifferTest {
         assertEquals(ContainerFormat.EPUB, FormatSniffer.detect(epub()))
     }
 
+    @Test fun `an epub zipped with META-INF first is still an epub`() {
+        // Converter-made EPUBs (web novels) often skip OCF's mimetype-first rule. Sniffed as a
+        // plain ZIP they opened as bundles of images.
+        val loose = zip(
+            "META-INF/container.xml" to ascii("<container/>"),
+            "mimetype" to ascii("application/epub+zip"),
+            "OEBPS/content.opf" to ascii("<package/>"),
+        )
+        assertEquals(ContainerFormat.EPUB, FormatSniffer.detect(loose.copyOf(FormatSniffer.HEADER_BYTES)))
+    }
+
+    @Test fun `a comic zip is not mistaken for a loose epub`() {
+        val comic = zip("001.jpg" to ByteArray(8), "META-INF/container.xml" to ascii("<container/>"))
+        assertEquals(ContainerFormat.ZIP, FormatSniffer.detect(comic.copyOf(FormatSniffer.HEADER_BYTES)))
+    }
+
     @Test fun `rar4 and rar5 are told apart`() {
         assertEquals(ContainerFormat.RAR4, FormatSniffer.detect(signature(RAR4)))
         assertEquals(ContainerFormat.RAR5, FormatSniffer.detect(signature(RAR5)))
