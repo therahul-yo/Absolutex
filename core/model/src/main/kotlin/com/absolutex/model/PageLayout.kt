@@ -49,6 +49,18 @@ object Spreads {
         return spreads
     }
 
+    /**
+     * The spread at [index], clamped into range; empty when there are no spreads at all.
+     *
+     * For reads made from a pager index, which lags a change in [spreads] by one composition:
+     * [spreads] is recomputed the moment the page count or the layout changes, but the pager is
+     * only re-targeted by an effect, and effects run after the frame. Indexing directly in that
+     * frame was an out-of-bounds crash on launch — a resumed book at page 93 whose page count
+     * then settled at 90.
+     */
+    fun at(spreads: List<IntRange>, index: Int): IntRange =
+        if (spreads.isEmpty()) IntRange.EMPTY else spreads[index.coerceIn(0, spreads.lastIndex)]
+
     /** The spread showing book [page], clamped to the book: spreads are ordered and contiguous. */
     fun indexOf(spreads: List<IntRange>, page: Int): Int {
         if (spreads.isEmpty()) return 0
