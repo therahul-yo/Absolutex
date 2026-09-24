@@ -55,7 +55,19 @@ object FormatSniffer {
             startsWith(header, ZIP_SPANNED)
 
     private fun zipFlavour(header: ByteArray): ContainerFormat =
-        if (isEpub(header)) ContainerFormat.EPUB else ContainerFormat.ZIP
+        if (isEpub(header) || looksLikeLooseEpub(header)) ContainerFormat.EPUB else ContainerFormat.ZIP
+
+    /**
+     * A ZIP whose first entry is the package's own `META-INF/` is an EPUB its tool zipped without
+     * OCF's ordering rule (mimetype first). Plenty of converters do, web-novel exporters
+     * especially; read as a plain ZIP it opened as a bundle of images — a novel showing only its
+     * cover and illustrations. A comic archive does not begin with `META-INF/`, so this costs a CBZ
+     * nothing and is still decided from the header alone. (The reader confirms: a ZIP that is not
+     * really an EPUB fails the package parse and falls back to the archive reader.)
+     */
+    private fun looksLikeLooseEpub(header: ByteArray): Boolean =
+        startsWith(header, ZIP_LOCAL) && u16(header, NAME_LENGTH_AT) > META_INF.size &&
+            matchesAt(header, LOCAL_HEADER_BYTES, META_INF)
 
     /**
      * An EPUB is a ZIP whose *first* entry is an uncompressed `mimetype` holding exactly
@@ -132,6 +144,7 @@ object FormatSniffer {
     private val TAR_MAGIC = "ustar".toByteArray(Charsets.US_ASCII)
     private val PDF_MAGIC = "%PDF-".toByteArray(Charsets.US_ASCII)
     private val MIMETYPE_NAME = "mimetype".toByteArray(Charsets.US_ASCII)
+    private val META_INF = "META-INF/".toByteArray(Charsets.US_ASCII)
     private val EPUB_MIMETYPE = "application/epub+zip".toByteArray(Charsets.US_ASCII)
 
     /** Offsets into a ZIP local file header (APPNOTE 4.3.7) and the TAR header block. */
