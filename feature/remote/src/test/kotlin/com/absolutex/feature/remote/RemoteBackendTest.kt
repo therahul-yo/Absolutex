@@ -51,6 +51,9 @@ class RemoteBackendTest {
             throw IOException("unused in connection tests")
         }
 
+        override fun listDir(remotePath: String): List<com.absolutex.remote.smb.SmbEntry> =
+            throw IOException("unused in connection tests")
+
         override fun close() {
             onClose()
         }

@@ -175,6 +175,8 @@ private val TRANSIENT_MARKERS = listOf(
     "timeout",
     "connection reset",
     "reset by peer",
+    "connection lost",
+    "lost connection",
     "broken pipe",
     "eof",
     "short read",

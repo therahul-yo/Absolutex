@@ -16,7 +16,6 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import com.absolutex.source.PageReadability
 
 /** Bundled benign fixture: always runs, unlike optional device-staged corpus cases. */
 @RunWith(AndroidJUnit4::class)
@@ -109,7 +108,10 @@ class ArchivePasswordTest {
         source.use {
             assertTrue(it.isEncrypted)
             assertEquals(1, it.pages.size)
-            assertEquals(PageReadability(0, 1), it.pageReadability)
+            // Not a recovery open (the listing is complete and ComicInfo agrees on one page), so
+            // no count is taken and nothing is reported — exactly as a torn page in a plain archive.
+            // The page fails when it is reached, below, which is the degrade this test pins.
+            assertEquals(null, it.pageReadability)
             assertEquals("Encrypted fixture", it.comicInfo?.series)
             assertThrows(IOException::class.java) { it.openPage(0).close() }
         }

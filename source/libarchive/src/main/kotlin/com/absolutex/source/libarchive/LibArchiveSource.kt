@@ -154,6 +154,20 @@ class LibArchiveSource private constructor(
             return LibArchiveSource(openFd, pages, ordinals, info, readability, encrypted[0], owned)
         }
 
+        /**
+         * The recovery report, or null — and null on every ordinary open, encrypted or not.
+         *
+         * [ComicSource.pageReadability] is recovery-only by contract ("null means unverified, NOT
+         * that every page is readable"), and [PageReadability.inspect] decompresses every page,
+         * which is why it is "only used on recovery". Encryption is not recovery. Routing every
+         * encrypted open through the count reported a damage notice on healthy books and read the
+         * whole archive before page one; a torn page in an encrypted archive now behaves exactly
+         * as one in a plain archive already did — unreported until reached, then degraded.
+         *
+         * The password probe still runs for every encrypted open, recovery or not: a wrong
+         * passphrase must fail closed here rather than on some later page. One descriptor serves
+         * both the probe and the count, so a recovery open is still a single archive scan.
+         */
         private fun computeReadability(
             openFd: () -> ParcelFileDescriptor,
             ordinals: IntArray,
@@ -161,39 +175,30 @@ class LibArchiveSource private constructor(
             recovery: Boolean,
             encrypted: Boolean,
             password: ByteArray?,
-        ): PageReadability? = if (recovery || encrypted) {
-            runProbeAndReadability(openFd, ordinals, info, encrypted, password)
-        } else {
-            null
-        }
-
-        /** One descriptor for both the probe and the count, so an open is not many archive scans. */
-        private fun runProbeAndReadability(
-            openFd: () -> ParcelFileDescriptor,
-            ordinals: IntArray,
-            info: ComicInfo?,
-            encrypted: Boolean,
-            password: ByteArray?,
-        ): PageReadability? = openFd().use { probeFd ->
-            // A wrong or rejected password fails closed here, before any page is read, rather
-            // than mid-session on some later page. The probe is called for that effect alone:
-            // the native side throws WrongPasswordException / PasswordRequiredException for a
-            // password diagnostic, so a *null* return means the entry could not be read with a
-            // password that is fine — a torn CRC or a truncated entry. That must not refuse the
-            // book: §2 degrades, and the readability pass below is what counts such a page as
-            // unreadable while the other 199 still open. The passphrase is passed through
-            // uncopied; copy_passphrase in the JNI takes its own copy and wipes it on every
-            // exit, so a second Kotlin-side copy would only be one more plaintext array to
-            // forget to clear.
-            if (encrypted) {
-                val firstOrdinal = ordinals.getOrNull(0) ?: -1
-                if (firstOrdinal >= 0) {
-                    LibArchive.nativeExtract(probeFd.fd, firstOrdinal, password)
+        ): PageReadability? {
+            if (!recovery && !encrypted) return null
+            return openFd().use { probeFd ->
+                if (encrypted) probePassword(probeFd, ordinals, password)
+                if (!recovery) return@use null
+                PageReadability.inspect(ordinals.toList(), info?.pageCount) { ordinal ->
+                    LibArchive.nativeExtract(probeFd.fd, ordinal, password)?.isNotEmpty() == true
                 }
             }
-            PageReadability.inspect(ordinals.toList(), info?.pageCount) { ordinal ->
-                LibArchive.nativeExtract(probeFd.fd, ordinal, password)?.isNotEmpty() == true
-            }
+        }
+
+        /**
+         * Fails closed on a wrong or missing passphrase before any page is read, rather than
+         * mid-session on some later page. Called for that effect alone: the native side throws
+         * WrongPasswordException / PasswordRequiredException for a password diagnostic, so a
+         * *null* return means the entry could not be read with a password that is fine — a torn
+         * CRC or a truncated entry. That must not refuse the book (§2 degrades), so it is ignored
+         * here and the page fails when it is reached. The passphrase is passed through uncopied:
+         * copy_passphrase in the JNI takes its own copy and wipes it on every exit, so a second
+         * Kotlin-side copy would only be one more plaintext array to forget to clear.
+         */
+        private fun probePassword(probeFd: ParcelFileDescriptor, ordinals: IntArray, password: ByteArray?) {
+            val firstOrdinal = ordinals.getOrNull(0) ?: return
+            LibArchive.nativeExtract(probeFd.fd, firstOrdinal, password)
         }
     }
 }

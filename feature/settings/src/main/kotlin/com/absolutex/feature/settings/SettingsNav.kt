@@ -16,6 +16,11 @@ const val SETTINGS_ROUTE = "settings"
  * the graph the remote list lives in. Back navigation is the host's concern: this destination
  * pushes nothing and pops nothing itself.
  */
-fun NavGraphBuilder.settingsDestination(onOpenRemote: () -> Unit = {}) {
-    composable(SETTINGS_ROUTE) { SettingsScreen(onOpenRemote = onOpenRemote) }
+fun NavGraphBuilder.settingsDestination(
+    onOpenRemote: () -> Unit = {},
+    onAddLocation: () -> Unit = {},
+) {
+    composable(SETTINGS_ROUTE) {
+        SettingsScreen(onOpenRemote = onOpenRemote, onAddLocation = onAddLocation)
+    }
 }

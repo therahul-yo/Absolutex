@@ -182,6 +182,29 @@ fun AboutRow(modifier: Modifier = Modifier) {
 }
 
 /**
+ * Adds a storage location — the folders the library scans (§5.1).
+ *
+ * This row exists because the only other way in was the library's empty state, which renders
+ * exclusively when there are **zero** locations. After the first folder was added that affordance
+ * was gone for good: no second folder could ever be added, and a location pointing somewhere
+ * that no longer holds books left the library permanently empty with nothing to do about it.
+ *
+ * Adding is all this offers. Removing is not needed: `ShellViewModel.rescanLocations` already
+ * drops a location whose grant the system no longer holds, so a revoked folder cleans itself up.
+ */
+@Composable
+fun AddStorageLocationRow(onAdd: () -> Unit, modifier: Modifier = Modifier) {
+    ListItem(
+        headlineContent = { Text(stringResource(R.string.settings_add_location_title)) },
+        supportingContent = { Text(stringResource(R.string.settings_add_location_desc)) },
+        modifier = modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = A11y.MinTouchTarget)
+            .clickable(role = Role.Button, onClick = onAdd),
+    )
+}
+
+/**
  * The way in to the remote servers list (§5.3).
  *
  * The transports, the list and the form have all shipped; until this row existed nothing in the

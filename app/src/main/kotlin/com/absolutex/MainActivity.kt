@@ -1,6 +1,18 @@
 package com.absolutex
 
 import android.content.ComponentCallbacks2
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import com.absolutex.core.ui.Motion
+import javax.inject.Inject
+import com.absolutex.feature.reader.BookCovers
+import com.absolutex.feature.library.LocalBookCovers
+import com.absolutex.feature.library.BookCoverSource
+import androidx.compose.runtime.CompositionLocalProvider
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
@@ -26,6 +38,7 @@ import com.absolutex.core.ui.AbsolutexTheme
 import com.absolutex.feature.library.LibraryRoute
 import com.absolutex.feature.remote.REMOTE_LIST_ROUTE
 import com.absolutex.feature.remote.remoteDestination
+import com.absolutex.feature.settings.SETTINGS_ROUTE
 import com.absolutex.feature.settings.settingsDestination
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
@@ -44,6 +57,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 class MainActivity : ComponentActivity() {
     private val readerViewModel: ReaderViewModel by viewModels()
     private val shell: ShellViewModel by viewModels()
+
+    /** Library cover art, provided down the tree so :feature:library never depends on the reader. */
+    @Inject lateinit var covers: BookCovers
 
     private val trimCallback = object : ComponentCallbacks2 {
         override fun onTrimMemory(level: Int) {
@@ -82,7 +98,9 @@ class MainActivity : ComponentActivity() {
                 NightMode.SYSTEM -> isSystemInDarkTheme()
             }
             AbsolutexTheme(darkTheme = dark, dynamicColor = app.dynamicColour, trueBlack = app.trueBlack) {
-                Root(directUri = direct)
+                CompositionLocalProvider(LocalBookCovers provides BookCoverSource(covers::cover)) {
+                    Root(directUri = direct)
+                }
             }
         }
     }
@@ -195,7 +213,7 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
         }
     }
 
-    NavHost(nav, startDestination = if (directUri != null) readerRoute(directUri) else LIBRARY_ROUTE) {
+    AxisNavHost(nav, if (directUri != null) readerRoute(directUri) else LIBRARY_ROUTE) {
         composable(LIBRARY_ROUTE) {
             // Rescanning belongs to the screen that shows the result, not to launch: a book opened
             // from a file manager never reaches here, and §3 measures its first page from the tap.
@@ -212,6 +230,10 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
                     nav.navigate(readerRoute(bookUri(path)))
                 },
                 onAddLocation = { folderPicker.launch(null) },
+                // The library is the launch destination, so this is the only route to settings a
+                // fresh install has: the reader's own settings action needs a book open first,
+                // and an empty library has none.
+                onOpenSettings = { nav.navigate(SETTINGS_ROUTE) },
             )
         }
         composable(READER_ROUTE) { entry ->
@@ -224,7 +246,9 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
         // The settings row is the only way in to the remote servers list: the transports, the
         // list and the form all shipped before anything navigated to them. The route name is the
         // host's to know, which is why the callback is supplied here rather than in :feature:settings.
-        settingsDestination(onOpenRemote = { nav.navigate(REMOTE_LIST_ROUTE) })
+        // onAddLocation is the same picker the library's empty state uses. Settings is the only
+        // place a SECOND folder can be added: that empty state renders only with zero locations.
+        settingsDestination({ nav.navigate(REMOTE_LIST_ROUTE) }, { folderPicker.launch(null) })
         remoteDestinations(nav)
     }
     // After the NavHost: effects run in composition order, so the graph is set by the time this
@@ -250,3 +274,27 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
         resume = null
     }
 }
+
+private fun sharedAxisIn(forward: Boolean): EnterTransition =
+    slideInHorizontally(Motion.enter()) { w -> (if (forward) w else -w) / Motion.SHARED_AXIS_FRACTION } +
+        fadeIn(Motion.enter())
+
+private fun sharedAxisOut(forward: Boolean): ExitTransition =
+    slideOutHorizontally(Motion.exit()) { w -> (if (forward) -w else w) / Motion.SHARED_AXIS_FRACTION } +
+        fadeOut(Motion.exit())
+
+/**
+ * NavHost with shared-axis transitions: a screen you go into arrives from the right while the one
+ * you leave recedes a little the other way, so depth reads as direction, and back reverses it.
+ * Durations scale with the system animator setting, so "remove animations" turns this off.
+ */
+@Composable
+private fun AxisNavHost(nav: NavHostController, start: String, graph: NavGraphBuilder.() -> Unit) = NavHost(
+    nav,
+    startDestination = start,
+    enterTransition = { sharedAxisIn(forward = true) },
+    exitTransition = { sharedAxisOut(forward = true) },
+    popEnterTransition = { sharedAxisIn(forward = false) },
+    popExitTransition = { sharedAxisOut(forward = false) },
+    builder = graph,
+)

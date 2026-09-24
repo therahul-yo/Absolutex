@@ -37,6 +37,20 @@ class SmbBookBackend @Inject constructor(
         return SmbjTransport(location, smbStore(server.id), server.id).bind(location.path)
     }
 
+    /**
+     * Unbound share transport for folder listing: same credentials, no file attached. The
+     * caller closes it after listing — one transport per listing pass, never shared.
+     */
+    fun listingTransport(server: SmbServer): SmbjTransport {
+        // Presence check only, same discipline as transportFor above: the transport pulls
+        // (and zeroes) its own copy later, so this copy dies with the check.
+        val password = secrets.loadSmbPassword(server.id)
+            ?: throw IOException("no SMB password for ${server.id}")
+        password.fill(Char.MIN_VALUE)
+        val location = server.toLocation(server.path.ifBlank { ROOT_PATH })
+        return SmbjTransport(location, smbStore(server.id), server.id)
+    }
+
     private fun smbStore(serverId: String): SmbCredentialStore =
         object : SmbCredentialStore {
             override fun store(alias: String, password: CharArray) {
@@ -65,6 +79,18 @@ class FtpBookBackend @Inject constructor(
             secrets.loadFtpPassword(server.id)?.copyOf()
                 ?: throw IOException("no FTP password for ${server.id}")
         }).bind(location.path)
+    }
+
+    /**
+     * Unbound control connection for folder listing: same password discipline, no file
+     * attached. The caller closes it after listing.
+     */
+    fun listingTransport(server: FtpServer): CommonsNetFtpTransport {
+        val location = server.toLocation(server.path.ifBlank { ROOT_PATH })
+        return CommonsNetFtpTransport(location, {
+            secrets.loadFtpPassword(server.id)?.copyOf()
+                ?: throw IOException("no FTP password for ${server.id}")
+        })
     }
 }
 
@@ -154,3 +180,6 @@ internal fun FtpServer.toLocation(path: String): FtpLocation {
  */
 internal fun absolutePath(path: String): String =
     if (path.startsWith("/")) path else "/$path"
+
+/** Share root: the listing start when a record stores no sub-path. */
+internal const val ROOT_PATH = "/"

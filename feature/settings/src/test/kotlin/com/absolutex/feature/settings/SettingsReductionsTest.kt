@@ -68,16 +68,16 @@ class SettingsReductionsTest {
 
     @Test
     fun `withDynamicColour flips only its own field`() {
-        assertEquals(AppPrefs().copy(dynamicColour = false), AppPrefs().withDynamicColour(false))
-        assertEquals(
-            AppPrefs().copy(dynamicColour = false).withDynamicColour(true),
-            AppPrefs(),
-        )
+        // Flipped away from the default and back, so the test works whichever way the default points.
+        val flipped = !AppPrefs().dynamicColour
+        assertEquals(AppPrefs().copy(dynamicColour = flipped), AppPrefs().withDynamicColour(flipped))
+        assertEquals(AppPrefs(), AppPrefs().withDynamicColour(flipped).withDynamicColour(!flipped))
     }
 
     @Test
     fun `withTrueBlack flips only its own field`() {
-        assertEquals(AppPrefs().copy(trueBlack = true), AppPrefs().withTrueBlack(true))
+        val flipped = !AppPrefs().trueBlack
+        assertEquals(AppPrefs().copy(trueBlack = flipped), AppPrefs().withTrueBlack(flipped))
     }
 
     @Test

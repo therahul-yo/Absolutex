@@ -168,7 +168,7 @@ class DataStoreSettingsTest {
         }
 
         val (settings, settingsJob) = open(f)
-        assertEquals(NightMode.SYSTEM, settings.currentAppPrefs().nightMode)
+        assertEquals(AppPrefs().nightMode, settings.currentAppPrefs().nightMode)
         assertEquals(ReadingFlow.LTR, settings.currentReaderPrefs().readingFlow)
         settingsJob.cancelAndJoin()
     }

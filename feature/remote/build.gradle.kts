@@ -20,6 +20,12 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:ui"))
     implementation(project(":core:data"))
+    // Grid covers decode through the shared thumbnail pipeline at its width buckets.
+    implementation(project(":core:thumbnails"))
+    // Folder rows show book files only, filtered against the scanner's container set.
+    implementation(project(":core:scan"))
+    // Last-folder-per-server memory for the browser; stored, never networked.
+    implementation(libs.datastore.preferences)
     // DecodeDispatchers.extract: the real RemoteBookOpener binding below runs SMBJ/Commons Net
     // (both blocking by design) off Main on it, same pool local archive extraction already uses.
     implementation(project(":core:decode"))
@@ -50,7 +56,6 @@ dependencies {
     // Direct: Robolectric tests take the application context explicitly.
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(libs.datastore.preferences)
     // Real in-process FTP server for the probe's behavioural mapping (same trio the
     // :remote:ftp module's own wire tests use). Test-only, off the release classpath.
     testImplementation(libs.ftpserver.core)

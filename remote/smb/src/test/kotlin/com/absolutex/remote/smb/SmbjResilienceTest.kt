@@ -77,6 +77,9 @@ class SmbjResilienceTest {
             return handle
         }
 
+        // Listing is pinned in SmbListTest; resilience never lists, so empty.
+        override fun listDir(remotePath: String): List<SmbEntry> = emptyList()
+
         override fun close() {
             closes.incrementAndGet()
         }
@@ -196,6 +199,7 @@ class SmbjResilienceTest {
                 opens++
                 return if (opens == 2) flakyBig else if (opens < 2) big else small
             }
+            override fun listDir(remotePath: String): List<SmbEntry> = emptyList()
             override fun close() = Unit
         }
         val connects = AtomicInteger(0)

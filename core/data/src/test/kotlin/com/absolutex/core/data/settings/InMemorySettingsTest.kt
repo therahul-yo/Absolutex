@@ -93,8 +93,8 @@ class InMemorySettingsTest {
         val bag = MapPrefBag(mapOf(PrefCodec.KEY_NIGHT_MODE to 7))
         val settings = InMemorySettings(bag)
         settings.updateApp { it.copy(trueBlack = true) }
-        assertEquals("NightMode.SYSTEM", "SYSTEM", bag.snapshot()[PrefCodec.KEY_NIGHT_MODE])
-        assertEquals(NightMode.SYSTEM, InMemorySettings(bag).appPrefs.first().nightMode)
+        assertEquals("repaired to the default", AppPrefs().nightMode.name, bag.snapshot()[PrefCodec.KEY_NIGHT_MODE])
+        assertEquals(AppPrefs().nightMode, InMemorySettings(bag).appPrefs.first().nightMode)
     }
 
     @Test
@@ -138,11 +138,12 @@ class InMemorySettingsTest {
     fun `an auto background update persists and leaves upscaler alone`() = runTest {
         val bag = MapPrefBag()
         val settings = InMemorySettings(bag)
-        settings.updateRendering { it.copy(autoBackground = false) }
-        assertFalse(settings.renderingPrefs.first().autoBackground)
+        // Writes the NON-default: writing the default would pass whether or not anything persisted.
+        settings.updateRendering { it.copy(autoBackground = true) }
+        assertTrue(settings.renderingPrefs.first().autoBackground)
         assertEquals(RenderingPrefs().upscaler, settings.renderingPrefs.first().upscaler)
         // A fresh instance over the same bag is what a process restart looks like.
         val reopened = InMemorySettings(bag)
-        assertFalse(reopened.renderingPrefs.first().autoBackground)
+        assertTrue(reopened.renderingPrefs.first().autoBackground)
     }
 }

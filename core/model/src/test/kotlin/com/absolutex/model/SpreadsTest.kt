@@ -45,4 +45,23 @@ class SpreadsTest {
     @Test fun `a one-page book is one spread in every layout`() {
         PageLayout.entries.forEach { assertEquals(listOf(0..0), Spreads.of(1, it)) }
     }
+
+    @Test fun `a pager index past a just-shrunk list reads the last spread, not out of bounds`() {
+        // The launch crash: a resumed pager at 93 over a book whose count settled at 90.
+        val spreads = Spreads.of(90, PageLayout.SINGLE)
+        assertEquals(89..89, Spreads.at(spreads, 93))
+    }
+
+    @Test fun `an index inside the list reads exactly that spread`() {
+        val spreads = Spreads.of(10, PageLayout.DOUBLE)
+        assertEquals(spreads[2], Spreads.at(spreads, 2))
+    }
+
+    @Test fun `a negative index reads the first spread`() {
+        assertEquals(0..0, Spreads.at(Spreads.of(5, PageLayout.SINGLE), -1))
+    }
+
+    @Test fun `no spreads at all reads empty rather than throwing`() {
+        assertEquals(IntRange.EMPTY, Spreads.at(emptyList(), 3))
+    }
 }

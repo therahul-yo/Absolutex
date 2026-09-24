@@ -14,6 +14,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.withPermit
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -43,7 +44,7 @@ class ThumbnailPipeline(
     cacheDir: File,
     memoryBytes: Long = DEFAULT_MEMORY_BYTES,
     diskBytes: Long = ThumbDiskCache.DISK_CAP_BYTES,
-    dispatcher: CoroutineDispatcher = ThumbnailDispatchers.thumbnails,
+    private val dispatcher: CoroutineDispatcher = ThumbnailDispatchers.thumbnails,
 ) {
     private val memory = ThumbMemoryCache(memoryBytes)
     private val disk = ThumbDiskCache(cacheDir, diskBytes)
@@ -86,6 +87,16 @@ class ThumbnailPipeline(
         deferred.start()
         return deferred.await()
     }
+
+    /**
+     * A thumbnail already in memory or on disk, WITHOUT opening its book; null on a miss.
+     *
+     * [load] needs an open source even for a cache hit, which is right for the reader — the book is
+     * already open — and wrong for a library, where opening a 600 MB archive to show a cover the
+     * disk already holds is the whole cost the cache exists to avoid.
+     */
+    suspend fun cached(request: ThumbRequest, config: Bitmap.Config = Bitmap.Config.HARDWARE): Bitmap? =
+        memory.get(request) ?: withContext(dispatcher) { loadFromDisk(request, config) }
 
     /**
      * Loads many thumbnails with bounded concurrency. Each key maps to its own [Result]: one

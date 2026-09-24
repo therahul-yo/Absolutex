@@ -9,10 +9,12 @@ import com.absolutex.model.BookIdentity
 import com.absolutex.source.ContainerFormat
 import com.absolutex.source.EntryFilter
 import com.absolutex.source.FormatSniffer
+import com.absolutex.source.epub.EpubComicSource
 import com.absolutex.source.folder.FolderComicSource
 import com.absolutex.source.folder.FolderEntry
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import com.absolutex.source.libarchive.ArchiveEntries
 import com.absolutex.source.libarchive.LibArchiveSource
 import com.absolutex.source.pdf.PdfDocument
 import java.io.Closeable
@@ -35,12 +37,18 @@ internal fun Context.openBook(uri: Uri): Closeable {
     if (folder != null) return FolderComicSource.open(folder)
     val head = ParcelFileDescriptor.AutoCloseInputStream(openDescriptor(uri))
         .use { it.readNBytes(FormatSniffer.HEADER_BYTES) }
-    if (FormatSniffer.detect(head) != ContainerFormat.PDF) {
+    return when (FormatSniffer.detect(head)) {
+        ContainerFormat.PDF -> openPdf(uri)
+        // A malformed package is still a ZIP; the archive reader opens its images.
+        ContainerFormat.EPUB -> openEpub(uri) ?: LibArchiveSource.open { openDescriptor(uri) }
         // Everything else is libarchive's, which reads more formats than the sniffer names — so
-        // UNKNOWN is a route, not a failure, and behaviour for every non-PDF is unchanged.
-        // A fresh descriptor per read — a shared SAF fd corrupts parallel reads.
-        return LibArchiveSource.open { openDescriptor(uri) }
+        // UNKNOWN is a route, not a failure. A fresh descriptor per read: a shared SAF fd
+        // corrupts parallel reads.
+        else -> LibArchiveSource.open { openDescriptor(uri) }
     }
+}
+
+private fun Context.openPdf(uri: Uri): Closeable {
     // One descriptor for the document's life: every PDFium read is a pread (see PdfDocument).
     val pfd = openDescriptor(uri)
     return try {
@@ -48,6 +56,30 @@ internal fun Context.openBook(uri: Uri): Closeable {
     } catch (e: IOException) {
         pfd.close()
         throw e
+    }
+}
+
+/**
+ * A fixed-layout comic EPUB, or null for anything [EpubComicSource] does not read as one.
+ *
+ * Two costs, deliberately different. The package parse needs every spine document, so it reads
+ * them in ONE forward pass ([EpubComicSource.packageEntryCache]) — per-document extraction walks
+ * the entry headers from the start each time, which its author measured at 2.5 s for a 200-page
+ * book against 64 ms for the single pass. Page images are not in that cache, and are read by
+ * ordinal exactly as every CBZ page is ([LibArchiveSource] does the same walk per page).
+ *
+ * A malformed package falls back to the archive reader, which opens a ZIP of images fine. A
+ * reflowable EPUB is a text book, not a comic: it fails the open rather than showing nothing.
+ */
+private fun Context.openEpub(uri: Uri): Closeable? {
+    val entries = ArchiveEntries.list { openDescriptor(uri) } ?: return null
+    val cache = EpubComicSource.packageEntryCache {
+        ParcelFileDescriptor.AutoCloseInputStream(openDescriptor(uri))
+    }
+    return when (val result = EpubComicSource.open(entries.names) { cache[it] ?: entries.read(it) }) {
+        is EpubComicSource.Result.Comic -> result.source
+        EpubComicSource.Result.TextEpub -> throw IOException("reflowable EPUB, not a comic")
+        EpubComicSource.Result.NotAnEpub -> null
     }
 }
 
@@ -122,6 +154,23 @@ private fun filePages(dir: File): List<FolderEntry> =
         ?.filter { it.isFile && EntryFilter.isPage(it.name) }
         ?.map { page -> FolderEntry(page.name, page.length()) { page.inputStream() } }
         .orEmpty()
+
+/**
+ * The name a reader recognises. A SAF document's last path segment is its document id — on this
+ * provider "msf:1000092392" — so the title bar showed that; the provider's DISPLAY_NAME is the
+ * filename. A file path or a remote Uri already ends in its name. Degrades to the old behaviour.
+ */
+internal fun Context.displayNameOf(uri: Uri): String {
+    val fromProvider = if (uri.scheme == "content") {
+        runCatching {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        }.getOrNull()
+    } else {
+        null
+    }
+    return fromProvider ?: uri.lastPathSegment?.substringAfterLast('/').orEmpty()
+}
 
 private fun Context.documentIdentity(uri: Uri): String = contentResolver.query(
     uri,

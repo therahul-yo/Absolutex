@@ -7,12 +7,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -33,11 +37,16 @@ import com.absolutex.core.scan.SortKey
  * @param onOpenBook handed the absolute path of the book to open.
  * @param onAddLocation invoked from the empty state a fresh install sees; the storage-location
  *   picker lives outside this module.
+ * @param onOpenSettings the library's way in to the settings screen. Until this existed the only
+ *   navigation to it was from the reader chrome, so a fresh install with an empty library could
+ *   not reach settings at all — and therefore could not add a storage location from there, change
+ *   a preference, or open the remote servers list.
  */
 @Composable
 fun LibraryRoute(
     onOpenBook: (String) -> Unit,
     onAddLocation: () -> Unit,
+    onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val viewModel: LibraryViewModel = hiltViewModel()
@@ -48,6 +57,7 @@ fun LibraryRoute(
         actions = actions,
         onOpenBook = onOpenBook,
         onAddLocation = onAddLocation,
+        onOpenSettings = onOpenSettings,
         modifier = modifier,
     )
 }
@@ -85,6 +95,7 @@ internal fun LibraryScreen(
     actions: LibraryActions,
     onOpenBook: (String) -> Unit,
     onAddLocation: () -> Unit,
+    onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // §7: one declaration adapts to bottom bar, rail or drawer across phone, tablet and foldable.
@@ -101,7 +112,7 @@ internal fun LibraryScreen(
         },
         modifier = modifier,
     ) {
-        LibraryBody(state, actions, onOpenBook, onAddLocation)
+        LibraryBody(state, actions, onOpenBook, onAddLocation, onOpenSettings)
     }
 }
 
@@ -112,6 +123,7 @@ private fun LibraryBody(
     actions: LibraryActions,
     onOpenBook: (String) -> Unit,
     onAddLocation: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     val snackbar = remember { SnackbarHostState() }
     // Resolved here and not inside the effect: the words are a string resource, and the effect's
@@ -125,7 +137,21 @@ private fun LibraryBody(
         actions.onMessageShown()
     }
     Scaffold(
-        topBar = { TopAppBar(title = { Text(stringResource(R.string.library_title)) }) },
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.library_title)) },
+                // An icon-only control, so the description is the only thing a screen reader has
+                // to go on — and IconButton already carries Role.Button and the 48 dp target.
+                actions = {
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(
+                            imageVector = Icons.Filled.Settings,
+                            contentDescription = stringResource(R.string.library_open_settings),
+                        )
+                    }
+                },
+            )
+        },
         snackbarHost = { SnackbarHost(snackbar) },
         // Scaffold consumes the system bars for us; the app draws edge to edge (§7).
     ) { padding ->

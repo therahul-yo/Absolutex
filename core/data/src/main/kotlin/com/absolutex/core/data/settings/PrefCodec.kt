@@ -159,7 +159,7 @@ object PrefCodec {
         val defaults = ColourParams()
         return RenderingPrefs(
             upscaler = bag.enumOr(KEY_UPSCALER, Upscaler.PLATFORM, Upscaler.entries),
-            autoBackground = bag.boolean(KEY_AUTO_BACKGROUND) ?: true,
+            autoBackground = bag.boolean(KEY_AUTO_BACKGROUND) ?: false,
             colour = ColourParams(
                 brightness = bag.gradedFloat(KEY_COLOUR_BRIGHTNESS, ColourParams.BRIGHTNESS_RANGE)
                     ?: defaults.brightness,
