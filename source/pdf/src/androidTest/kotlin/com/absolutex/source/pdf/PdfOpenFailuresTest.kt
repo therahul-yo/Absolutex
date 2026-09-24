@@ -43,7 +43,7 @@ class PdfOpenFailuresTest {
         PdfDocument.open(ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY), password)
 
     @Test fun encryptedOpensWithItsPassword() {
-        open(write("encrypted.pdf", ProblemPdfs.encrypted())).use {
+        open(write("encrypted.pdf", ProblemPdfs.encrypted()), ProblemPdfs.USER_PASSWORD).use {
             assertEquals(1, it.pageCount)
         }
     }

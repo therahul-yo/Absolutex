@@ -20,15 +20,18 @@ internal object ProblemPdfs {
     /**
      * A V=1/R=2 RC4 user-password PDF, hand-rolled per PDF 32000 §7.6 so the test knows the
      * password independently of PDFium: the file key is MD5(padded user password + O + P +
-     * ID) truncated to 5 bytes, O is the padded user password RC4'd under the padded (empty)
-     * owner password's key, U is the padding RC4'd under the file key, and the content stream
-     * is RC4'd under the per-object key for `4 0 R`. Opens with [USER_PASSWORD], throws
+     * ID) truncated to 5 bytes, O is the padded user password RC4'd under its own MD5-derived
+     * key (no separate owner password exists, so the user password substitutes as the owner
+     * one), U is the padding RC4'd under the file key, and the content stream is RC4'd under
+     * the per-object key for `4 0 R`. Opens with [USER_PASSWORD], throws
      * `PdfPasswordException` without it.
      */
     fun encrypted(userPassword: String = USER_PASSWORD): ByteArray {
         val id = "absolutex-test-1".toByteArray(Charsets.US_ASCII)
         val userPad = padPassword(userPassword)
-        val ownerKey = md5(PADDING).copyOf(KEY_BYTES)
+        // No separate owner password, so the spec substitutes the user password as the owner
+        // one — O must be derived from it, not from an empty password, to stay conformant.
+        val ownerKey = md5(userPad).copyOf(KEY_BYTES)
         val oEntry = rc4(ownerKey, userPad)
         val fileKey = md5(userPad, oEntry, PERMISSIONS_BYTES, id).copyOf(KEY_BYTES)
         val uEntry = rc4(fileKey, PADDING)
@@ -38,7 +41,7 @@ internal object ProblemPdfs {
             "/O ${hex(oEntry)} /U ${hex(uEntry)} /P $PERMISSIONS >>"
         return assemble(
             bodies = pageBodies(stream),
-            trailerExtra = " /Encrypt $encrypt /ID [${hex(id)} ${hex(id)}]",
+            trailerExtra = " /Encrypt $encrypt /ID [ ${hex(id)} ${hex(id)} ]",
         )
     }
 
@@ -179,6 +182,12 @@ internal object ProblemPdfs {
         return bytes
     }
 
+    /**
+     * Pads a password to 32 bytes per PDF 32000 §7.6.3.3 step (a): the raw bytes followed by the
+     * *first* 32-n bytes of the padding string. `copyOf(n)` takes exactly those — reaching for
+     * `copyOfRange(n, ...)` instead (skipping the first n padding bytes) derives a wrong key for
+     * every short password and reads back as a wrong password on open.
+     */
     private fun padPassword(password: String): ByteArray {
         val raw = password.toByteArray(Charsets.ISO_8859_1)
         if (raw.size >= PADDING.size) return raw.copyOf(PADDING.size)
@@ -214,8 +223,13 @@ internal object ProblemPdfs {
         return out
     }
 
+    /**
+     * Hex string for a PDF trailer entry. The `and 0xFF` is load-bearing: `"%02X"` on a Kotlin
+     * [Byte] sign-extends (0xFF becomes "FFFFFFFF", not "FF"), which silently corrupts every
+     * key byte past 0x7F and reads back as a wrong password.
+     */
     private fun hex(bytes: ByteArray): String =
-        "<${bytes.joinToString("") { "%02X".format(it) }}>"
+        "<${bytes.joinToString("") { "%02X".format(it.toInt() and BYTE_MASK) }}>"
 
     /** 40-bit key: 5 bytes (PDF 32000 §7.6.2, the default `/Length 40`). */
     private const val KEY_BYTES = 5
@@ -226,10 +240,16 @@ internal object ProblemPdfs {
     private const val BYTE_MASK = 0xFF
     private val PERMISSIONS_BYTES =
         byteArrayOf(0xFC.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte())
+    /**
+     * The 32-byte password padding of PDF 32000 §7.6.3.3 step (a). The tail is `64 53 69 7A`:
+     * read out of this repo's own libpdfium.so (.rodata, the single 32-byte occurrence of the
+     * `28 BF 4E` prefix), and pypdf derives identical keys with it. A wrong tail derives a
+     * wrong file key for every password and reads back as a wrong password on open.
+     */
     private val PADDING = byteArrayOf(
         0x28, 0xBF.toByte(), 0x4E, 0x5E, 0x4E, 0x75, 0x8A.toByte(), 0x41,
         0x64, 0x00, 0x4E, 0x56, 0xFF.toByte(), 0xFA.toByte(), 0x01, 0x08,
         0x2E, 0x2E, 0x00, 0xB6.toByte(), 0xD0.toByte(), 0x68, 0x3E, 0x80.toByte(),
-        0x2F, 0x0C, 0xA9.toByte(), 0xFE.toByte(), 0x1C, 0x50, 0x68, 0x41,
+        0x2F, 0x0C, 0xA9.toByte(), 0xFE.toByte(), 0x64, 0x53, 0x69, 0x7A,
     )
 }
