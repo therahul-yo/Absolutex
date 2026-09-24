@@ -1,5 +1,10 @@
 package com.absolutex.feature.reader
 
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.Icons
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -8,7 +13,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,12 +31,12 @@ import androidx.compose.ui.unit.dp
 internal fun ReaderTopBar(title: String, onSettings: (() -> Unit)?, modifier: Modifier = Modifier) {
     val back = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = CHROME_ALPHA),
+        color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = CHROME_ALPHA),
         modifier = modifier.fillMaxWidth().statusBarsPadding(),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { back?.onBackPressed() }) {
-                Text(stringResource(R.string.reader_close))
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp)) {
+            IconButton(onClick = { back?.onBackPressed() }) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.reader_close))
             }
             Text(
                 text = title,
@@ -40,12 +44,12 @@ internal fun ReaderTopBar(title: String, onSettings: (() -> Unit)?, modifier: Mo
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(end = 16.dp),
+                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
             )
-            // TODO(library): settings belong on the library home too, once it has a place for
-            // them. Reachable from here in the meantime rather than not at all.
             onSettings?.let {
-                TextButton(onClick = it) { Text(stringResource(R.string.reader_settings)) }
+                IconButton(onClick = it) {
+                    Icon(Icons.Outlined.Settings, contentDescription = stringResource(R.string.reader_settings))
+                }
             }
         }
     }

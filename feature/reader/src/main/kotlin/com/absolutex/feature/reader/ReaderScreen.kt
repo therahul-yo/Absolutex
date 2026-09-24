@@ -1,5 +1,12 @@
 package com.absolutex.feature.reader
 
+import com.absolutex.core.ui.Motion
+import androidx.compose.foundation.shape.ZeroCornerSize
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.AnimatedVisibility
 import com.absolutex.core.data.settings.RotationLock
 import androidx.compose.runtime.DisposableEffect
 import android.view.WindowManager
@@ -209,7 +216,7 @@ internal fun readerBackgroundFor(
 internal const val CHROME_ALPHA = 0.9f
 
 /** The most of the screen the chrome may take, so a page is always partly visible behind it. */
-private const val CHROME_MAX_HEIGHT = 0.7f
+internal const val CHROME_MAX_HEIGHT = 0.7f
 
 /** One + or − press scales by a quarter; eight presses cross the whole zoom range. */
 private const val KEY_ZOOM_STEP = 1.25f
@@ -468,101 +475,6 @@ private fun SpreadRow(
     }
 }
 
-/**
- * Page indicator and seek bar, shown only with the chrome. Seeking is the only way to cross a
- * 45-page book in one move; tapping and swiping are both one page at a time.
- */
-@Composable
-private fun ReaderChrome(
-    visible: Boolean,
-    page: Int,
-    pageCount: Int,
-    title: String,
-    onSettings: (() -> Unit)?,
-    onSeek: (Int) -> Unit,
-    bookId: String,
-    strip: (suspend (index: Int, width: Int) -> Bitmap?)?,
-    toc: List<TocEntry>,
-    onExport: suspend () -> Uri?,
-    /** Null in a layout whose fit is fixed, such as the continuous strip. */
-    fitFor: FitContext?,
-    prefs: ReaderPrefs,
-    modifier: Modifier = Modifier,
-) {
-    if (!visible || pageCount <= 0) return
-    Box(modifier.fillMaxSize()) {
-        ReaderTopBar(title, onSettings, Modifier.align(Alignment.TopCenter))
-    // While dragging, the thumb and label follow the finger locally; the pager moves once, on
-    // release. Seeking through the pager on every drag tick launched an animated scroll per tick,
-    // each cancelling the last, and the page stuttered behind the thumb.
-    var dragging by remember { mutableStateOf<Float?>(null) }
-    // Saveable, like chromeState above: a config change this activity does not declare (font
-    // scale, locale, keyboard) must not close a TOC or options panel the reader has open.
-    var contents by rememberSaveable { mutableStateOf(false) }
-    // Landscape has ~1200 px of height and the chrome had grown past it, so the options moved
-    // behind a toggle: what is always shown is what a reader looks at every page.
-    var options by rememberSaveable { mutableStateOf(false) }
-    val shown = (dragging?.roundToInt() ?: page) + 1
-    val indicator = stringResource(R.string.reader_page_indicator_desc, shown, pageCount)
-    val seekLabel = stringResource(R.string.reader_seek_desc)
-    // Capped and scrollable: with the options open, landscape has ~1200 px of height and the
-    // chrome would otherwise grow over its own top bar and the page entirely.
-    val maxChrome = (LocalConfiguration.current.screenHeightDp * CHROME_MAX_HEIGHT).dp
-    val chromeScroll = rememberScrollState()
-    // Opening the options scrolls to them: they sit below the seek bar, which in landscape is past
-    // the cap, and a control that appears to do nothing is worse than no control.
-    LaunchedEffect(options) {
-        if (options) {
-            withFrameNanos { }
-            chromeScroll.animateScrollTo(chromeScroll.maxValue)
-        }
-    }
-    Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = CHROME_ALPHA),
-        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-            .heightIn(max = maxChrome).navigationBarsPadding(),
-    ) {
-        Column(
-            Modifier.verticalScroll(chromeScroll).padding(horizontal = 16.dp, vertical = 8.dp),
-        ) {
-            if (contents) TocPanel(toc, onJump = { onSeek(it); contents = false })
-            ChromeActions(
-                indicator = stringResource(R.string.reader_page_indicator, shown, pageCount),
-                indicatorDescription = indicator,
-                hasContents = toc.isNotEmpty(),
-                onContents = { contents = !contents },
-                onOptions = { options = !options },
-                page = page,
-                onExport = onExport,
-            )
-            strip?.let { ThumbnailStrip(pageCount, page, bookId, onSeek, it) }
-            BookmarkBar(bookId, page, pageCount, onJump = onSeek)
-            // Slider works in page numbers, not fractions: a 45-page book has 45 stops and the
-            // value it reports is the page the reader lands on.
-            Slider(
-                value = dragging ?: page.toFloat(),
-                onValueChange = { dragging = it },
-                onValueChangeFinished = {
-                    dragging?.let { onSeek(it.roundToInt()) }
-                    dragging = null
-                },
-                valueRange = 0f..(pageCount - 1).toFloat().coerceAtLeast(0f),
-                // The slider's own value is 0-based; TalkBack should hear the page number shown.
-                modifier = Modifier.fillMaxWidth().semantics {
-                    contentDescription = seekLabel
-                    stateDescription = indicator
-                },
-            )
-            // Last, not first: the seek bar and the strip are what a reader reaches for on every
-            // page, so they keep the top of the capped box and the options open below them.
-            if (options) {
-                fitFor?.let { FitRow(prefs, it) }
-                BookOptionsRow(bookId, prefs)
-            }
-        }
-    }
-    }
-}
 
 /**
  * The window behaviour §5.2 makes settings: keep the screen on, lock rotation, draw under the

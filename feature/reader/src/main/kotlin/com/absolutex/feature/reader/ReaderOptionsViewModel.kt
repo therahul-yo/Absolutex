@@ -1,9 +1,13 @@
 package com.absolutex.feature.reader
 
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material3.FilterChip
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -78,14 +82,14 @@ internal fun BookOptionsRow(
     prefs: ReaderPrefs,
     vm: ReaderOptionsViewModel = hiltViewModel(),
 ) {
-    Row(Modifier) {
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ReadingFlow.entries.forEach { flow ->
             OptionButton(stringResource(flowLabel(flow)), flow == prefs.readingFlow) {
                 vm.setFlow(bookId, flow)
             }
         }
     }
-    Row(Modifier) {
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         PageLayout.entries.forEach { layout ->
             OptionButton(stringResource(layoutLabel(layout)), layout == prefs.pageLayout) {
                 vm.setLayout(bookId, layout)
@@ -94,19 +98,10 @@ internal fun BookOptionsRow(
     }
 }
 
-/** One option in a chrome row: the chosen one is the accent colour, the rest are quiet. */
+/** One option in a chrome row, as a filter chip: the chosen one is filled and checked. */
 @Composable
 private fun OptionButton(label: String, selected: Boolean, onClick: () -> Unit) {
-    TextButton(onClick = onClick) {
-        Text(
-            text = label,
-            color = if (selected) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-        )
-    }
+    FilterChip(selected = selected, onClick = onClick, label = { Text(label) })
 }
 
 private fun flowLabel(flow: ReadingFlow): Int = when (flow) {
@@ -134,7 +129,7 @@ internal fun FitRow(
     vm: ReaderOptionsViewModel = hiltViewModel(),
 ) {
     val current = prefs.fitFor(context)
-    Row(Modifier) {
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FitMode.entries.forEach { mode ->
             OptionButton(stringResource(fitLabel(mode)), mode == current) { vm.setFit(context, mode) }
         }
