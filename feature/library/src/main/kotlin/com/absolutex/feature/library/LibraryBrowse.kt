@@ -1,5 +1,6 @@
 package com.absolutex.feature.library
 
+import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
@@ -237,7 +238,7 @@ private fun DetailedBookContent(book: LibraryBookUi, modifier: Modifier) {
             overflow = TextOverflow.Ellipsis,
         )
         Text(
-            "${book.pagesLabel()} · ${book.sizeLabel()}",
+            stringResource(R.string.library_book_facts, book.pagesLabel(), book.sizeLabel()),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

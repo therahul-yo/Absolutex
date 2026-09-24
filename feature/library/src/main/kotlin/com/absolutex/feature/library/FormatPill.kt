@@ -1,5 +1,6 @@
 package com.absolutex.feature.library
 
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,7 +33,7 @@ internal fun FormatAndDate(book: LibraryBookUi, modifier: Modifier = Modifier) {
                 contentColor = MaterialTheme.colorScheme.inverseOnSurface,
             ) {
                 Text(
-                    ".${book.format.uppercase()}",
+                    stringResource(R.string.library_format_pill, book.format.uppercase()),
                     style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )
