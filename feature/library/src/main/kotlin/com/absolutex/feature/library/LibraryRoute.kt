@@ -1,5 +1,7 @@
 package com.absolutex.feature.library
 
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.Row
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.animation.core.tween
@@ -214,19 +216,14 @@ private fun LibraryTopBar(section: HomeSection, onOpenSettings: () -> Unit) {
 @Composable
 private fun LibraryControls(state: LibraryUiState, actions: LibraryActions) {
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    Column(
+    // One line: the search field takes the width, sort and view sit at its end.
+    Row(
         modifier = Modifier.padding(horizontal = Space.Edge).padding(bottom = Space.Gap),
-        verticalArrangement = Arrangement.spacedBy(Space.Gap),
+        horizontalArrangement = Arrangement.spacedBy(Space.Gap),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        LibrarySearchField(state.query, actions.onQueryChange)
-        BrowseControls(state, actions)
-        AnimatedVisibility(
-            state.layout == BrowseLayout.GRID,
-            enter = expandVertically(Motion.enter()) + fadeIn(Motion.enter()),
-            exit = shrinkVertically(Motion.exit()) + fadeOut(Motion.exit()),
-        ) {
-            GridColumnControl(state.grid, landscape, actions.onGridColumns)
-        }
+        LibrarySearchField(state.query, actions.onQueryChange, Modifier.weight(1f))
+        BrowseMenus(state, actions, landscape)
     }
 }
 

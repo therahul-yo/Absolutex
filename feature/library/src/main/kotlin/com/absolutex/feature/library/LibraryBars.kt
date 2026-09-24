@@ -1,5 +1,7 @@
 package com.absolutex.feature.library
 
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.slideInVertically
@@ -21,13 +23,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.rotate
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TextField
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material.icons.outlined.ViewAgenda
 import androidx.compose.material.icons.outlined.Search
@@ -39,10 +36,8 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.core.animateFloatAsState
@@ -107,41 +102,68 @@ internal fun LibrarySearchField(
 }
 
 /**
- * Sort and view on one line: sort as filter chips (tapping the active one flips its direction,
- * and its arrow says which way it runs), view as an icon toggle at the end.
+ * Sort and view as two round buttons beside the search field, each opening a short menu. They
+ * were two full rows (chips, a segmented toggle and a column stepper) — a quarter of the screen
+ * above the covers, with Size and Date squeezed out of sight.
  */
 @Composable
-internal fun BrowseControls(state: LibraryUiState, actions: LibraryActions, modifier: Modifier = Modifier) {
+internal fun BrowseMenus(state: LibraryUiState, actions: LibraryActions, landscape: Boolean) {
+    SortMenu(state.sort, actions.onSortChange)
+    ViewMenu(state.layout, state.grid, landscape, actions)
+}
+
+/** Name, size or date; the active one is checked, and choosing it again flips its direction. */
+@Composable
+private fun SortMenu(sort: SortSpec, onSort: (SortKey) -> Unit) {
     val haptics = rememberHaptics()
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(Space.Gap),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Row(
-            Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(Space.Gap),
-        ) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        FilledTonalIconButton(onClick = { open = true }, modifier = Modifier.size(A11y.MinTouchTarget)) {
+            Icon(Icons.AutoMirrored.Outlined.Sort, contentDescription = stringResource(R.string.library_sort))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             SortKey.entries.forEach { key ->
-                val active = state.sort.key == key
-                FilterChip(
-                    selected = active,
+                val active = sort.key == key
+                DropdownMenuItem(
+                    text = { Text(key.label()) },
+                    leadingIcon = { if (active) Icon(Icons.Outlined.Check, contentDescription = null) },
+                    trailingIcon = { if (active) SortArrow(sort.ascending) },
                     onClick = {
                         haptics.select()
-                        actions.onSortChange(key)
-                    },
-                    label = { Text(key.label()) },
-                    trailingIcon = if (active) {
-                        { SortArrow(state.sort.ascending) }
-                    } else {
-                        null
+                        onSort(key)
+                        open = false
                     },
                 )
             }
         }
-        LayoutToggle(state.layout) {
-            haptics.select()
-            actions.onLayoutChange(it)
+    }
+}
+
+/** List, details or grid — and, for the grid, how many columns — behind the current layout's icon. */
+@Composable
+private fun ViewMenu(layout: BrowseLayout, grid: GridSpec, landscape: Boolean, actions: LibraryActions) {
+    val haptics = rememberHaptics()
+    var open by remember { mutableStateOf(false) }
+    Box {
+        FilledTonalIconButton(onClick = { open = true }, modifier = Modifier.size(A11y.MinTouchTarget)) {
+            Icon(layout.icon(), contentDescription = stringResource(R.string.library_layout))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            BrowseLayout.entries.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option.label()) },
+                    leadingIcon = { Icon(option.icon(), contentDescription = null) },
+                    trailingIcon = { if (option == layout) Icon(Icons.Outlined.Check, contentDescription = null) },
+                    onClick = {
+                        haptics.select()
+                        actions.onLayoutChange(option)
+                        if (option != BrowseLayout.GRID) open = false
+                    },
+                )
+            }
+            if (layout == BrowseLayout.GRID) {
+                GridColumnControl(grid, landscape, actions.onGridColumns, Modifier.padding(horizontal = Space.Row))
+            }
         }
     }
 }
@@ -158,25 +180,10 @@ private fun SortArrow(ascending: Boolean) {
     Icon(
         Icons.Outlined.ArrowUpward,
         contentDescription = direction,
-        modifier = Modifier.size(FilterChipDefaults.IconSize).rotate(turn),
+        modifier = Modifier.size(SortArrowSize).rotate(turn),
     )
 }
 
-/** List, details or grid, as a connected icon toggle. */
-@Composable
-private fun LayoutToggle(layout: BrowseLayout, onChange: (BrowseLayout) -> Unit) {
-    SingleChoiceSegmentedButtonRow {
-        BrowseLayout.entries.forEachIndexed { index, option ->
-            SegmentedButton(
-                selected = layout == option,
-                onClick = { onChange(option) },
-                shape = SegmentedButtonDefaults.itemShape(index, BrowseLayout.entries.size),
-                icon = {},
-                label = { Icon(option.icon(), contentDescription = option.label()) },
-            )
-        }
-    }
-}
 
 private fun BrowseLayout.icon(): ImageVector = when (this) {
     BrowseLayout.SIMPLE_LIST -> Icons.AutoMirrored.Outlined.ViewList
@@ -227,4 +234,5 @@ internal fun GridColumnControl(
 }
 
 private val SearchHeight = 52.dp
+private val SortArrowSize = 18.dp
 private const val HALF_TURN = 180f
