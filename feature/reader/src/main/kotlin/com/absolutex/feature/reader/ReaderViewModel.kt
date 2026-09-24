@@ -20,11 +20,13 @@ import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.AppPrefsSource
 import com.absolutex.core.data.settings.RenderingPrefs
 import com.absolutex.core.data.settings.RenderingPrefsSource
+import com.absolutex.core.decode.DecodeClassifier
 import com.absolutex.core.decode.DecodeDispatchers
 import com.absolutex.core.decode.MemoryBudget
 import com.absolutex.core.decode.PageImage
 import com.absolutex.core.thumbnails.ThumbRequest
 import com.absolutex.core.thumbnails.ThumbnailPipeline
+import com.absolutex.core.decode.PrefetchEngine
 import com.absolutex.core.decode.TileCache
 import com.absolutex.model.BookIdentity
 import com.absolutex.model.Toc
@@ -60,12 +62,16 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
 private const val TAG = "Reader"
 
 /** A page is never four times taller than it is wide; the thumbnail fits inside that box. */
 private const val THUMB_HEIGHT_LIMIT = 4
+
+/** Conservative pages-per-book estimate for seeding the running-max page byte budget. */
+private const val PAGES_PER_BOOK_ESTIMATE = 1000
 
 data class ReaderUiState(
     val loading: Boolean = false,
@@ -151,13 +157,70 @@ class ReaderViewModel internal constructor(
     val tileCache = TileCache(MemoryBudget.defaultCacheBytes(totalRamBytes))
 
     /**
-     * Applies cache-size changes mid-book. The open() coroutine applies the setting once at
-     * open; this collector keeps it live: a user who raises the cache while a book is open
-     * gets the bigger budget without reopening. Resize clamps and trims on shrink, so a
-     * mid-read downsize evicts correctly. distinctUntilChanged: resize is idempotent but
-     * not free, and every app-pref write re-emits the whole AppPrefs object.
+     * Applies cache-size changes mid-book, started once from init on viewModelScope — NOT
+     * from open(): a child of openJob would keep openJob active forever, and lines that
+     * treat openJob.isActive as "an open is in flight" would inherit a permanent hang. The
+     * collector is per-ViewModel, not per-book; open() still applies the setting once, first,
+     * for ordering. Resize clamps and trims on shrink, so a mid-read downsize evicts
+     * correctly. distinctUntilChanged: resize is idempotent but not free, and every app-pref
+     * write re-emits the whole AppPrefs object.
      */
-    private var cacheSizeJob: Job? = null
+    private var cacheSizeJob: Job = viewModelScope.launch {
+        appPrefs.appPrefs
+            .map { it.cacheSizeMiB }
+            .distinctUntilChanged()
+            .collect { mib -> tileCache.resize(userCacheBytes(mib)) }
+    }
+
+    /**
+     * Running max of decoded page byte costs in this book. Comics are near-uniform, so the
+     * max is a good estimate for the NEXT page; it only ever grows, so one double-page
+     * spread early on shrinks prefetch depth for the rest of the book — deliberate and
+     * conservative (never an OOM), not accidental. Seeded from the budget floor so the
+     * first window of a book has a non-zero estimate before any page has landed.
+     */
+    internal val maxPageBytes: AtomicLong = AtomicLong(
+        MemoryBudget.FLOOR_BYTES / PAGES_PER_BOOK_ESTIMATE,
+    )
+
+    /**
+     * The prefetch engine (§3, M10). Source-free by design: it owns decoded pages, never
+     * the archive — its decode lambda goes through [pageImage], which returns only the
+     * decoded image, so no engine path can close a remote source (those route through
+     * closeSource exclusively). The budget is shared with the tile cache and supplied as a
+     * function so a live cache-size resize is honoured, not just onTrimMemory. The estimate
+     * is the running max above; the actual cost reconciles when the decode lands.
+     */
+    internal val prefetch = PrefetchEngine(
+        scope = viewModelScope,
+        decodeDispatcher = DecodeDispatchers.decode,
+        budgetBytes = { tileCache.maxBytes().toLong() },
+        tileBytes = { tileCache.sizeBytes().toLong() },
+        pageBytesEstimate = { maxPageBytes.get() },
+        onDecoded = { _, estimated, image ->
+            maxPageBytes.accumulateAndGet(
+                MemoryBudget.bytesForPage(image.width, image.height),
+            ) { cur, next -> maxOf(cur, next) }
+            estimated
+        },
+        // CRITICAL fix: route the production decode through DecodeClassifier so an
+        // OutOfMemoryError (which propagates as Error, not RuntimeException, from
+        // pageImage's catch block) becomes DecodeOutcome.OutOfMemory instead of a throw.
+        // Before this, the entire OOM path — host shed, budget renegotiation, and the
+        // generation-guarded stale-OOM logic — was unreachable in the shipped app.
+        decode = { page -> DecodeClassifier.classify { pageImage(page) } },
+    )
+
+    init {
+        // The engine has already dropped its own set when this fires; shed the host's
+        // decode state the same way onTrimMemory does, minus the tile trim (the engine's
+        // budget supplier re-reads the tile cache, and halving it here would punish a
+        // transient pressure spike with a permanently smaller cache).
+        prefetch.onOutOfMemory = {
+            val keepSize = bases.keys.firstOrNull { it.page == settledPage }
+            bases.keys.retainAll(setOfNotNull(keepSize))
+        }
+    }
 
     /** The open book: a [ComicSource] whose pages are encoded images, or a [PdfDocument]. */
     private var source: Closeable? = null
@@ -218,6 +281,8 @@ class ReaderViewModel internal constructor(
         /** Resident decoded pages. ~12 covers viewport + prefetch without ballooning native heap. */
         const val MAX_RESIDENT_PAGES = 12
 
+        const val PREFETCH_DEPTH = 10
+
         /** Base layers kept around the settled page: it and two either side, ~9 MB each here. */
         const val BASE_WINDOW = 2
 
@@ -252,7 +317,16 @@ class ReaderViewModel internal constructor(
         openJob?.cancel()
         val generation = openGeneration.incrementAndGet()
         // Drop the previous book's decoded state now so tiles/pages cannot alias
-        // across books while the new archive extracts.
+        // across books while the new archive extracts. Prefetch drops first — its
+        // in-flight decodes belong to the old book and must not land into the new one.
+        prefetch.dropAll()
+        // HIGH fix: maxPageBytes is a running-max-of-decoded-pages estimate for the
+        // CURRENT book (its KDoc says "in this book"). It survived dropAll() across
+        // book switches, so one double-page spread in book A permanently shrunk
+        // prefetch depth in every book after. Reset it here alongside the other
+        // per-book state so each book starts from the conservative seed and builds
+        // its own estimate from its first decoded page.
+        maxPageBytes.set(MemoryBudget.FLOOR_BYTES / PAGES_PER_BOOK_ESTIMATE)
         tileCache.clear()
         pageImages.values.forEach { runCatching { it.close() } }
         pageImages.clear()
@@ -425,6 +499,14 @@ class ReaderViewModel internal constructor(
     fun onPageChanged(index: Int) {
         if (index == settledPage) return
         settledPage = index
+        // Prefetch reacts to the settle: cancels behind-work on a reversal, plans the
+        // window ahead in the reading direction, inside the shared budget.
+        prefetch.onSettled(
+            page = index,
+            pageCount = _ui.value.pageCount,
+            layout = readerPrefs.value.pageLayout,
+            depth = PREFETCH_DEPTH,
+        )
         val id = bookId
         // Capture before launching: a book switch mid-write must not persist the new
         // book's index against the old count (or vice versa).
@@ -460,7 +542,7 @@ class ReaderViewModel internal constructor(
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { progressDao.upsert(progress) }
         }
         openJob?.cancel()
-        cacheSizeJob?.cancel()
+        // cacheSizeJob lives on viewModelScope and dies with it; nothing to cancel by hand.
         _toc.value = emptyList()
         pageImages.values.forEach { runCatching { it.close() } }
         pageImages.clear()
