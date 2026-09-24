@@ -93,8 +93,8 @@ class InMemorySettingsTest {
         val bag = MapPrefBag(mapOf(PrefCodec.KEY_NIGHT_MODE to 7))
         val settings = InMemorySettings(bag)
         settings.updateApp { it.copy(trueBlack = true) }
-        assertEquals("NightMode.SYSTEM", "SYSTEM", bag.snapshot()[PrefCodec.KEY_NIGHT_MODE])
-        assertEquals(NightMode.SYSTEM, InMemorySettings(bag).appPrefs.first().nightMode)
+        assertEquals("repaired to the default", AppPrefs().nightMode.name, bag.snapshot()[PrefCodec.KEY_NIGHT_MODE])
+        assertEquals(AppPrefs().nightMode, InMemorySettings(bag).appPrefs.first().nightMode)
     }
 
     @Test

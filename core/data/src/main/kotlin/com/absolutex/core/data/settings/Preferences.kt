@@ -98,10 +98,10 @@ enum class RotationLock { SYSTEM, PORTRAIT, LANDSCAPE }
  * scalars. §6 puts these in Preferences DataStore and reader prefs in Proto.
  */
 data class AppPrefs(
-    val nightMode: NightMode = NightMode.SYSTEM,
-    val dynamicColour: Boolean = true,
+    val nightMode: NightMode = NightMode.ON,
+    val dynamicColour: Boolean = false,
     /** Pure black background in dark mode; on an OLED panel the pixels are actually off. */
-    val trueBlack: Boolean = false,
+    val trueBlack: Boolean = true,
     val cacheSizeMiB: Int = DEFAULT_CACHE_MIB,
     val showHiddenFolders: Boolean = false,
     /** Offer .zip/.rar/.7z/.tar alongside the comic extensions. */
