@@ -1,11 +1,13 @@
 package com.absolutex.feature.settings
 
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -26,6 +28,7 @@ import kotlin.math.roundToInt
  * the commit rides on release. Keyed on [value] so an external change still overrides an unmoved
  * thumb. Same contract as the cache-size row, which is why they share this.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NumberSliderRow(
     valueLabelRes: Int,
@@ -44,6 +47,8 @@ fun NumberSliderRow(
         )
         val description = stringResource(descriptionRes, pending)
         Slider(
+            // No stop-indicator dot at the track's end: it marks nothing here.
+            track = { SliderDefaults.Track(it, drawStopIndicator = null) },
             value = pending.toFloat(),
             onValueChange = { pending = it.roundToInt() },
             onValueChangeFinished = { onChange(pending) },

@@ -1,5 +1,7 @@
 package com.absolutex.feature.reader
 
+import com.absolutex.core.data.TEXT_EPUB_FORMAT
+import com.absolutex.core.data.BookFactsDao
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
@@ -33,7 +35,10 @@ import javax.inject.Singleton
  * scrolls into view is the cost this avoids.
  */
 @Singleton
-class BookCovers @Inject constructor(@ApplicationContext private val context: Context) {
+class BookCovers @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val facts: BookFactsDao,
+) {
     private val thumbs = ThumbPipelineHolder(File(context.cacheDir, COVER_DIR))
 
     /** Books are opened a few at a time: a fast fling must not open thirty archives at once. */
@@ -50,7 +55,25 @@ class BookCovers @Inject constructor(@ApplicationContext private val context: Co
         return opens.withPermit {
             runCatchingCancellable {
                 val bytes = withContext(DecodeDispatchers.extract) {
-                    context.openBook(bookUri(path)).use { coverBytes(it, widthPx) }
+                    try {
+                        context.openBook(bookUri(path)).use { book ->
+                            val cover = coverBytes(book, widthPx)
+                            // Persist the page count while the book is open: a scan cannot learn
+                            // one without opening, and a later rescan must not overwrite it.
+                            val count = when (book) {
+                                is PdfDocument -> book.pageCount
+                                is ComicSource -> book.pages.size
+                                else -> null
+                            }
+                            if (count != null) facts.updatePageCount(path, count)
+                            cover
+                        }
+                    } catch (e: ReflowableEpubException) {
+                        // A text book: it belongs with the documents, and its package names a
+                        // cover image rather than having a first page to show.
+                        facts.updateFormat(path, TEXT_EPUB_FORMAT)
+                        textCover(bookUri(path)) ?: throw e
+                    }
                 }
                 pipeline.load(OneImage(bytes), request)
             }.getOrNull()
@@ -69,6 +92,9 @@ class BookCovers @Inject constructor(@ApplicationContext private val context: Co
         is ComicSource -> book.openCover().use(InputStream::readBytes)
         else -> throw java.io.IOException("not a book")
     }
+
+    private fun textCover(uri: Uri): ByteArray? =
+        TextEpubBook.open(context, uri)?.let { book -> book.coverEntryName?.let(book::read) }
 
     /** One already-read image, shaped as a book so the pipeline caches it like any other. */
     private class OneImage(private val bytes: ByteArray) : ComicSource {

@@ -71,6 +71,15 @@ class LibraryDaoTest {
         assertEquals(999L, all.single().sizeBytes)
     }
 
+    @Test fun `a rescan keeps a book known to be a text epub`() = runTest {
+        // Opening a book learns it is a text EPUB; the next scan names it "epub" by extension
+        // again, and must not undo what opening it learned (or it moves back to Comics).
+        dao.upsertPreservingAddedAt(listOf(book("/a/Novel.epub").copy(format = "epub")))
+        dao.upsertAll(listOf(dao.allOnce().single().copy(format = TEXT_EPUB_FORMAT)))
+        dao.upsertPreservingAddedAt(listOf(book("/a/Novel.epub").copy(format = "epub")))
+        assertEquals(TEXT_EPUB_FORMAT, dao.allOnce().single().format)
+    }
+
     @Test fun `books order by series then issue, unshelved last`() = runTest {
         dao.upsertAll(
             listOf(

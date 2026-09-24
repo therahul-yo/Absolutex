@@ -1,5 +1,7 @@
 package com.absolutex.feature.library
 
+import com.absolutex.core.data.settings.AppPrefs
+import com.absolutex.core.data.FOLDER_FORMAT
 import com.absolutex.core.data.BookPath
 import com.absolutex.core.data.LibraryBook
 import com.absolutex.core.data.LibraryRepository
@@ -52,7 +54,8 @@ internal class RoomLibraryFeed @Inject constructor(
             // row instead would be quadratic on a large library.
             val byIdentity = progress.associateBy { it.bookId }
             // Deduplicated before mapping, so the expensive part runs once per book that is shown.
-            books.deduplicatedByIdentity().map { it.toUi(byIdentity, prefs.useOriginalFilename) }
+            books.filter { it.isShown(prefs) }.deduplicatedByIdentity()
+                .map { it.toUi(byIdentity, prefs) }
             // Mapping thousands of rows is real work and Room emits on its own executor; Default
             // keeps it off both the main thread and Room's.
         }.flowOn(Dispatchers.Default)
@@ -65,8 +68,9 @@ internal class RoomLibraryFeed @Inject constructor(
         // here could only ever remove rows the DAO already chose correctly, never add the ones it
         // missed, so a full parsed-label search (e.g. #1 vs stored 001) stays noted for M5 instead.
         return repository.search(query)
+            .filter { it.isShown(prefs) }
             .deduplicatedByIdentity()
-            .map { it.toUi(progress, prefs.useOriginalFilename) }
+            .map { it.toUi(progress, prefs) }
     }
 
     /**
@@ -124,13 +128,13 @@ internal class RoomLibraryFeed @Inject constructor(
 
     private fun LibraryBook.toUi(
         progress: Map<String, ReadingProgress>,
-        useOriginalFilename: Boolean,
+        prefs: AppPrefs,
     ): LibraryBookUi {
         val position = progress[contentKey]
         return LibraryBookUi(
             path = path,
-            displayName = displayNameOf(this, useOriginalFilename),
-            originalFilename = BookPath.nameOf(path),
+            displayName = displayNameOf(this, prefs.useOriginalFilename),
+            originalFilename = fileName.ifEmpty { BookPath.nameOf(path) },
             series = series,
             sizeBytes = sizeBytes,
             lastModified = lastModified,
@@ -139,6 +143,10 @@ internal class RoomLibraryFeed @Inject constructor(
             pageCount = pageCount ?: position?.pageCount?.takeIf { it > 0 },
             currentPage = position?.pageIndex,
             isFavorite = isFavorite,
+            format = format,
+            // The privacy switch is for PDFs (identity cards, certificates); a book's cover is a cover.
+            showCover = format != PDF_FORMAT || prefs.documentCovers,
+            lastReadAt = position?.updatedAt,
         )
     }
 
@@ -153,7 +161,12 @@ internal class RoomLibraryFeed @Inject constructor(
          * the label for both display and search, which is what the switch's "escape hatch" means.
          */
         fun displayNameOf(book: LibraryBook, useOriginalFilename: Boolean): String {
-            if (useOriginalFilename) return BookPath.nameOf(book.path)
+            val file = book.fileName.ifEmpty { BookPath.nameOf(book.path) }
+            if (useOriginalFilename) return file
+            // A document is titled by its file name, extension dropped. The comic parser read a PDF
+            // named "2025-08-09 22-52-06" as issue #2025 of a series called "08-09 22-52-06".
+            // A text EPUB's parsed name is already its title; only a PDF is named like a file.
+            if (book.format == PDF_FORMAT && book.fileName.isNotEmpty()) return file.substringBeforeLast('.')
             return ParsedName(
                 series = book.series,
                 issue = book.issue?.let { value -> IssueNumber(value, book.issueRaw ?: value.toString()) },
@@ -188,3 +201,22 @@ internal abstract class LibraryFeedModule {
         fun provideWatcherFactory(): @JvmSuppressWildcards (File) -> Flow<LibraryChange> = defaultWatcherFactory()
     }
 }
+
+/** Archive formats that are not comic formats: a .zip may hold anything, a .cbz holds a comic. */
+private val GENERIC_ARCHIVES = setOf("zip", "rar", "7z", "tar")
+
+/**
+ * Whether §5.1's two library switches let this row show. Both were stored and shown in settings
+ * but never read, so every plain archive and image folder was listed whatever they said. Applied
+ * here rather than at scan time so flipping a switch takes effect at once, with no rescan. A row
+ * whose format is not known yet (scanned before the column existed) stays visible until its next
+ * scan fills it in.
+ */
+internal fun LibraryBook.isShown(prefs: AppPrefs): Boolean = when {
+    format == FOLDER_FORMAT || isImageFolder -> prefs.openImageFolders
+    format in GENERIC_ARCHIVES -> prefs.openGenericArchives
+    else -> true
+}
+
+
+private const val PDF_FORMAT = "pdf"

@@ -1,5 +1,11 @@
 package com.absolutex.feature.reader
 
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import com.absolutex.core.ui.Motion
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animate
 import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.Paint
@@ -67,6 +73,9 @@ private const val ZOOM_LOCK_THRESHOLD = 1.02f
 
 /** Double-tap zoom from fit: large enough to read small lettering, small enough to keep context. */
 private const val DOUBLE_TAP_SCALE = 2.5f
+
+/** Long enough to read as a zoom, short enough never to feel like waiting. */
+private const val DOUBLE_TAP_MS = 250
 
 /**
  * The base layer's longest edge, as a multiple of the screen's. Full size on a 12000px page would
@@ -187,6 +196,9 @@ fun PageCanvas(
     var scale by remember(pageIndex) { mutableFloatStateOf(1f) }
     var offsetX by remember(pageIndex) { mutableFloatStateOf(0f) }
     var offsetY by remember(pageIndex) { mutableFloatStateOf(0f) }
+    // The running double-tap zoom, cancelled the moment a finger lands so a pinch never fights it.
+    val zoomScope = rememberCoroutineScope()
+    val zoomJob = remember(pageIndex) { arrayOfNulls<Job>(1) }
     // Bumped when new tiles land, to invalidate the draw phase without touching composition.
     var tileGeneration by remember(pageIndex) { mutableIntStateOf(0) }
     var base by remember(pageIndex) { mutableStateOf<Bitmap?>(null) }
@@ -231,31 +243,32 @@ fun PageCanvas(
     // prefs ?: benchmark would silently measure the neutral default while the extras
     // stay ignored, so the order below matters.
     val context = LocalContext.current
-    val benchmarkColour = remember(pageIndex) {
-        val appInfo = context.applicationInfo
-        if (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE == 0) {
-            null
-        } else {
+    // One gate for every benchmark hook below: per-hook gating is how two of the three were
+    // missed the first time (#46 review). Release builds read no intent extra at all.
+    val debugHooks = remember(pageIndex) {
+        context.applicationInfo.flags and
+            android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+    }
+    val benchmarkColour = if (!debugHooks) {
+        null
+    } else {
+        remember(pageIndex) {
             (context as? Activity)?.intent?.getStringExtra(ColourParams.EXTRA_COLOUR)
                 ?.let(ColourParams::decode)
         }
     }
-    // Upscaling rides a second extra, so each codec stays total on its own. Same
-    // FLAG_DEBUGGABLE gate as colour: the hook must be inert in release builds.
-    val benchmarkUpscaler = remember(pageIndex) {
-        val appInfo = context.applicationInfo
-        if (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE == 0) {
-            null
-        } else {
+    // Upscaling rides a second extra, so each codec stays total on its own.
+    val benchmarkUpscaler = if (!debugHooks) {
+        null
+    } else {
+        remember(pageIndex) {
             (context as? Activity)?.intent?.getStringExtra(Upscaler.EXTRA_UPSCALER)
                 ?.let(Upscaler::decodeExtra)
         }
     }
-    // Crop rides a third: "0" disables it for the off-benchmark. Same gate.
-    val benchmarkCropOff = remember(pageIndex) {
-        val appInfo = context.applicationInfo
-        (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) &&
-            (context as? Activity)?.intent?.getStringExtra(CropMath.EXTRA_CROP) == "0"
+    // Crop rides a third: "0" disables it for the off-benchmark.
+    val benchmarkCropOff = debugHooks && remember(pageIndex) {
+        (context as? Activity)?.intent?.getStringExtra(CropMath.EXTRA_CROP) == "0"
     }
     val cropActive = cropEnabled && !benchmarkCropOff
 
@@ -522,6 +535,7 @@ fun PageCanvas(
                 // and deciding at slop keeps an early vertical wobble from panning a page turn.
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
+                    zoomJob[0]?.cancel()
                     var travel = Offset.Zero
                     var claimed = false
                     // Set when the page declines a drag at slop. It stops panning but keeps watching,
@@ -592,18 +606,34 @@ fun PageCanvas(
             // otherwise leave taps turning pages the old way while swipes already go the new way.
             .pointerInput(pageIndex, fitMode, pagerVertical, rightToLeft, spreadSide) {
                 detectTapGestures(
-                    onDoubleTap = {
-                        // Double-tap toggles between fit and a useful reading zoom, about the
-                        // screen centre, so the passage being read stays where it was.
-                        val old = scale
-                        scale = if (scale > MIN_SCALE) MIN_SCALE else DOUBLE_TAP_SCALE
-                        val ratio = scale / old
-                        val clamped = clampOffset(
-                            Offset(offsetX * ratio, offsetY * ratio),
-                            size.width, size.height, contentW(), contentH(), fitMode, scale,
-                        )
-                        offsetX = clamped.x; offsetY = clamped.y
-                        reportLock(scale, size.width, size.height)
+                    onDoubleTap = { at ->
+                        // Double-tap toggles between fit and a useful reading zoom, animated and
+                        // about the point tapped, so what was under the finger stays under it. It
+                        // jumped in one frame before, which read as a glitch rather than a zoom.
+                        val from = scale
+                        val to = if (scale > MIN_SCALE) MIN_SCALE else DOUBLE_TAP_SCALE
+                        val start = Offset(offsetX, offsetY)
+                        val anchor = at - Offset(size.width / 2f, size.height / 2f)
+                        zoomJob[0]?.cancel()
+                        zoomJob[0] = zoomScope.launch {
+                            // In motion, like a pinch: frames draw the fast path and the sharp
+                            // refine runs once, at rest, instead of on every frame of the zoom.
+                            gestureActive = true
+                            try {
+                                val spec = tween<Float>(DOUBLE_TAP_MS, easing = Motion.Emphasized)
+                                animate(0f, 1f, animationSpec = spec) { t, _ ->
+                                    scale = from + (to - from) * t
+                                    val moved = (start - anchor) * (scale / from) + anchor
+                                    val clamped = clampOffset(
+                                        moved, size.width, size.height, contentW(), contentH(), fitMode, scale,
+                                    )
+                                    offsetX = clamped.x; offsetY = clamped.y
+                                }
+                            } finally {
+                                gestureActive = false
+                            }
+                            reportLock(scale, size.width, size.height)
+                        }
                     },
                     onTap = { at ->
                         // Mirrored for RTL, so "the column that turns forward" stays under the same

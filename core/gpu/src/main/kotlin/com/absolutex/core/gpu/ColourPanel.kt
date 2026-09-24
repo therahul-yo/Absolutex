@@ -1,5 +1,6 @@
 package com.absolutex.core.gpu
 
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -218,6 +220,7 @@ internal sealed interface SliderEvent {
  * Keyed on [value] so an external change (e.g. restoring a saved value) still overrides an
  * unmoved thumb.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun GradeRow(
     @StringRes label: Int,
@@ -247,6 +250,8 @@ private fun GradeRow(
             modifier = Modifier.weight(LABEL_WEIGHT),
         )
         Slider(
+            // No stop-indicator dot at the track's end: it marks nothing here.
+            track = { SliderDefaults.Track(it, drawStopIndicator = null) },
             value = pending,
             onValueChange = { pending = it },
             onValueChangeFinished = { onChange(pending) },

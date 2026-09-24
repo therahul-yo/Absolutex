@@ -1,5 +1,13 @@
 package com.absolutex.feature.reader
 
+import androidx.compose.material3.IconToggleButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.AssistChip
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -11,7 +19,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -73,14 +80,23 @@ internal fun BookmarkBar(
         Row(verticalAlignment = Alignment.CenterVertically) {
             LazyRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(marks) { mark ->
-                    // TextButton, not a chip: the chrome already ships it, and a chip costs the APK ~40 KiB.
-                    TextButton(onClick = { onJump(mark) }) {
-                        Text(stringResource(R.string.reader_bookmark_page, mark + 1))
-                    }
+                    AssistChip(
+                        onClick = { onJump(mark) },
+                        label = { Text(stringResource(R.string.reader_bookmark_page, mark + 1)) },
+                        leadingIcon = {
+                            Icon(Icons.Filled.Bookmark, null, Modifier.size(AssistChipDefaults.IconSize))
+                        },
+                    )
                 }
             }
             val toggleLabel = if (page in marks) R.string.reader_bookmark_remove else R.string.reader_bookmark_add
-            TextButton(onClick = { vm.toggle(bookId, page) }) { Text(stringResource(toggleLabel)) }
+            val marked = page in marks
+            IconToggleButton(checked = marked, onCheckedChange = { vm.toggle(bookId, page) }) {
+                Icon(
+                    if (marked) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                    contentDescription = stringResource(toggleLabel),
+                )
+            }
         }
         Canvas(Modifier.fillMaxWidth().height(MARK_RADIUS * 2).padding(horizontal = TRACK_INSET)) {
             val last = (pageCount - 1).coerceAtLeast(1)

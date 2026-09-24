@@ -1,5 +1,33 @@
 package com.absolutex.feature.library
 
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.activity.compose.BackHandler
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.Row
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.AnimatedContent
+import com.absolutex.core.ui.rememberHaptics
+import com.absolutex.core.ui.Motion
+import com.absolutex.core.ui.A11y
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.foundation.layout.size
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.AnimatedVisibility
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,7 +36,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -16,7 +43,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,9 +74,16 @@ fun LibraryRoute(
     onAddLocation: () -> Unit,
     onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
+    paused: Boolean = false,
 ) {
     val viewModel: LibraryViewModel = hiltViewModel()
-    val state by viewModel.ui.collectAsStateWithLifecycle()
+    val live by viewModel.ui.collectAsStateWithLifecycle()
+    // Paused (a book open over the library), the screen keeps its last state instead of following
+    // the feed: every page the reader saves changes a progress row, and each would otherwise
+    // recompose a grid nobody can see. Unpausing picks up everything that changed meanwhile.
+    var frozen by remember { mutableStateOf(live) }
+    if (!paused) frozen = live
+    val state = if (paused) frozen else live
     val actions = remember(viewModel) { viewModel.actions() }
     LibraryScreen(
         state = state,
@@ -98,14 +131,20 @@ internal fun LibraryScreen(
     onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val haptics = rememberHaptics()
     // §7: one declaration adapts to bottom bar, rail or drawer across phone, tablet and foldable.
     NavigationSuiteScaffold(
         navigationSuiteItems = {
             HomeSection.entries.forEach { section ->
+                val selected = section == state.section
                 item(
-                    selected = section == state.section,
-                    onClick = { actions.onSectionChange(section) },
-                    icon = { Text(section.glyph()) },
+                    selected = selected,
+                    onClick = {
+                        if (!selected) haptics.select()
+                        actions.onSectionChange(section)
+                    },
+                    // The label names the tab for TalkBack, so the icon is decoration.
+                    icon = { Icon(section.icon(selected), contentDescription = null) },
                     label = { Text(section.label()) },
                 )
             }
@@ -136,46 +175,70 @@ private fun LibraryBody(
         snackbar.showSnackbar(noticeText)
         actions.onMessageShown()
     }
+    val scroll = TopAppBarDefaults.enterAlwaysScrollBehavior()
     Scaffold(
+        modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.library_title)) },
-                // An icon-only control, so the description is the only thing a screen reader has
-                // to go on — and IconButton already carries Role.Button and the 48 dp target.
-                actions = {
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(
-                            imageVector = Icons.Filled.Settings,
-                            contentDescription = stringResource(R.string.library_open_settings),
-                        )
-                    }
-                },
-            )
+            CollapsingHeader(scroll) {
+                // Selection swaps the bar in place — no second bar pushing the list down.
+                AnimatedContent(
+                    state.selectionActive,
+                    transitionSpec = { fadeIn(Motion.enter()) togetherWith fadeOut(Motion.exit()) },
+                    label = "bar",
+                ) { selecting ->
+                    if (selecting) SelectionTopBar(state, actions) else LibraryTopBar(state.section, onOpenSettings)
+                }
+                LibraryControls(state, actions)
+            }
         },
         snackbarHost = { SnackbarHost(snackbar) },
         // Scaffold consumes the system bars for us; the app draws edge to edge (§7).
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
-            if (state.selectionActive) SelectionBar(state, actions)
-            LibraryControls(state, actions)
             LibraryContent(state, actions, onOpenBook, onAddLocation)
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LibraryTopBar(section: HomeSection, onOpenSettings: () -> Unit) {
+    TopAppBar(
+        // The status-bar inset is the collapsing header's (CollapsingHeader), not the bar's.
+        windowInsets = WindowInsets(0),
+        title = {
+            // The section name is the title; it cross-fades rather than jumping.
+            Crossfade(section, animationSpec = Motion.enter(), label = "title") { shown ->
+                Text(shown.label(), style = MaterialTheme.typography.headlineMedium)
+            }
+        },
+        actions = {
+            // An icon-only control, so the description is the only thing a screen reader has to
+            // go on. Tonal and full-size so it reads as a button, not a stray glyph.
+            FilledTonalIconButton(
+                onClick = onOpenSettings,
+                modifier = Modifier.padding(end = Space.Gap).size(A11y.MinTouchTarget),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Settings,
+                    contentDescription = stringResource(R.string.library_open_settings),
+                )
+            }
+        },
+    )
+}
+
 @Composable
 private fun LibraryControls(state: LibraryUiState, actions: LibraryActions) {
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    Column(
-        modifier = Modifier.padding(horizontal = Space.Edge),
-        verticalArrangement = Arrangement.spacedBy(Space.Tight),
+    // One line: the search field takes the width, sort and view sit at its end.
+    Row(
+        modifier = Modifier.padding(horizontal = Space.Edge).padding(bottom = Space.Gap),
+        horizontalArrangement = Arrangement.spacedBy(Space.Gap),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        LibrarySearchField(state.query, actions.onQueryChange)
-        SortControl(state.sort, actions.onSortChange)
-        LayoutControl(state.layout, actions.onLayoutChange)
-        if (state.layout == BrowseLayout.GRID) {
-            GridColumnControl(state.grid, landscape, actions.onGridColumns)
-        }
+        LibrarySearchField(state.query, actions.onQueryChange, Modifier.weight(1f))
+        BrowseMenus(state, actions, landscape)
     }
 }
 
@@ -205,12 +268,72 @@ private fun LibraryContent(
         onOpen = { book -> onOpenBook(book.path) },
         onToggleSelection = actions.onToggleSelection,
     )
-    val shelves = when (state.section) {
-        HomeSection.SERIES -> state.seriesShelves
-        HomeSection.FOLDERS -> state.folderShelves
-        else -> null
+    // Material fade-through between tabs: the old tab fades out fast, the new one fades in just
+    // after, and each renders its own state — the outgoing grid never flashes the new tab's books.
+    // Each tab also starts at its own top rather than inheriting the last tab's scroll offset.
+    AnimatedContent(
+        targetState = state,
+        contentKey = { it.section },
+        transitionSpec = {
+            fadeIn(tween(Motion.MEDIUM_MS, delayMillis = Motion.SHORT_MS / 2)) togetherWith
+                fadeOut(tween(Motion.SHORT_MS))
+        },
+        modifier = Modifier.fillMaxSize(),
+        label = "tab",
+    ) { shown ->
+        SeriesOrShelf(shown, context, landscape, onSeeAll = { actions.onSectionChange(HomeSection.RECENT) })
     }
-    Box(Modifier.fillMaxSize()) {
-        LibraryPane(state, shelves, context, landscape)
+}
+
+/**
+ * The shelf, or one series opened from it: a back arrow and the series' name over its issues.
+ * Back (the arrow or the system gesture) returns to the shelf. Keyed on the tab, so another tab
+ * never opens on a series left open in this one.
+ */
+@Composable
+private fun SeriesOrShelf(
+    state: LibraryUiState,
+    context: RowContext,
+    landscape: Boolean,
+    onSeeAll: () -> Unit,
+) {
+    var openSeries by rememberSaveable(state.section) { mutableStateOf<String?>(null) }
+    val series = openSeries
+    AnimatedContent(
+        series,
+        transitionSpec = { fadeIn(Motion.enter()) togetherWith fadeOut(Motion.exit()) },
+        label = "series",
+    ) { shown ->
+        if (shown == null) {
+            Column {
+                if (state.section == HomeSection.RECENT && state.query.isBlank()) {
+                    ReadingStatsRow(Modifier.padding(bottom = Space.Gap))
+                }
+                LibraryPane(state, context, landscape, onSeeAll = onSeeAll, onOpenSeries = { openSeries = it })
+            }
+        } else {
+            BackHandler { openSeries = null }
+            Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = Space.Tight),
+                ) {
+                    IconButton(onClick = { openSeries = null }) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.ArrowBack,
+                            contentDescription = stringResource(R.string.library_series_back),
+                        )
+                    }
+                    Text(
+                        shown,
+                        style = MaterialTheme.typography.titleLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                val issues = state.visibleBooks.filter { it.series == shown }
+                LibraryPane(state.copy(visibleBooks = issues), context, landscape)
+            }
+        }
     }
 }

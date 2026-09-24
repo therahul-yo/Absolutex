@@ -1,5 +1,7 @@
 package com.absolutex.feature.reader
 
+import com.absolutex.core.stats.PageSettled
+import com.absolutex.core.data.ReadingHistory
 import android.content.ComponentCallbacks2
 import android.content.Context
 import android.graphics.Bitmap
@@ -18,11 +20,13 @@ import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.AppPrefsSource
 import com.absolutex.core.data.settings.RenderingPrefs
 import com.absolutex.core.data.settings.RenderingPrefsSource
+import com.absolutex.core.decode.DecodeClassifier
 import com.absolutex.core.decode.DecodeDispatchers
 import com.absolutex.core.decode.MemoryBudget
 import com.absolutex.core.decode.PageImage
 import com.absolutex.core.thumbnails.ThumbRequest
 import com.absolutex.core.thumbnails.ThumbnailPipeline
+import com.absolutex.core.decode.PrefetchEngine
 import com.absolutex.core.decode.TileCache
 import com.absolutex.model.BookIdentity
 import com.absolutex.model.Toc
@@ -32,6 +36,7 @@ import com.absolutex.remote.core.RemoteBookOpener
 import com.absolutex.remote.core.RemoteOpenResult
 import com.absolutex.source.ComicSource
 import com.absolutex.source.pdf.PdfDocument
+import com.absolutex.source.pdf.PdfPasswordException
 import java.io.Closeable
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -57,12 +62,16 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
 private const val TAG = "Reader"
 
 /** A page is never four times taller than it is wide; the thumbnail fits inside that box. */
 private const val THUMB_HEIGHT_LIMIT = 4
+
+/** Conservative pages-per-book estimate for seeding the running-max page byte budget. */
+private const val PAGES_PER_BOOK_ESTIMATE = 1000
 
 data class ReaderUiState(
     val loading: Boolean = false,
@@ -74,6 +83,19 @@ data class ReaderUiState(
     val error: String? = null,
     /** Payload recovery report, never used as the pager/progress count. */
     val recoveryNotice: String? = null,
+    /**
+     * An encrypted PDF is waiting for its password. Set alongside [error] (the same generic
+     * string), so dismissing the prompt leaves the ordinary failure behind it. The password
+     * itself is never held here: it travels as an argument to [ReaderViewModel.open] and lives
+     * otherwise only in the dialog's own text field, which composition drops on dismiss.
+     */
+    val passwordRequired: Boolean = false,
+    /** The prompt is a retry: a password was offered and PDFium refused it. */
+    val passwordIncorrect: Boolean = false,
+    /** A reflowable text EPUB: the screen shows the text reader instead of pages. */
+    val textEpub: Boolean = false,
+    /** A PDF: a document, which reads best as a continuous scroll unless the book says otherwise. */
+    val isPdf: Boolean = false,
 )
 
 @HiltViewModel
@@ -86,6 +108,8 @@ class ReaderViewModel internal constructor(
     private val appPrefs: AppPrefsSource,
     private val bookOpener: BookOpener,
     private val remoteBookOpener: RemoteBookOpener,
+    /** Where settled pages are logged for reading stats; null in tests that do not care. */
+    private val history: ReadingHistory? = null,
 ) : ViewModel() {
 
     /**
@@ -103,8 +127,10 @@ class ReaderViewModel internal constructor(
         rendering: RenderingPrefsSource,
         appPrefs: AppPrefsSource,
         remoteBookOpener: RemoteBookOpener,
+        history: ReadingHistory,
     ) : this(
         context, progressDao, totalRamBytes, prefs, rendering, appPrefs, ContextBookOpener(context), remoteBookOpener,
+        history,
     )
 
     /**
@@ -133,13 +159,70 @@ class ReaderViewModel internal constructor(
     val tileCache = TileCache(MemoryBudget.defaultCacheBytes(totalRamBytes))
 
     /**
-     * Applies cache-size changes mid-book. The open() coroutine applies the setting once at
-     * open; this collector keeps it live: a user who raises the cache while a book is open
-     * gets the bigger budget without reopening. Resize clamps and trims on shrink, so a
-     * mid-read downsize evicts correctly. distinctUntilChanged: resize is idempotent but
-     * not free, and every app-pref write re-emits the whole AppPrefs object.
+     * Applies cache-size changes mid-book, started once from init on viewModelScope — NOT
+     * from open(): a child of openJob would keep openJob active forever, and lines that
+     * treat openJob.isActive as "an open is in flight" would inherit a permanent hang. The
+     * collector is per-ViewModel, not per-book; open() still applies the setting once, first,
+     * for ordering. Resize clamps and trims on shrink, so a mid-read downsize evicts
+     * correctly. distinctUntilChanged: resize is idempotent but not free, and every app-pref
+     * write re-emits the whole AppPrefs object.
      */
-    private var cacheSizeJob: Job? = null
+    private var cacheSizeJob: Job = viewModelScope.launch {
+        appPrefs.appPrefs
+            .map { it.cacheSizeMiB }
+            .distinctUntilChanged()
+            .collect { mib -> tileCache.resize(userCacheBytes(mib)) }
+    }
+
+    /**
+     * Running max of decoded page byte costs in this book. Comics are near-uniform, so the
+     * max is a good estimate for the NEXT page; it only ever grows, so one double-page
+     * spread early on shrinks prefetch depth for the rest of the book — deliberate and
+     * conservative (never an OOM), not accidental. Seeded from the budget floor so the
+     * first window of a book has a non-zero estimate before any page has landed.
+     */
+    internal val maxPageBytes: AtomicLong = AtomicLong(
+        MemoryBudget.FLOOR_BYTES / PAGES_PER_BOOK_ESTIMATE,
+    )
+
+    /**
+     * The prefetch engine (§3, M10). Source-free by design: it owns decoded pages, never
+     * the archive — its decode lambda goes through [pageImage], which returns only the
+     * decoded image, so no engine path can close a remote source (those route through
+     * closeSource exclusively). The budget is shared with the tile cache and supplied as a
+     * function so a live cache-size resize is honoured, not just onTrimMemory. The estimate
+     * is the running max above; the actual cost reconciles when the decode lands.
+     */
+    internal val prefetch = PrefetchEngine(
+        scope = viewModelScope,
+        decodeDispatcher = DecodeDispatchers.decode,
+        budgetBytes = { tileCache.maxBytes().toLong() },
+        tileBytes = { tileCache.sizeBytes().toLong() },
+        pageBytesEstimate = { maxPageBytes.get() },
+        onDecoded = { _, estimated, image ->
+            maxPageBytes.accumulateAndGet(
+                MemoryBudget.bytesForPage(image.width, image.height),
+            ) { cur, next -> maxOf(cur, next) }
+            estimated
+        },
+        // CRITICAL fix: route the production decode through DecodeClassifier so an
+        // OutOfMemoryError (which propagates as Error, not RuntimeException, from
+        // pageImage's catch block) becomes DecodeOutcome.OutOfMemory instead of a throw.
+        // Before this, the entire OOM path — host shed, budget renegotiation, and the
+        // generation-guarded stale-OOM logic — was unreachable in the shipped app.
+        decode = { page -> DecodeClassifier.classify { pageImage(page) } },
+    )
+
+    init {
+        // The engine has already dropped its own set when this fires; shed the host's
+        // decode state the same way onTrimMemory does, minus the tile trim (the engine's
+        // budget supplier re-reads the tile cache, and halving it here would punish a
+        // transient pressure spike with a permanently smaller cache).
+        prefetch.onOutOfMemory = {
+            val keepSize = bases.keys.firstOrNull { it.page == settledPage }
+            bases.keys.retainAll(setOfNotNull(keepSize))
+        }
+    }
 
     /** The open book: a [ComicSource] whose pages are encoded images, or a [PdfDocument]. */
     private var source: Closeable? = null
@@ -200,6 +283,8 @@ class ReaderViewModel internal constructor(
         /** Resident decoded pages. ~12 covers viewport + prefetch without ballooning native heap. */
         const val MAX_RESIDENT_PAGES = 12
 
+        const val PREFETCH_DEPTH = 10
+
         /** Base layers kept around the settled page: it and two either side, ~9 MB each here. */
         const val BASE_WINDOW = 2
 
@@ -209,10 +294,14 @@ class ReaderViewModel internal constructor(
         private const val BYTES_PER_MIB = 1024L * 1024
     }
 
-    // Throwable on purpose: any failure to open a book must reach the user as one generic
-    // message, and the detail is logged. Narrowing would let an unlisted failure crash instead.
-    @Suppress("TooGenericExceptionCaught")
-    fun open(uri: Uri) {
+    /**
+     * Opens [uri], joining an in-flight open of the same Uri rather than restarting it.
+     *
+     * [password] is the encrypted-PDF retry: the prompt submits back through this same function.
+     * Remote books never take the password path — [RemoteOpenResult.Ready] carries a ComicSource,
+     * and a PDF is not one — so it reaches only the local open inside [openAttempt].
+     */
+    fun open(uri: Uri, password: String? = null) {
         // Already open, and nothing else is in flight to contradict it: a genuine no-op. The
         // "nothing else in flight" half matters because a request to reopen the current book can
         // arrive while a DIFFERENT book's open is still running — rapid back-and-forth on the one
@@ -230,7 +319,16 @@ class ReaderViewModel internal constructor(
         openJob?.cancel()
         val generation = openGeneration.incrementAndGet()
         // Drop the previous book's decoded state now so tiles/pages cannot alias
-        // across books while the new archive extracts.
+        // across books while the new archive extracts. Prefetch drops first — its
+        // in-flight decodes belong to the old book and must not land into the new one.
+        prefetch.dropAll()
+        // HIGH fix: maxPageBytes is a running-max-of-decoded-pages estimate for the
+        // CURRENT book (its KDoc says "in this book"). It survived dropAll() across
+        // book switches, so one double-page spread in book A permanently shrunk
+        // prefetch depth in every book after. Reset it here alongside the other
+        // per-book state so each book starts from the conservative seed and builds
+        // its own estimate from its first decoded page.
+        maxPageBytes.set(MemoryBudget.FLOOR_BYTES / PAGES_PER_BOOK_ESTIMATE)
         tileCache.clear()
         pageImages.values.forEach { runCatching { it.close() } }
         pageImages.clear()
@@ -241,77 +339,52 @@ class ReaderViewModel internal constructor(
             // for the rest of this scope (see cacheSizeJob's own KDoc for why a mid-book change
             // still has to land).
             cacheSizeJob?.cancel()
-            cacheSizeJob = applyCacheSizePref(appPrefs, tileCache)
+            // viewModelScope as the receiver, not this launch: the collector never returns, and
+            // as a child of the open it would keep the open job active forever — after which a
+            // same-uri resubmission (the error screen's Retry, a password submit) mistakes
+            // itself for a join of an open still in flight and is silently dropped.
+            cacheSizeJob = viewModelScope.applyCacheSizePref(appPrefs, tileCache)
 
-            val remote = uri.scheme == REMOTE_URI_SCHEME
-            val opened = try {
-                if (remote) {
-                    // No NonCancellable here: RemoteBookOpener.open is a real suspend fun, and
-                    // per its own KDoc ("the reader calls it from its open coroutine, same as
-                    // every other open path") a cancel is its own implementation's job to
-                    // survive without leaking whatever it opened — see RemoteModule in
-                    // :feature:remote for how the real binding does that. The reader only has
-                    // to trust the suspend contract, the same way it trusts BookOpener's.
-                    openRemote(remoteBookOpener, uri)
-                } else {
-                    // NonCancellable: bookOpener.open() (openBook()/identityOf() in production —
-                    // see ContextBookOpener) is a blocking call with no suspension point of its
-                    // own, so cancelling this job cannot interrupt it — it always runs to
-                    // completion once started. Without NonCancellable, a cancel landing while it
-                    // was already finishing still made this resume with a CancellationException,
-                    // discarding the successfully-opened handle instead of returning it — leaking
-                    // its fd (and, for a PDF, its native handle) because it was then never
-                    // reachable by the generation check below, which is what already closes a
-                    // result superseded by a newer, non-cancelling call to open().
-                    withContext(NonCancellable) { bookOpener.open(uri) }
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (t: Throwable) {
-                // Generic UI string: t.message can embed the raw Uri or an archive entry name.
-                // The detail goes to logcat only.
-                Log.e(TAG, "open failed", t)
-                if (generation == openGeneration.get()) {
+            when (val attempt = openAttempt(context, bookOpener, remoteBookOpener, uri, password)) {
+                is OpenAttempt.Opened -> {
+                    val (source0, identity, remote) = attempt
+                    val count = (source0 as? PdfDocument)?.pageCount
+                        ?: (source0 as ComicSource).pages.size
+                    if (generation != openGeneration.get()) {
+                        closeSource(source0, remote)
+                        return@launch
+                    }
+                    // Close the old source only now, immediately before replacing, so in-flight
+                    // page decodes against it fail cleanly instead of racing a premature close.
+                    val old = source
+                    val oldWasRemote = sourceIsRemote
+                    source = source0
+                    sourceIsRemote = remote
+                    // Closed now, but not rebuilt until first use (see ThumbPipelineHolder): its
+                    // disk-journal reconciliation is a real cost that must not land before the
+                    // state below, which gates the first page.
+                    thumbs.reset()
+                    openedUri = uri.toString()
+                    bookId = identity
+                    closeSource(old, oldWasRemote)
+                    val resume = progressDao.get(bookId)?.pageIndex ?: 0
+                    // The previous book's settled page would otherwise stand in until the pager settles.
+                    settledPage = resume.coerceIn(0, (count - 1).coerceAtLeast(0))
                     _ui.value = ReaderUiState(
                         loading = false,
-                        error = context.getString(R.string.reader_open_failed),
+                        title = bookOpener.titleOf(uri),
+                        pageCount = count,
+                        bookId = bookId,
+                        currentPage = settledPage,
+                        recoveryNotice = recoveryNoticeFor(context, source0),
+                        isPdf = source0 is PdfDocument,
                     )
+                    // After the state that gates the first page: contents are chrome, and a PDF
+                    // outline is a JNI call whose cost must not land in the tap-to-first-page budget.
+                    _toc.value = withContext(DecodeDispatchers.extract) { contentsOf(source0) }
                 }
-                return@launch
+                is OpenAttempt.Show -> if (generation == openGeneration.get()) _ui.value = attempt.state
             }
-            val (source0, identity) = opened
-            val count = (source0 as? PdfDocument)?.pageCount ?: (source0 as ComicSource).pages.size
-            if (generation != openGeneration.get()) {
-                closeSource(source0, remote)
-                return@launch
-            }
-            // Close the old source only now, immediately before replacing, so in-flight
-            // page decodes against it fail cleanly instead of racing a premature close.
-            val old = source
-            val oldWasRemote = sourceIsRemote
-            source = source0
-            sourceIsRemote = remote
-            // Closed now, but not rebuilt until first use (see ThumbPipelineHolder): its
-            // disk-journal reconciliation is a real cost that must not land before the state
-            // below, which gates the first page.
-            thumbs.reset()
-            openedUri = uri.toString()
-            bookId = identity
-            closeSource(old, oldWasRemote)
-            val resume = progressDao.get(bookId)?.pageIndex ?: 0
-            // The previous book's settled page would otherwise stand in until the pager settles.
-            settledPage = resume.coerceIn(0, (count - 1).coerceAtLeast(0))
-            _ui.value = ReaderUiState(
-                loading = false,
-                title = bookOpener.titleOf(uri),
-                pageCount = count,
-                bookId = bookId,
-                currentPage = settledPage,
-                recoveryNotice = recoveryNoticeFor(context, source0),
-            )
-            // After the state that gates the first page: contents are chrome, and a PDF outline is
-            // a JNI call whose cost must not land in the tap-to-first-page budget.
-            _toc.value = withContext(DecodeDispatchers.extract) { contentsOf(source0) }
         }
     }
 
@@ -354,7 +427,7 @@ class ReaderViewModel internal constructor(
             runCatching { decoded.close() }
             prev
         } else {
-            evictFarPages()
+            evictFarPages(pageImages, settledPage)
             decoded
         }
     }
@@ -397,12 +470,20 @@ class ReaderViewModel internal constructor(
         return bitmap
     }
 
-    /** Keeps only a sliding window around the current page; closes evicted pages. */
-    private fun evictFarPages() {
-        val center = settledPage
-        while (pageImages.size > MAX_RESIDENT_PAGES) {
-            val farthest = pageImages.keys.maxByOrNull { kotlin.math.abs(it - center) } ?: break
-            pageImages.remove(farthest)?.let { runCatching { it.close() } }
+    /**
+     * Dismisses the encrypted-PDF prompt, keeping the generic failure it was shown over.
+     *
+     * The guard is the whole point: a submit already in flight has cleared the prompt for a
+     * loading state, and clobbering that with an error would lie about an open still running.
+     * A member (rather than top-level like [openAttempt]) because only the class may write its
+     * own state — the room for it comes from [evictFarPages] moving the other way.
+     */
+    fun cancelPasswordPrompt() {
+        if (_ui.value.passwordRequired) {
+            _ui.value = ReaderUiState(
+                loading = false,
+                error = context.getString(R.string.reader_open_failed),
+            )
         }
     }
 
@@ -421,6 +502,14 @@ class ReaderViewModel internal constructor(
     fun onPageChanged(index: Int) {
         if (index == settledPage) return
         settledPage = index
+        // Prefetch reacts to the settle: cancels behind-work on a reversal, plans the
+        // window ahead in the reading direction, inside the shared budget.
+        prefetch.onSettled(
+            page = index,
+            pageCount = _ui.value.pageCount,
+            layout = readerPrefs.value.pageLayout,
+            depth = PREFETCH_DEPTH,
+        )
         val id = bookId
         // Capture before launching: a book switch mid-write must not persist the new
         // book's index against the old count (or vice versa).
@@ -435,6 +524,12 @@ class ReaderViewModel internal constructor(
             updatedAt = System.currentTimeMillis(),
         )
         pendingProgress = progress
+        // Reading history (stats: pages per day, streaks, time read) — one row per settled page.
+        history?.let { log ->
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching { log.record(listOf(PageSettled(id, index, progress.updatedAt))) }
+            }
+        }
         pendingProgressWrite = viewModelScope.launch {
             delay(PROGRESS_DEBOUNCE_MS)
             progressDao.upsert(progress)
@@ -450,7 +545,7 @@ class ReaderViewModel internal constructor(
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { progressDao.upsert(progress) }
         }
         openJob?.cancel()
-        cacheSizeJob?.cancel()
+        // cacheSizeJob lives on viewModelScope and dies with it; nothing to cancel by hand.
         _toc.value = emptyList()
         pageImages.values.forEach { runCatching { it.close() } }
         pageImages.clear()
@@ -616,6 +711,100 @@ private suspend fun openRemote(opener: RemoteBookOpener, uri: Uri): Pair<Closeab
         is RemoteOpenResult.Ready -> result.source to result.identity
         is RemoteOpenResult.DownloadRequired -> throw IOException(result.reason)
     }
+
+/**
+ * What one attempt to open a book produced. Success carries the handle; every other outcome
+ * already knows the exact UI state it shows, so [ReaderViewModel.open] stays a straight switch
+ * rather than re-branching on exception types it just caught.
+ */
+private sealed interface OpenAttempt {
+    data class Opened(val source: Closeable, val identity: String, val remote: Boolean) : OpenAttempt
+    data class Show(val state: ReaderUiState) : OpenAttempt
+}
+
+/**
+ * Tries the open behind [uri] and maps every outcome but success to its end state.
+ *
+ * Top-level, like [closeSource]: inlined, the three catches and the state-building would put
+ * `open` over detekt's complexity and length limits, and as a member they would put the class
+ * over its function limit. Both limits are right; `open` is already the longest decision path
+ * in this file.
+ *
+ * Throwable on purpose: any failure to open a book must reach the user as one generic message,
+ * and the detail is logged. Narrowing would let an unlisted failure crash instead.
+ *
+ * A wrong or absent PDF password is not that generic failure: it returns the prompt state, with
+ * [ReaderUiState.passwordIncorrect] set exactly when a non-null password was refused. The
+ * password itself is never stored — it arrives here as an argument and goes no further.
+ */
+@Suppress("TooGenericExceptionCaught")
+private suspend fun openAttempt(
+    context: Context,
+    bookOpener: BookOpener,
+    remoteBookOpener: RemoteBookOpener,
+    uri: Uri,
+    password: String?,
+): OpenAttempt {
+    val remote = uri.scheme == REMOTE_URI_SCHEME
+    val generic = ReaderUiState(
+        loading = false,
+        error = context.getString(R.string.reader_open_failed),
+    )
+    return try {
+        val opened = if (remote) {
+            // No NonCancellable here: RemoteBookOpener.open is a real suspend fun, and
+            // per its own KDoc ("the reader calls it from its open coroutine, same as
+            // every other open path") a cancel is its own implementation's job to
+            // survive without leaking whatever it opened — see RemoteModule in
+            // :feature:remote for how the real binding does that. The reader only has
+            // to trust the suspend contract, the same way it trusts BookOpener's.
+            openRemote(remoteBookOpener, uri)
+        } else {
+            // NonCancellable: bookOpener.open() (openBook()/identityOf() in production —
+            // see ContextBookOpener) is a blocking call with no suspension point of its
+            // own, so cancelling this job cannot interrupt it — it always runs to
+            // completion once started. Without NonCancellable, a cancel landing while it
+            // was already finishing still made this resume with a CancellationException,
+            // discarding the successfully-opened handle instead of returning it — leaking
+            // its fd (and, for a PDF, its native handle) because it was then never
+            // reachable by the generation check in finishOpen, which is what already closes
+            // a result superseded by a newer, non-cancelling call to open().
+            withContext(NonCancellable) { bookOpener.open(uri, password) }
+        }
+        val (source, identity) = opened
+        OpenAttempt.Opened(source, identity, remote)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: ReflowableEpubException) {
+        Log.i(TAG, "text EPUB; opening in the text reader", e)
+        OpenAttempt.Show(ReaderUiState(loading = false, textEpub = true, title = bookOpener.titleOf(uri)))
+    } catch (e: PdfPasswordException) {
+        // An encrypted PDF, with no password offered or the wrong one: prompt rather
+        // than fail. The generic error rides along, so cancelling the prompt leaves
+        // exactly the state a wrong-format book shows.
+        Log.e(TAG, "open needs password", e)
+        OpenAttempt.Show(generic.copy(passwordRequired = true, passwordIncorrect = password != null))
+    } catch (t: Throwable) {
+        // Generic UI string: t.message can embed the raw Uri or an archive entry name.
+        // The detail goes to logcat only.
+        Log.e(TAG, "open failed", t)
+        OpenAttempt.Show(generic)
+    }
+}
+
+/**
+ * Keeps only a sliding window around the current page; closes evicted pages.
+ *
+ * Top-level, like [closeSource]: it needs nothing but its two parameters, and as a member it
+ * would put `ReaderViewModel` over detekt's function-count ceiling — the room the password
+ * prompt's [cancelPasswordPrompt][ReaderViewModel.cancelPasswordPrompt] member needed.
+ */
+private fun evictFarPages(pages: ConcurrentHashMap<Int, PageImage>, center: Int) {
+    while (pages.size > ReaderViewModel.MAX_RESIDENT_PAGES) {
+        val farthest = pages.keys.maxByOrNull { kotlin.math.abs(it - center) } ?: break
+        pages.remove(farthest)?.let { runCatching { it.close() } }
+    }
+}
 
 /**
  * The open book's contents: a PDF's own outline, or the folders an archive's pages sit in. A

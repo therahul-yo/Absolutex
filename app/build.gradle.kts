@@ -97,6 +97,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.compose.material.icons.extended)
     implementation(libs.androidx.lifecycle.runtime.compose)
     // Phase 4: navigation-compose removed — no NavHost/NavController import anywhere in
     // app/src (verified by grep); hilt-navigation-compose is KEPT, it provides hiltViewModel.

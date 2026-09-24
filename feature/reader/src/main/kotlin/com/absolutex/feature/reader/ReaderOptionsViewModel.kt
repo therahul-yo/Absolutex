@@ -1,9 +1,14 @@
 package com.absolutex.feature.reader
 
+import com.absolutex.core.data.settings.RotationLock
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material3.FilterChip
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -47,6 +52,16 @@ class ReaderOptionsViewModel @Inject constructor(
 
     fun setLayout(bookId: String, layout: PageLayout) = editBook(bookId) { it.copy(pageLayout = layout.name) }
 
+    /** Rotation is app-wide, like in settings: it is how the device is held, not a trait of a book. */
+    fun setRotation(lock: RotationLock) {
+        viewModelScope.launch { writer.updateReader { it.copy(rotationLock = lock) } }
+    }
+
+    /** App-wide, like rotation: dark pages suit the room the reader is in, not one book. */
+    fun setDarkPages(on: Boolean) {
+        viewModelScope.launch { writer.updateReader { it.copy(darkPages = on) } }
+    }
+
     private fun editBook(bookId: String, edit: (BookPrefs) -> BookPrefs) {
         if (bookId.isEmpty()) return
         viewModelScope.launch { books.upsert(edit(books.get(bookId) ?: BookPrefs(bookId))) }
@@ -78,14 +93,21 @@ internal fun BookOptionsRow(
     prefs: ReaderPrefs,
     vm: ReaderOptionsViewModel = hiltViewModel(),
 ) {
-    Row(Modifier) {
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ReadingFlow.entries.forEach { flow ->
             OptionButton(stringResource(flowLabel(flow)), flow == prefs.readingFlow) {
                 vm.setFlow(bookId, flow)
             }
         }
     }
-    Row(Modifier) {
+    // Rotation sat only in the settings screen, so from inside a book there was no way to turn it.
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        RotationLock.entries.forEach { lock ->
+            OptionButton(stringResource(rotationLabel(lock)), lock == prefs.rotationLock) { vm.setRotation(lock) }
+        }
+        OptionButton(stringResource(R.string.reader_dark_pages), prefs.darkPages) { vm.setDarkPages(!prefs.darkPages) }
+    }
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         PageLayout.entries.forEach { layout ->
             OptionButton(stringResource(layoutLabel(layout)), layout == prefs.pageLayout) {
                 vm.setLayout(bookId, layout)
@@ -94,19 +116,10 @@ internal fun BookOptionsRow(
     }
 }
 
-/** One option in a chrome row: the chosen one is the accent colour, the rest are quiet. */
+/** One option in a chrome row, as a filter chip: the chosen one is filled and checked. */
 @Composable
 private fun OptionButton(label: String, selected: Boolean, onClick: () -> Unit) {
-    TextButton(onClick = onClick) {
-        Text(
-            text = label,
-            color = if (selected) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-        )
-    }
+    FilterChip(selected = selected, onClick = onClick, label = { Text(label) })
 }
 
 private fun flowLabel(flow: ReadingFlow): Int = when (flow) {
@@ -134,7 +147,7 @@ internal fun FitRow(
     vm: ReaderOptionsViewModel = hiltViewModel(),
 ) {
     val current = prefs.fitFor(context)
-    Row(Modifier) {
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FitMode.entries.forEach { mode ->
             OptionButton(stringResource(fitLabel(mode)), mode == current) { vm.setFit(context, mode) }
         }
@@ -146,4 +159,10 @@ private fun fitLabel(mode: FitMode): Int = when (mode) {
     FitMode.FIT_WIDTH -> R.string.reader_fit_width
     FitMode.FIT_HEIGHT -> R.string.reader_fit_height
     FitMode.FULL_SIZE -> R.string.reader_fit_full
+}
+
+private fun rotationLabel(lock: RotationLock): Int = when (lock) {
+    RotationLock.SYSTEM -> R.string.reader_rotation_auto
+    RotationLock.PORTRAIT -> R.string.reader_rotation_portrait
+    RotationLock.LANDSCAPE -> R.string.reader_rotation_landscape
 }

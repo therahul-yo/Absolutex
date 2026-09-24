@@ -21,4 +21,7 @@ data class SettingsActions(
     val onCacheSize: (Int) -> Unit,
     /** Rendering edits, clamped in SettingsReductions before they reach the store. */
     val onRendering: ((RenderingPrefs) -> RenderingPrefs) -> Unit,
+    /** Removes a storage location, its grant and its books. */
+    val onRemoveLocation: (String) -> Unit = {},
+    val onDocumentCovers: (Boolean) -> Unit = {},
 )

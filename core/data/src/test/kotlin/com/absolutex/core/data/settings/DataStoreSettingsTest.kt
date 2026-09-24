@@ -116,7 +116,7 @@ class DataStoreSettingsTest {
             cacheSizeMiB = 1024,
             showHiddenFolders = true,
             openGenericArchives = true,
-            openImageFolders = false,
+            openImageFolders = true,
         )
         val (first, firstJob) = open(f)
         first.updateApp { expected }

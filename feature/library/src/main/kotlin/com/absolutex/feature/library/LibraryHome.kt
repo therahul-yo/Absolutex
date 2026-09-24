@@ -1,5 +1,22 @@
 package com.absolutex.feature.library
 
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.ui.unit.dp
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.outlined.CreateNewFolder
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.AutoStories
+import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,17 +33,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import com.absolutex.core.ui.A11y
 
-/** Shelf title and count, rendered as an item of the one lazy container. */
-@Composable
-internal fun ShelfHeader(shelf: Shelf) {
-    Column(Modifier.padding(horizontal = Space.Edge, vertical = Space.Row)) {
-        Text(shelf.title, style = MaterialTheme.typography.titleMedium)
-        Text(
-            pluralStringResource(R.plurals.library_shelf_count, shelf.size, shelf.size),
-            style = MaterialTheme.typography.bodySmall,
-        )
-    }
-}
 
 /**
  * The words for a notice.
@@ -104,21 +110,33 @@ internal fun LibraryEmptyState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(Space.Row, Alignment.CenterVertically),
     ) {
+        Icon(
+            section.icon(selected = false),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(EmptyIconSize),
+        )
         Text(
             emptyTitle(reason),
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.headlineSmall,
             textAlign = TextAlign.Center,
         )
         Text(
             emptyBody(reason, section, query),
             style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
         if (reason == LibraryEmptyReason.NO_LOCATIONS) {
             Button(
                 onClick = onAddLocation,
-                modifier = Modifier.heightIn(min = A11y.MinTouchTarget),
-            ) { Text(stringResource(R.string.library_empty_no_locations_action)) }
+                contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
+                modifier = Modifier.heightIn(min = BigButtonHeight),
+            ) {
+                Icon(Icons.Outlined.CreateNewFolder, contentDescription = null)
+                Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                Text(stringResource(R.string.library_empty_no_locations_action))
+            }
         }
     }
 }
@@ -143,34 +161,27 @@ private fun emptyBody(reason: LibraryEmptyReason, section: HomeSection, query: S
 
 @Composable
 private fun sectionEmptyBody(section: HomeSection): String = when (section) {
-    HomeSection.READING -> stringResource(R.string.library_empty_reading_body)
-    HomeSection.UNREAD -> stringResource(R.string.library_empty_unread_body)
+    HomeSection.COMICS -> stringResource(R.string.library_empty_comics_body)
+    HomeSection.DOCUMENTS -> stringResource(R.string.library_empty_documents_body)
+    HomeSection.RECENT -> stringResource(R.string.library_empty_recent_body)
     HomeSection.FAVORITES -> stringResource(R.string.library_empty_favorites_body)
-    HomeSection.SERIES, HomeSection.FOLDERS -> stringResource(R.string.library_empty_library_body)
 }
 
 @Composable
 internal fun HomeSection.label(): String = when (this) {
-    HomeSection.READING -> stringResource(R.string.library_section_reading)
-    HomeSection.SERIES -> stringResource(R.string.library_section_series)
-    HomeSection.FOLDERS -> stringResource(R.string.library_section_folders)
-    HomeSection.UNREAD -> stringResource(R.string.library_section_unread)
+    HomeSection.COMICS -> stringResource(R.string.library_section_comics)
+    HomeSection.DOCUMENTS -> stringResource(R.string.library_section_documents)
+    HomeSection.RECENT -> stringResource(R.string.library_section_recent)
     HomeSection.FAVORITES -> stringResource(R.string.library_section_favorites)
 }
 
-/**
- * Stand-in for a navigation icon.
- *
- * `NavigationSuiteScope.item` requires an icon slot, and the Material icon artifacts are not on
- * this module's classpath. A short glyph keeps the bar readable and the labels do the real work
- * for TalkBack.
- * TODO(library): swap for real icons once material-icons is added to the catalog.
- */
-@Composable
-internal fun HomeSection.glyph(): String = when (this) {
-    HomeSection.READING -> "▶"
-    HomeSection.SERIES -> "◆"
-    HomeSection.FOLDERS -> "▣"
-    HomeSection.UNREAD -> "○"
-    HomeSection.FAVORITES -> "★"
+/** A tab's icon: filled when it is the current section, outlined otherwise, as Material does. */
+internal fun HomeSection.icon(selected: Boolean): ImageVector = when (this) {
+    HomeSection.COMICS -> if (selected) Icons.Filled.AutoStories else Icons.Outlined.AutoStories
+    HomeSection.DOCUMENTS -> if (selected) Icons.Filled.Description else Icons.Outlined.Description
+    HomeSection.RECENT -> if (selected) Icons.Filled.History else Icons.Outlined.History
+    HomeSection.FAVORITES -> if (selected) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder
 }
+
+private val EmptyIconSize = 64.dp
+private val BigButtonHeight = 56.dp

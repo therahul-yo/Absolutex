@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  An adaptive-icon layer is scaled to fill the whole 108dp canvas whatever its own viewport
-  says, so a 66dp viewport does not inset the art — it just renames the coordinates. Only the
-  central 66dp of the 108dp canvas is guaranteed visible; launcher masks (circle, squircle,
-  teardrop) crop the rest. The path below therefore lives in a 108 viewport and stays inside
-  a radius of 33 around the centre (54,54): top vertex 20 out, base corners 31.
+  A comic page: three tiers of panels, the middle tier split in two and the last cut by a slanted
+  gutter (the slant is what makes it read as a comic rather than a grid). The gutters are cut with
+  even-odd holes so the mark stays one path — which is also what a themed (monochrome) icon needs,
+  since it is drawn from alpha alone and black-on-white gutters would vanish.
+
+  An adaptive-icon layer is scaled to fill the 108dp canvas; only the central 66dp is guaranteed
+  visible, so the page stays inside a radius of 33 around the centre (54,54).
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -13,5 +15,10 @@
     android:viewportHeight="108">
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M54,34L76,76L32,76z" />
+        android:fillType="evenOdd"
+        android:pathData="M37,25 H71 A5,5 0 0 1 76,30 V78 A5,5 0 0 1 71,83 H37 A5,5 0 0 1 32,78 V30 A5,5 0 0 1 37,25 Z
+            M31,43 H77 V46.5 H31 Z
+            M31,62 H77 V65.5 H31 Z
+            M52.25,45 H55.75 V63 H52.25 Z
+            M58,64 L61.5,64 L51.5,84 L48,84 Z" />
 </vector>

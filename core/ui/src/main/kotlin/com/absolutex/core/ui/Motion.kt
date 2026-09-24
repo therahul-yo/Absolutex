@@ -19,9 +19,9 @@ object Motion {
     /** For things leaving: accelerate away, no settle to wait for. */
     val EmphasizedAccelerate = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
 
-    const val SHORT_MS = 150
-    const val MEDIUM_MS = 300
-    const val LONG_MS = 450
+    const val SHORT_MS = 100
+    const val MEDIUM_MS = 200
+    const val LONG_MS = 300
 
     /** How far a screen travels on a shared-axis transition, as a fraction of its width. */
     const val SHARED_AXIS_FRACTION = 10
@@ -31,5 +31,6 @@ object Motion {
 
     fun <T> enter() = tween<T>(MEDIUM_MS, easing = Emphasized)
     fun <T> exit() = tween<T>(SHORT_MS, easing = EmphasizedAccelerate)
-    fun <T> press() = spring<T>(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
+    /** Critically damped and stiff: a control settles at once, with no wobble to wait out. */
+    fun <T> press() = spring<T>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessHigh)
 }

@@ -17,11 +17,12 @@ object DataModule {
     @Provides
     @Singleton
     fun database(@ApplicationContext context: Context): AbsolutexDatabase =
-        // Pre-1.0 acceptable: a schema bump resets reading progress rather than crashing
-        // on launch. Replace with an explicit Migration before 1.0 — progress is user data.
-        Room.databaseBuilder(context, AbsolutexDatabase::class.java, "absolutex.db")
-            .fallbackToDestructiveMigration()
-            .build()
+        // No destructive fallback: reading progress, favourites and bookmarks are user data.
+        // Every schema step has an AutoMigration (exported schemas, checked in CI), so the
+        // fallback only ever fired on a DOWNGRADE — an older build installed over a newer one —
+        // and it silently erased a reader's every position. Now that case fails loudly on launch
+        // instead, and installing the newer build again opens the data intact.
+        Room.databaseBuilder(context, AbsolutexDatabase::class.java, "absolutex.db").build()
 
     @Provides
     fun progressDao(db: AbsolutexDatabase): ProgressDao = db.progressDao()
@@ -33,6 +34,13 @@ object DataModule {
      */
     @Provides
     fun libraryDao(db: AbsolutexDatabase): LibraryDao = db.libraryDao()
+
+    @Provides
+    fun bookFactsDao(db: AbsolutexDatabase): BookFactsDao = db.bookFactsDao()
+
+    /** Reading history's store. The table and ReadingHistory shipped; nothing could inject them. */
+    @Provides
+    fun pageViewDao(db: AbsolutexDatabase): PageViewDao = db.pageViewDao()
 
     @Provides
     fun bookmarkDao(db: AbsolutexDatabase): BookmarkDao = db.bookmarkDao()

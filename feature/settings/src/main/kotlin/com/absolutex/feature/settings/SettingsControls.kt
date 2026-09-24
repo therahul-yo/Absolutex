@@ -1,5 +1,24 @@
 package com.absolutex.feature.settings
 
+import androidx.compose.material3.ExperimentalMaterial3Api
+import com.absolutex.core.ui.rememberHaptics
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.CreateNewFolder
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
 import android.content.pm.PackageManager
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -16,6 +35,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -58,21 +78,46 @@ fun SwitchSettingRow(
     modifier: Modifier = Modifier,
 ) {
     val description = stringResource(descriptionRes)
+    val haptics = rememberHaptics()
     Row(
         modifier = modifier
             .fillMaxWidth()
             .defaultMinSize(minHeight = 48.dp)
-            .toggleable(value = checked, role = Role.Switch, onValueChange = onChange)
+            .toggleable(value = checked, role = Role.Switch) {
+                haptics.select()
+                onChange(it)
+            }
+            .padding(vertical = 10.dp)
             .semantics(mergeDescendants = true) { stateDescription = description },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = stringResource(titleRes),
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.weight(1f),
-        )
+        val title = stringResource(titleRes)
+        Column(Modifier.weight(1f).padding(end = 16.dp)) {
+            Text(text = title, style = MaterialTheme.typography.bodyLarge)
+            // The description strings open with the title (they were written to be spoken), so the
+            // visible line drops it rather than printing it twice.
+            Text(
+                text = description.removePrefix("$title. "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         // onCheckedChange is null: the row owns the toggle so TalkBack lands on one node.
-        Switch(checked = checked, onCheckedChange = null)
+        Switch(
+            checked = checked,
+            onCheckedChange = null,
+            thumbContent = if (checked) {
+                {
+                    Icon(
+                        Icons.Filled.Check,
+                        contentDescription = null,
+                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                    )
+                }
+            } else {
+                null
+            },
+        )
     }
 }
 
@@ -87,19 +132,33 @@ fun <T> SegmentedSettingRow(
 ) {
     // The buttons' own labels are the announcement; the group description sits on the row.
     val groupDescription = stringResource(descriptionRes)
-    SingleChoiceSegmentedButtonRow(
-        modifier = modifier
-            .fillMaxWidth()
-            .semantics { contentDescription = groupDescription },
+    val haptics = rememberHaptics()
+    Column(
+        modifier = modifier.fillMaxWidth().padding(vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        options.forEachIndexed { index, option ->
-            SegmentedButton(
-                selected = option == selected,
-                onClick = { onSelect(option) },
-                shape = SegmentedButtonDefaults.itemShape(index, options.size),
-                label = { Text(stringResource(labelRes(option))) },
-                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-            )
+        Text(
+            groupDescription,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        SingleChoiceSegmentedButtonRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = groupDescription },
+        ) {
+            options.forEachIndexed { index, option ->
+                SegmentedButton(
+                    selected = option == selected,
+                    onClick = {
+                        if (option != selected) haptics.select()
+                        onSelect(option)
+                    },
+                    shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                    label = { Text(stringResource(labelRes(option)), maxLines = 1) },
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                )
+            }
         }
     }
 }
@@ -111,11 +170,15 @@ fun RadioSettingRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val haptics = rememberHaptics()
     Row(
         modifier = modifier
             .fillMaxWidth()
             .defaultMinSize(minHeight = 48.dp)
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .selectable(selected = selected, role = Role.RadioButton) {
+                if (!selected) haptics.select()
+                onClick()
+            }
             // No contentDescription override: the merged title Text is the label, so every
             // fit-mode row announces its own name instead of the shared group description.
             .semantics(mergeDescendants = true) {},
@@ -125,11 +188,12 @@ fun RadioSettingRow(
         Text(
             text = stringResource(titleRes),
             style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.padding(start = 8.dp),
+            modifier = Modifier.padding(start = 12.dp),
         )
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CacheSizeRow(
     valueMiB: Int,
@@ -148,6 +212,8 @@ fun CacheSizeRow(
         )
         val sliderDescription = stringResource(R.string.settings_cache_size_desc, pending)
         Slider(
+            // No stop-indicator dot at the track's end: it marks nothing here.
+            track = { SliderDefaults.Track(it, drawStopIndicator = null) },
             value = pending.toFloat(),
             onValueChange = { pending = it.roundToInt() },
             onValueChangeFinished = { onChange(pending) },
@@ -177,6 +243,8 @@ fun AboutRow(modifier: Modifier = Modifier) {
             Text(packageManager.getApplicationLabel(context.applicationInfo).toString())
         },
         supportingContent = { Text(info.versionName ?: "") },
+        leadingContent = { RowIcon(Icons.Outlined.Info) },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = modifier,
     )
 }
@@ -189,14 +257,17 @@ fun AboutRow(modifier: Modifier = Modifier) {
  * was gone for good: no second folder could ever be added, and a location pointing somewhere
  * that no longer holds books left the library permanently empty with nothing to do about it.
  *
- * Adding is all this offers. Removing is not needed: `ShellViewModel.rescanLocations` already
- * drops a location whose grant the system no longer holds, so a revoked folder cleans itself up.
+ * The folders already added are listed above this row ([LocationRow]), each removable; a folder
+ * whose grant the system revoked is also dropped on its own by `ShellViewModel.rescanLocations`.
  */
 @Composable
 fun AddStorageLocationRow(onAdd: () -> Unit, modifier: Modifier = Modifier) {
     ListItem(
         headlineContent = { Text(stringResource(R.string.settings_add_location_title)) },
         supportingContent = { Text(stringResource(R.string.settings_add_location_desc)) },
+        leadingContent = { RowIcon(Icons.Outlined.CreateNewFolder) },
+        trailingContent = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null) },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = modifier
             .fillMaxWidth()
             .defaultMinSize(minHeight = A11y.MinTouchTarget)
@@ -220,6 +291,9 @@ fun RemoteServersRow(onOpen: () -> Unit, modifier: Modifier = Modifier) {
     ListItem(
         headlineContent = { Text(stringResource(R.string.settings_remote_title)) },
         supportingContent = { Text(stringResource(R.string.settings_remote_desc)) },
+        leadingContent = { RowIcon(Icons.Outlined.Dns) },
+        trailingContent = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null) },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = modifier
             .fillMaxWidth()
             .defaultMinSize(minHeight = A11y.MinTouchTarget)
@@ -236,8 +310,19 @@ fun OpenSourceLicencesRow(modifier: Modifier = Modifier) {
     ListItem(
         headlineContent = { Text(stringResource(R.string.licences_title)) },
         supportingContent = { Text(attribution) },
+        leadingContent = { RowIcon(Icons.Outlined.Description) },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = modifier,
     )
 }
 
-
+/** A row's leading icon in a tonal circle, so a list of links reads as buttons at a glance. */
+@Composable
+private fun RowIcon(icon: ImageVector) {
+    Box(
+        Modifier
+            .size(40.dp)
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) { Icon(icon, contentDescription = null) }
+}

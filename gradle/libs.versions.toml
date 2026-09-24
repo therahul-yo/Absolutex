@@ -102,6 +102,7 @@ compose-foundation           = { module = "androidx.compose.foundation:foundatio
 # memorised) against composeBom 2026.08.00 by the :feature:remote build.
 # Licence: Apache-2.0, same as the rest of Compose (androidx.compose.material group).
 compose-material-icons-core  = { module = "androidx.compose.material:material-icons-core" }
+compose-material-icons-extended = { module = "androidx.compose.material:material-icons-extended", version = "1.7.8" }
 compose-material3-adaptive-nav = { module = "androidx.compose.material3:material3-adaptive-navigation-suite", version.ref = "adaptive" }
 
 hilt-android                 = { module = "com.google.dagger:hilt-android", version.ref = "hilt" }

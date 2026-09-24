@@ -247,7 +247,7 @@ class LibraryViewModelTest {
         val vm = vmOver(db)
         advanceUntilIdle()
 
-        vm.onSectionChange(HomeSection.SERIES)
+        vm.onSectionChange(HomeSection.COMICS)
         advanceUntilIdle()
         assertEquals(
             listOf("Issue 2.cbz", "Issue 10.cbz"),

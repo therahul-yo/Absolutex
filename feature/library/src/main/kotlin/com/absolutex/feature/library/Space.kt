@@ -13,5 +13,6 @@ internal object Space {
     val Edge = 16.dp
     val Row = 12.dp
     val Tight = 4.dp
+    val Gap = 8.dp
     val Zero = 0.dp
 }

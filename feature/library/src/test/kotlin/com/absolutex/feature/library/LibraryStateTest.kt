@@ -38,7 +38,7 @@ private fun book(
 
 private fun state(
     books: List<LibraryBookUi>,
-    section: HomeSection = HomeSection.SERIES,
+    section: HomeSection = HomeSection.COMICS,
     query: String = "",
     sort: SortSpec = SortSpec(SortKey.NAME, ascending = true),
     hasLocations: Boolean = true,

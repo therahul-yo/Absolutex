@@ -33,7 +33,8 @@ class PrefCodecTest {
         assertEquals(AppPrefs.DEFAULT_CACHE_MIB, app.cacheSizeMiB)
         assertFalse(app.showHiddenFolders)
         assertFalse(app.openGenericArchives)
-        assertTrue(app.openImageFolders)
+        assertFalse(app.openImageFolders)
+        assertFalse(app.documentCovers)
         assertFalse(app.useOriginalFilename)
     }
 
@@ -80,7 +81,7 @@ class PrefCodecTest {
             cacheSizeMiB = 1024,
             showHiddenFolders = true,
             openGenericArchives = true,
-            openImageFolders = false,
+            openImageFolders = true,
         )
         val bag = MapPrefBag()
         PrefCodec.encodeApp(original, bag)
@@ -211,6 +212,7 @@ class PrefCodecTest {
                 PrefCodec.KEY_SHOW_HIDDEN,
                 PrefCodec.KEY_GENERIC_ARCHIVES,
                 PrefCodec.KEY_IMAGE_FOLDERS,
+                PrefCodec.KEY_DOCUMENT_COVERS,
                 LibraryPrefKeys.USE_ORIGINAL_FILENAME,
                 PrefCodec.KEY_READING_FLOW,
                 PrefCodec.KEY_FIT_MODE,
@@ -220,6 +222,7 @@ class PrefCodecTest {
                 PrefCodec.KEY_USE_CUTOUT,
                 PrefCodec.KEY_PAGE_LAYOUT,
                 PrefCodec.KEY_THUMBNAIL_STRIP,
+                PrefCodec.KEY_DARK_PAGES,
                 PrefCodec.KEY_TRANSITION,
                 PrefCodec.KEY_PAGE_TURN_MS,
                 PrefCodec.KEY_SCROLL_STEP,
@@ -355,6 +358,7 @@ class PrefCodecTest {
         assertEquals("show_hidden_folders", PrefCodec.KEY_SHOW_HIDDEN)
         assertEquals("open_generic_archives", PrefCodec.KEY_GENERIC_ARCHIVES)
         assertEquals("open_image_folders", PrefCodec.KEY_IMAGE_FOLDERS)
+        assertEquals("document_covers", PrefCodec.KEY_DOCUMENT_COVERS)
         // Lane keys live in their own codec file, but they are on disk just the same.
         assertEquals("use_original_filename", LibraryPrefKeys.USE_ORIGINAL_FILENAME)
         assertEquals("reading_flow", PrefCodec.KEY_READING_FLOW)
@@ -365,6 +369,7 @@ class PrefCodecTest {
         assertEquals("use_cutout", PrefCodec.KEY_USE_CUTOUT)
         assertEquals("page_layout", PrefCodec.KEY_PAGE_LAYOUT)
         assertEquals("thumbnail_strip", PrefCodec.KEY_THUMBNAIL_STRIP)
+        assertEquals("dark_pages", PrefCodec.KEY_DARK_PAGES)
         assertEquals("page_transition", PrefCodec.KEY_TRANSITION)
         assertEquals("page_turn_ms", PrefCodec.KEY_PAGE_TURN_MS)
         assertEquals("scroll_step_percent", PrefCodec.KEY_SCROLL_STEP)

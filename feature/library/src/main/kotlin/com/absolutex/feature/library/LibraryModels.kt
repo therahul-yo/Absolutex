@@ -1,5 +1,6 @@
 package com.absolutex.feature.library
 
+import com.absolutex.core.data.TEXT_EPUB_FORMAT
 import java.io.File
 
 /**
@@ -13,8 +14,11 @@ internal enum class ReadState { UNREAD, IN_PROGRESS, FINISHED }
 /** The three browse presentations §5.1 asks for. */
 internal enum class BrowseLayout { SIMPLE_LIST, DETAILED_LIST, GRID }
 
-/** Home shelves (§5.1). */
-internal enum class HomeSection { READING, SERIES, FOLDERS, UNREAD, FAVORITES }
+/**
+ * The home tabs, in the order they matter: comics first (this is a comic reader), then what was
+ * read lately and favourites, and documents — PDFs and text EPUBs — last (§5.1).
+ */
+internal enum class HomeSection { COMICS, RECENT, FAVORITES, DOCUMENTS }
 
 /** Which sort the browse views are under. [com.absolutex.core.scan.SortKey] names the field. */
 internal data class SortSpec(val key: com.absolutex.core.scan.SortKey, val ascending: Boolean)
@@ -39,8 +43,8 @@ internal data class GridSpec(val portraitColumns: Int, val landscapeColumns: Int
     companion object {
         const val MIN_COLUMNS = 2
         const val MAX_COLUMNS = 8
-        private const val DEFAULT_PORTRAIT = 3
-        private const val DEFAULT_LANDSCAPE = 5
+        private const val DEFAULT_PORTRAIT = 2
+        private const val DEFAULT_LANDSCAPE = 4
 
         val Default = GridSpec(DEFAULT_PORTRAIT, DEFAULT_LANDSCAPE)
     }
@@ -72,7 +76,25 @@ internal data class LibraryBookUi(
     /** 0-based position the reader last settled on; null when the book was never opened. */
     val currentPage: Int?,
     val isFavorite: Boolean,
+    /** Lowercase container extension ("cbr", "pdf"), "folder", or empty when not yet known. */
+    val format: String = "",
+    /** When the reader last saved a position in this book; null if never opened. */
+    val lastReadAt: Long? = null,
+    /** False for a document while "show document covers" is off: it gets the placeholder. */
+    val showCover: Boolean = true,
 ) {
+
+    /**
+     * The date to show and sort by. A SAF document has no `File.lastModified` (it reads as 0), so
+     * those books fall back to when the library first saw them.
+     */
+    val date: Long
+        get() = lastModified.takeIf { it > 0 } ?: addedAt
+
+    /** A PDF is a book; everything else this app opens — archives, EPUB comics, folders — a comic. */
+    val isBook: Boolean
+        get() = format == "pdf" || format == TEXT_EPUB_FORMAT
+
 
     val readState: ReadState
         get() = when {
@@ -101,14 +123,3 @@ internal data class LibraryBookUi(
 /** What the batch action bar can ask for over a selection (§5.1). */
 internal enum class BatchAction { MARK_READ, MARK_UNREAD, FAVORITE, UNFAVORITE, DELETE }
 
-/**
- * A named group of books — a series shelf or a folder shelf.
- *
- * [id] is the grouping key; [title] is what the header shows. They differ for folders, where the
- * key is a path and the title is its leaf name — and [id] doubles as the lazy-list item key, which
- * has to be unique across shelves.
- */
-internal data class Shelf(val id: String, val books: List<LibraryBookUi>, val title: String = id) {
-    val size: Int get() = books.size
-    val totalBytes: Long get() = books.sumOf { it.sizeBytes }
-}

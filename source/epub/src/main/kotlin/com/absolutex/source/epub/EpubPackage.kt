@@ -65,11 +65,15 @@ object EpubPackage {
             .mapNotNull { manifest[it]?.entryName }
         if (documents.isEmpty()) return EpubBook.Malformed
 
-        val pages = documents.mapNotNull { document -> pageImageOf(document, names, read) }
         // Every spine document must be a page. A book where only some resolve is not a comic
         // whose pages are missing — it is a text EPUB with a picture in it, and opening it as a
-        // comic would silently drop its prose.
-        if (pages.size < documents.size) return EpubBook.Reflowable
+        // comic would silently drop its prose. Stops at the first document that is not a page: a
+        // novel's verdict then costs one chapter read, not one read per chapter.
+        val pages = ArrayList<String>(documents.size)
+        for (document in documents) {
+            pages += pageImageOf(document, names, read)
+                ?: return EpubBook.Reflowable(documents, coverOf(opf, manifest, emptyList()))
+        }
 
         return EpubBook.Pages(
             entryNames = pages,

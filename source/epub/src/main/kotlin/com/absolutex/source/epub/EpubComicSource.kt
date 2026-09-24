@@ -71,7 +71,7 @@ class EpubComicSource private constructor(
                         readEntry = readEntry,
                     ),
                 )
-                EpubBook.Reflowable -> Result.TextEpub
+                is EpubBook.Reflowable -> Result.TextEpub
                 EpubBook.Malformed -> Result.NotAnEpub
             }
 

@@ -48,6 +48,11 @@ data class ReaderPrefs(
     val pageLayout: PageLayout = PageLayout.SINGLE,
     /** The chrome carries a strip of page thumbnails (§5.2). */
     val thumbnailStrip: Boolean = true,
+    /**
+     * Pages draw inverted, dark paper and light ink: a white document page at night is a lamp.
+     * Off by default, since a colour comic inverted is a negative.
+     */
+    val darkPages: Boolean = false,
     /** How a page gives way to the next (§5.2). SLIDE is the pager's own, and the plainest. */
     val transition: PageTransition = PageTransition.SLIDE,
     /** How long a page turn animates, in milliseconds (§5.2 animation tuning). */
@@ -106,8 +111,18 @@ data class AppPrefs(
     val showHiddenFolders: Boolean = false,
     /** Offer .zip/.rar/.7z/.tar alongside the comic extensions. */
     val openGenericArchives: Boolean = false,
-    /** Treat a folder of loose images as a book. */
-    val openImageFolders: Boolean = true,
+    /**
+     * Treat a folder of loose images as a book. Off by default: on a phone the folders that
+     * qualify are overwhelmingly photo and messaging-app folders, which then filled the Comics
+     * shelf. Someone who keeps comics as loose images turns it on.
+     */
+    val openImageFolders: Boolean = false,
+    /**
+     * Show a document's first page as its cover. Off by default: the documents a phone's
+     * Downloads holds are often private — identity cards, certificates — and a library grid of
+     * their first pages puts them on show. Off, a document gets a typographic placeholder.
+     */
+    val documentCovers: Boolean = false,
     /** Library locations (§5.1): SAF tree Uris the user granted, as strings. */
     val locations: Set<String> = emptySet(),
     /**

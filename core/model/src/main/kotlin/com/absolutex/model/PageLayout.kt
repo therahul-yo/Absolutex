@@ -15,6 +15,17 @@ enum class PageLayout {
 
     /** Pages stacked top to bottom and scrolled freely, fit to width: webtoons and long strips. */
     CONTINUOUS_VERTICAL,
+    ;
+
+    /**
+     * The layout to actually use on a screen of this orientation. Two pages side by side on a
+     * phone held upright shrink each page to under half the width — body text becomes
+     * unreadable and most of the screen is letterbox — so the two-page layouts apply in
+     * landscape only and a portrait screen shows one page. The choice itself is kept: turn the
+     * phone and the spreads come back.
+     */
+    fun forScreen(landscape: Boolean): PageLayout =
+        if (!landscape && (this == DOUBLE || this == DOUBLE_WITH_COVER)) SINGLE else this
 }
 
 /**

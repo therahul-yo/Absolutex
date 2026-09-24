@@ -21,6 +21,7 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:ui"))
     implementation(project(":core:data"))
+    implementation(project(":core:stats"))
     // For SortKey, so the library screens and the index agree on what "sort by date" means.
     implementation(project(":core:scan"))
     // NaturalOrder: "Issue 2" must precede "Issue 10" in the library exactly as it does in a book.
@@ -31,6 +32,7 @@ dependencies {
     // Icon set for the settings action in the top bar. The *core* set, as :feature:remote
     // already uses — it is in the APK either way, and the extended set is not worth one glyph.
     implementation(libs.compose.material.icons.core)
+    implementation(libs.compose.material.icons.extended)
     implementation(libs.compose.material3)
     implementation(libs.compose.foundation)
     // NavigationSuiteScaffold (§7): one declaration adapts between bottom bar, rail and drawer

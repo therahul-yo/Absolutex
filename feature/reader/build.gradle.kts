@@ -21,6 +21,7 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:ui"))
     implementation(project(":core:data"))
+    implementation(project(":core:stats"))
     implementation(project(":core:scan"))
     implementation(project(":core:decode"))
     implementation(project(":core:gpu"))
@@ -34,6 +35,7 @@ dependencies {
     // implementation from :feature:remote, wherever that lands in the app's own graph.
     implementation(project(":remote:core"))
     implementation(platform(libs.compose.bom))
+    implementation(libs.compose.material.icons.extended)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

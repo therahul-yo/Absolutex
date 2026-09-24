@@ -78,3 +78,30 @@ internal fun LibraryBookUi.accessibilityLabel(isSelected: Boolean, selectionActi
     }
     return parts.joinToString(separator = ", ")
 }
+
+/**
+ * The date a card shows, relative while it is recent ("Yesterday", "3 days ago") and a short month
+ * and day after that ("23 Sep"). "23/09/26" read as three different days depending on who read it.
+ */
+internal fun LibraryBookUi.dateLabel(now: Long = System.currentTimeMillis()): String =
+    android.text.format.DateUtils.getRelativeTimeSpanString(
+        date,
+        now,
+        android.text.format.DateUtils.DAY_IN_MILLIS,
+        android.text.format.DateUtils.FORMAT_ABBREV_MONTH or android.text.format.DateUtils.FORMAT_NO_YEAR,
+    ).toString()
+
+/**
+ * The short progress a comic card shows in place of file facts: nothing when unread (the NEW
+ * badge says so), "Finished", or the percentage read.
+ */
+@Composable
+internal fun LibraryBookUi.progressLabel(): String? = when (readState) {
+    ReadState.UNREAD -> null
+    ReadState.FINISHED -> stringResource(R.string.library_book_finished)
+    ReadState.IN_PROGRESS -> progressFraction?.let {
+        stringResource(R.string.library_book_percent, (it * PERCENT).toInt())
+    }
+}
+
+private const val PERCENT = 100

@@ -95,8 +95,8 @@ class SettingsReductionsTest {
             AppPrefs().withOpenGenericArchives(true),
         )
         assertEquals(
-            AppPrefs().copy(openImageFolders = false),
-            AppPrefs().withOpenImageFolders(false),
+            AppPrefs().copy(openImageFolders = true),
+            AppPrefs().withOpenImageFolders(true),
         )
     }
 

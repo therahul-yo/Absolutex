@@ -6,6 +6,14 @@
     <string name="reader_page_unreadable">This page couldn’t be read</string>
     <string name="reader_no_pages">No readable pages</string>
     <string name="reader_retry">Retry</string>
+    <!-- Encrypted-PDF prompt. The password itself is never kept: it is submitted straight back
+         into the open call, and dismissing leaves the generic failure above behind it. -->
+    <string name="reader_password_title">Password required</string>
+    <string name="reader_password_body">This PDF is encrypted. Enter its password to open it.</string>
+    <string name="reader_password_body_incorrect">Incorrect password. Try again.</string>
+    <string name="reader_password_label">Password</string>
+    <string name="reader_password_open">Open</string>
+    <string name="reader_password_cancel">Cancel</string>
     <string name="reader_recovery_known">%1$d of %2$d pages readable</string>
     <string name="reader_recovery_unknown">%1$d pages readable (total unknown)</string>
 
@@ -28,6 +36,7 @@
     <string name="reader_layout_double">Double</string>
     <string name="reader_layout_cover">Cover+</string>
     <string name="reader_layout_continuous">Strip</string>
+    <string name="reader_dark_pages">Dark pages</string>
     <string name="reader_fit_screen">Screen</string>
     <string name="reader_fit_width">Width</string>
     <string name="reader_fit_height">Height</string>
@@ -39,4 +48,21 @@
     <string name="reader_bookmark_add">Bookmark</string>
     <string name="reader_bookmark_remove">Remove bookmark</string>
     <string name="reader_bookmark_page">p. %1$d</string>
+    <string name="reader_rotation_auto">Follow system</string>
+    <string name="reader_rotation_portrait">Portrait</string>
+    <string name="reader_rotation_landscape">Landscape</string>
+    <!-- Text-book position: chapter N of M, then page within the chapter. -->
+    <string name="reader_text_position">Chapter %1$d of %2$d · %3$d/%4$d</string>
+    <string name="reader_text_smaller">Smaller text</string>
+    <string name="reader_text_larger">Larger text</string>
+    <string name="reader_text_chapter">Chapter %1$d of %2$d</string>
+    <string name="reader_text_scroll">Read as one long scroll</string>
+    <string name="reader_text_pages">Read page by page</string>
+    <string name="reader_text_prev_chapter">Previous chapter</string>
+    <string name="reader_text_next_chapter">Next chapter</string>
+    <string name="reader_favourite">Add to favourites</string>
+    <string name="reader_unfavourite">Remove from favourites</string>
+    <string name="reader_guide_back">Previous page</string>
+    <string name="reader_guide_next">Next page</string>
+    <string name="reader_guide_menu">Controls</string>
 </resources>

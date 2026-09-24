@@ -178,3 +178,12 @@ class TapZoneColumnTest {
         assertEquals(2, zone.column)
     }
 }
+
+class LayoutForScreenTest {
+    @Test fun `two-page layouts fall back to one page on an upright screen`() {
+        assertEquals(PageLayout.SINGLE, PageLayout.DOUBLE.forScreen(landscape = false))
+        assertEquals(PageLayout.SINGLE, PageLayout.DOUBLE_WITH_COVER.forScreen(landscape = false))
+        assertEquals(PageLayout.DOUBLE, PageLayout.DOUBLE.forScreen(landscape = true))
+        assertEquals(PageLayout.CONTINUOUS_VERTICAL, PageLayout.CONTINUOUS_VERTICAL.forScreen(landscape = false))
+    }
+}

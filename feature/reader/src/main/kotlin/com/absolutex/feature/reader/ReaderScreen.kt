@@ -1,5 +1,14 @@
 package com.absolutex.feature.reader
 
+import com.absolutex.core.data.BookPrefs
+import android.content.res.Configuration.ORIENTATION_LANDSCAPE
+import com.absolutex.core.ui.Motion
+import androidx.compose.foundation.shape.ZeroCornerSize
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.AnimatedVisibility
 import com.absolutex.core.data.settings.RotationLock
 import androidx.compose.runtime.DisposableEffect
 import android.view.WindowManager
@@ -124,7 +133,7 @@ fun ReaderScreen(
     // A book's own choices win over the global ones (§5.2), and only for this book.
     val options: ReaderOptionsViewModel = hiltViewModel()
     val book by remember(ui.bookId) { options.bookPrefs(ui.bookId) }.collectAsStateWithLifecycle(null)
-    val prefs = global.overriddenBy(book)
+    val prefs = readingPrefsFor(global, book, ui.isPdf)
     // Hoisted above the Pages/Strip split so choosing the continuous-vertical layout from the
     // open chrome does not close it: Pages and Strip are different call sites, and a `remember`
     // owned by either one is torn down the moment the `when` below takes the other branch.
@@ -153,6 +162,7 @@ fun ReaderScreen(
     ) {
         when {
             ui.loading -> CircularProgressIndicator()
+            ui.textEpub -> TextEpubReader(uri, ui.title, onSettings)
             // Generic string from the ViewModel — never a raw Uri or entry name.
             ui.error != null -> Column(
                 modifier = Modifier.padding(24.dp),
@@ -184,12 +194,15 @@ fun ReaderScreen(
             ui.recoveryNotice?.let { notice ->
                 Surface(
                     color = MaterialTheme.colorScheme.surface.copy(alpha = CHROME_ALPHA),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding(),
                 ) {
                     Text(notice, modifier = Modifier.padding(16.dp))
                 }
             }
         }
+        // The prompt overlays every state, including the generic failure it rides on.
+        PasswordPrompt(ui.passwordRequired, ui.passwordIncorrect, { vm.open(uri, it) }, vm::cancelPasswordPrompt)
     }
 }
 
@@ -206,10 +219,10 @@ internal fun readerBackgroundFor(
     settledPage: Int,
 ): Color = if (autoBackground) pageBackgrounds[settledPage] ?: Color.Black else Color.Black
 
-internal const val CHROME_ALPHA = 0.9f
+internal const val CHROME_ALPHA = 0.97f
 
 /** The most of the screen the chrome may take, so a page is always partly visible behind it. */
-private const val CHROME_MAX_HEIGHT = 0.7f
+internal const val CHROME_MAX_HEIGHT = 0.7f
 
 /** One + or − press scales by a quarter; eight presses cross the whole zoom range. */
 private const val KEY_ZOOM_STEP = 1.25f
@@ -238,7 +251,8 @@ private fun Pages(
 ) {
     val flow = prefs.readingFlow
     // The pager counts screens; everything else (progress, seeking, keys) speaks book pages.
-    val spreads = remember(pageCount, prefs.pageLayout) { Spreads.of(pageCount, prefs.pageLayout) }
+    val layout = prefs.pageLayout.forScreen(LocalConfiguration.current.orientation == ORIENTATION_LANDSCAPE)
+    val spreads = remember(pageCount, layout) { Spreads.of(pageCount, layout) }
     val pagerState = rememberPagerState(initialPage = Spreads.indexOf(spreads, startPage)) { spreads.size }
     // A layout change regroups the pages: land on the page being read, not on whatever spread
     // happens to sit at the old index. Rebuilding the whole reader instead would also throw away
@@ -313,7 +327,7 @@ private fun Pages(
         ReaderPager(flow, pagerState, scrollable, page)
         ReaderChrome(
             visible = chrome, page = Spreads.at(spreads, pagerState.currentPage).first, pageCount = pageCount,
-            title = title, onSettings = onSettings, onSeek = jump,
+            title = title, onSettings = onSettings, onSeek = jump, onDismiss = { chrome = false },
             bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip }, toc = toc,
             onExport = { vm.exportPage(Spreads.at(spreads, pagerState.currentPage).first) },
             fitFor = fitContext, prefs = prefs,
@@ -388,7 +402,7 @@ private fun Strip(
         }
         ReaderChrome(
             visible = chrome, page = listState.firstVisibleItemIndex, pageCount = pageCount,
-            title = title, onSettings = onSettings, onSeek = jump,
+            title = title, onSettings = onSettings, onSeek = jump, onDismiss = { chrome = false },
             bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip }, toc = toc,
             onExport = { vm.exportPage(listState.firstVisibleItemIndex) },
             fitFor = null, prefs = prefs,
@@ -468,101 +482,6 @@ private fun SpreadRow(
     }
 }
 
-/**
- * Page indicator and seek bar, shown only with the chrome. Seeking is the only way to cross a
- * 45-page book in one move; tapping and swiping are both one page at a time.
- */
-@Composable
-private fun ReaderChrome(
-    visible: Boolean,
-    page: Int,
-    pageCount: Int,
-    title: String,
-    onSettings: (() -> Unit)?,
-    onSeek: (Int) -> Unit,
-    bookId: String,
-    strip: (suspend (index: Int, width: Int) -> Bitmap?)?,
-    toc: List<TocEntry>,
-    onExport: suspend () -> Uri?,
-    /** Null in a layout whose fit is fixed, such as the continuous strip. */
-    fitFor: FitContext?,
-    prefs: ReaderPrefs,
-    modifier: Modifier = Modifier,
-) {
-    if (!visible || pageCount <= 0) return
-    Box(modifier.fillMaxSize()) {
-        ReaderTopBar(title, onSettings, Modifier.align(Alignment.TopCenter))
-    // While dragging, the thumb and label follow the finger locally; the pager moves once, on
-    // release. Seeking through the pager on every drag tick launched an animated scroll per tick,
-    // each cancelling the last, and the page stuttered behind the thumb.
-    var dragging by remember { mutableStateOf<Float?>(null) }
-    // Saveable, like chromeState above: a config change this activity does not declare (font
-    // scale, locale, keyboard) must not close a TOC or options panel the reader has open.
-    var contents by rememberSaveable { mutableStateOf(false) }
-    // Landscape has ~1200 px of height and the chrome had grown past it, so the options moved
-    // behind a toggle: what is always shown is what a reader looks at every page.
-    var options by rememberSaveable { mutableStateOf(false) }
-    val shown = (dragging?.roundToInt() ?: page) + 1
-    val indicator = stringResource(R.string.reader_page_indicator_desc, shown, pageCount)
-    val seekLabel = stringResource(R.string.reader_seek_desc)
-    // Capped and scrollable: with the options open, landscape has ~1200 px of height and the
-    // chrome would otherwise grow over its own top bar and the page entirely.
-    val maxChrome = (LocalConfiguration.current.screenHeightDp * CHROME_MAX_HEIGHT).dp
-    val chromeScroll = rememberScrollState()
-    // Opening the options scrolls to them: they sit below the seek bar, which in landscape is past
-    // the cap, and a control that appears to do nothing is worse than no control.
-    LaunchedEffect(options) {
-        if (options) {
-            withFrameNanos { }
-            chromeScroll.animateScrollTo(chromeScroll.maxValue)
-        }
-    }
-    Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = CHROME_ALPHA),
-        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-            .heightIn(max = maxChrome).navigationBarsPadding(),
-    ) {
-        Column(
-            Modifier.verticalScroll(chromeScroll).padding(horizontal = 16.dp, vertical = 8.dp),
-        ) {
-            if (contents) TocPanel(toc, onJump = { onSeek(it); contents = false })
-            ChromeActions(
-                indicator = stringResource(R.string.reader_page_indicator, shown, pageCount),
-                indicatorDescription = indicator,
-                hasContents = toc.isNotEmpty(),
-                onContents = { contents = !contents },
-                onOptions = { options = !options },
-                page = page,
-                onExport = onExport,
-            )
-            strip?.let { ThumbnailStrip(pageCount, page, bookId, onSeek, it) }
-            BookmarkBar(bookId, page, pageCount, onJump = onSeek)
-            // Slider works in page numbers, not fractions: a 45-page book has 45 stops and the
-            // value it reports is the page the reader lands on.
-            Slider(
-                value = dragging ?: page.toFloat(),
-                onValueChange = { dragging = it },
-                onValueChangeFinished = {
-                    dragging?.let { onSeek(it.roundToInt()) }
-                    dragging = null
-                },
-                valueRange = 0f..(pageCount - 1).toFloat().coerceAtLeast(0f),
-                // The slider's own value is 0-based; TalkBack should hear the page number shown.
-                modifier = Modifier.fillMaxWidth().semantics {
-                    contentDescription = seekLabel
-                    stateDescription = indicator
-                },
-            )
-            // Last, not first: the seek bar and the strip are what a reader reaches for on every
-            // page, so they keep the top of the capped box and the options open below them.
-            if (options) {
-                fitFor?.let { FitRow(prefs, it) }
-                BookOptionsRow(bookId, prefs)
-            }
-        }
-    }
-    }
-}
 
 /**
  * The window behaviour §5.2 makes settings: keep the screen on, lock rotation, draw under the
@@ -583,7 +502,8 @@ private fun ReaderWindow(prefs: ReaderPrefs, immersive: Boolean) {
         activity?.requestedOrientation = when (prefs.rotationLock) {
             RotationLock.SYSTEM -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             RotationLock.PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            RotationLock.LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            // Either way up: a phone turned left or right is landscape all the same.
+            RotationLock.LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         }
         onDispose { if (previous != null) activity.requestedOrientation = previous }
     }
@@ -608,16 +528,21 @@ private fun ReaderWindow(prefs: ReaderPrefs, immersive: Boolean) {
 /**
  * Immersive reading: the system bars are hidden while the chrome is, and a swipe from an edge
  * brings them back transiently without disturbing the page.
+ *
+ * The bars come back the moment the reader leaves composition. They did not before: the library
+ * opened with no status bar, the bars returned a beat later and the whole screen jumped down
+ * mid-transition — the back animation looked broken when it was the insets that moved.
  */
 @Composable
 private fun ImmersiveWhile(hidden: Boolean) {
     val view = LocalView.current
     val window = (view.context as? Activity)?.window
-    LaunchedEffect(hidden, window) {
-        val controller = window?.let { WindowCompat.getInsetsController(it, view) } ?: return@LaunchedEffect
-        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        if (hidden) controller.hide(WindowInsetsCompat.Type.systemBars())
-        else controller.show(WindowInsetsCompat.Type.systemBars())
+    DisposableEffect(hidden, window) {
+        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
+        controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (hidden) controller?.hide(WindowInsetsCompat.Type.systemBars())
+        else controller?.show(WindowInsetsCompat.Type.systemBars())
+        onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
     }
 }
 
@@ -673,7 +598,7 @@ private fun PageSlot(
         onPagerLockChanged = onPagerLockChanged, onEdgeSwipe = onEdgeSwipe, onTapZone = onTapZone,
         spreadSide = spreadSide, onBaseReady = onBaseReady, zoomSteps = zoomSteps,
         onCropDecided = onCropDecided, onBackgroundColour = onBackgroundColour,
-        onInvalidate = { vm.invalidatePage(index); attempts++ },
+        onInvalidate = { vm.invalidatePage(index); attempts++ }, dark = prefs.darkPages,
     )
 }
 
@@ -702,12 +627,16 @@ private fun PageSlotContent(
     onCropDecided: ((CropRect?) -> Unit)?,
     onBackgroundColour: (Color) -> Unit,
     onInvalidate: () -> Unit,
+    dark: Boolean,
 ) {
     // Draw-observed colour state for §4. The colour is NEVER read in composition: one
     // lifecycle-aware collector writes it into draw-observed state, so a slider drag
     // repaints at 120 Hz without recomposing PageCanvas (or any sibling slot).
     val lifecycleOwner = LocalLifecycleOwner.current
-    val colourState = remember { mutableStateOf(ColourParams.NEUTRAL) }
+    // Seeded from the StateFlow's current value, not NEUTRAL: the collector only runs after
+    // the first composition, so a neutral seed shows uncorrected → graded on every first
+    // frame for anyone with a colour grade (lead follow-up on #46).
+    val colourState = remember(vm) { mutableStateOf(vm.renderingPrefs.value.colour) }
     LaunchedEffect(vm) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             vm.renderingPrefs.collect { colourState.value = it.colour }
@@ -723,6 +652,7 @@ private fun PageSlotContent(
     when {
         img != null -> PageCanvas(
             page = img,
+            modifier = Modifier.darkPages(dark),
             pageIndex = index,
             bookId = bookId,
             cache = vm.tileCache,
@@ -766,4 +696,14 @@ private fun PageSlotContent(
             }
         }
     }
+}
+
+/**
+ * The book's effective reading prefs: its own choices over the global ones, and a PDF with no
+ * layout of its own scrolls continuously, as documents do — comics keep turning pages. A layout
+ * chosen for the book in Options still wins.
+ */
+private fun readingPrefsFor(global: ReaderPrefs, book: BookPrefs?, isPdf: Boolean): ReaderPrefs {
+    val merged = global.overriddenBy(book)
+    return if (isPdf && book?.pageLayout == null) merged.copy(pageLayout = PageLayout.CONTINUOUS_VERTICAL) else merged
 }
