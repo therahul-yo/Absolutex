@@ -1,8 +1,8 @@
 {
   "formatVersion": 1,
   "database": {
-    "version": 8,
-    "identityHash": "79a4adabbc6368ca723270bf53fc3521",
+    "version": 9,
+    "identityHash": "79a4adabbc6368ca723270bf53fc3522",
     "entities": [
       {
         "tableName": "reading_progress",
@@ -290,7 +290,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '79a4adabbc6368ca723270bf53fc3521')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '79a4adabbc6368ca723270bf53fc3522')"
     ]
   }
 }

@@ -59,7 +59,7 @@ interface ProgressDao {
         ReadingProgress::class, LibraryBook::class, Bookmark::class, BookPrefs::class,
         PageView::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
@@ -69,6 +69,7 @@ interface ProgressDao {
         AutoMigration(from = 5, to = 6),
         AutoMigration(from = 6, to = 7),
         AutoMigration(from = 7, to = 8),
+        AutoMigration(from = 8, to = 9),
     ],
 )
 abstract class AbsolutexDatabase : RoomDatabase() {

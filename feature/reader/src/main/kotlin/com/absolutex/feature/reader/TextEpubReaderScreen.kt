@@ -20,9 +20,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
-import com.absolutex.core.data.BookIdentity
-import com.absolutex.core.data.BookPrefsDao
-import com.absolutex.core.data.BookPrefs
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.absolutex.model.BookIdentity
 import com.absolutex.core.data.BookPrefsDao
 import com.absolutex.core.data.BookPrefs
 import com.absolutex.core.data.ProgressDao
@@ -106,22 +105,72 @@ fun TextEpubReaderScreen(
 
         // Progress tracking: save page index + anchor (spine index + char offset) via existing ProgressDao / BookPrefsDao.
         LaunchedEffect(uri) {
-            val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
-            descriptor?.use { pfd ->
-                val zip = java.util.zip.ZipFile(pfd.fileDescriptor)
-                // Read spine from package (reuse EpubPackage logic briefly).
-                // For this minimal scaffold, we load the first spine HTML document with pagination CSS.
-                val entryNames = (0 until zip.size).map { zip.getEntryAt(it).name }
-                val spineDoc = entryNames.firstOrNull { it.endsWith(".html", ignoreCase = true) || it.endsWith(".xhtml", ignoreCase = true) || it.contains("chapter") }
-                if (spineDoc != null) {
-                    val htmlBytes = zip.getInputStream(zip.getEntry(spineDoc)).readBytes()
-                    val paginatedHtml = """
-                        <html><head><meta charset="UTF-8"><style>$themeCss</style></head>
-                        <body>${String(htmlBytes, Charsets.UTF_8)}</body></html>
-                    """.trimIndent()
-                    webView.loadDataWithBaseURL("archive-entry:/", paginatedHtml, "text/html", "UTF-8", null)
+            val filePath = uri.path ?: run {
+                // For content:// URIs, read descriptor bytes into a temp file for ZipFile access.
+                val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
+                val tempFile = java.io.File(context.cacheDir, "epub_temp_${System.currentTimeMillis()}.epub")
+                descriptor?.use { pfd ->
+                    val input = android.os.ParcelFileDescriptor.AutoCloseInputStream(pfd)
+                    tempFile.outputStream().use { out -> input.copyTo(out) }
+                }
+                descriptor?.close()
+                tempFile.absolutePath
+            }
+            val zipFile = java.io.File(filePath)
+            if (!zipFile.exists()) {
+                return@LaunchedEffect
+            }
+            val entryNames = java.util.zip.ZipFile(zipFile).use { zip ->
+                val names = mutableListOf<String>()
+                val entries = zip.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    names.add(entry.name)
+                }
+                names
+            }
+            val read: (String) -> ByteArray? = { name ->
+                java.util.zip.ZipFile(zipFile).use { zip ->
+                    val entry = zip.getEntry(name) ?: return null
+                    zip.getInputStream(entry)?.use { it.readBytes() }
                 }
             }
+            val book = com.absolutex.source.epub.EpubPackage.parse(entryNames, read)
+            when (book) {
+                    is com.absolutex.source.epub.EpubBook.Reflowable -> {
+                        // Load first HTML/XHTML spine document with pagination CSS.
+                        val spineDoc = entryNames.firstOrNull { name ->
+                            val lower = name.lowercase()
+                            (lower.endsWith(".html") || lower.endsWith(".xhtml")) && !lower.contains("nav") && !lower.contains("toc")
+                        }
+                        if (spineDoc != null) {
+                            val htmlBytes = read(spineDoc)
+                            if (htmlBytes != null) {
+                                val paginatedHtml = """
+                                    <html><head><meta charset="UTF-8"><style>$themeCss</style></head>
+                                    <body>${String(htmlBytes, Charsets.UTF_8)}</body></html>
+                                """.trimIndent()
+                                webView.loadDataWithBaseURL("archive-entry:/", paginatedHtml, "text/html", "UTF-8", null)
+                            }
+                        }
+                    }
+                    is com.absolutex.source.epub.EpubBook.Pages -> {
+                        // Fixed-layout comic EPUB — not handled by this text reader.
+                        val paginatedHtml = """
+                            <html><head><meta charset="UTF-8"><style>$themeCss</style></head>
+                            <body><h1>Fixed-layout EPUB</h1><p>This is a comic EPUB, not a text EPUB.</p></body></html>
+                        """.trimIndent()
+                        webView.loadDataWithBaseURL("archive-entry:/", paginatedHtml, "text/html", "UTF-8", null)
+                    }
+                    else -> {
+                        // Malformed EPUB — show error.
+                        val paginatedHtml = """
+                            <html><head><meta charset="UTF-8"><style>$themeCss</style></head>
+                            <body><h1>Invalid EPUB</h1><p>This file could not be read as an EPUB.</p></body></html>
+                        """.trimIndent()
+                        webView.loadDataWithBaseURL("archive-entry:/", paginatedHtml, "text/html", "UTF-8", null)
+                    }
+                }
             // Restore progress: read existing ReadingProgress for bookId; restore from BookPrefs.epubAnchor if available.
             // Write progress: observe scroll or page-turn events and save global page + anchor.
         }
@@ -129,12 +178,15 @@ fun TextEpubReaderScreen(
 }
 
 private fun readArchiveEntry(context: Context, uri: Uri, entryName: String): ByteArray? {
-    return runCatching {
-        val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
-        descriptor?.use { pfd ->
-            val zip = java.util.zip.ZipFile(pfd.fileDescriptor)
+    return try {
+        val filePath = uri.path ?: return null
+        val file = java.io.File(filePath)
+        if (!file.exists()) return null
+        java.util.zip.ZipFile(file).use { zip ->
             val entry = zip.getEntry(entryName) ?: return null
-            zip.getInputStream(entry)?.readBytes()
+            zip.getInputStream(entry)?.use { it.readBytes() }
         }
-    }.getOrNull()
+    } catch (e: Exception) {
+        null
+    }
 }
