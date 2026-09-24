@@ -1,5 +1,6 @@
 package com.absolutex.feature.library
 
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedContent
@@ -50,6 +51,7 @@ import com.absolutex.core.ui.Motion
 internal fun SelectionTopBar(state: LibraryUiState, actions: LibraryActions) {
     BackHandler(onBack = actions.onClearSelection)
     TopAppBar(
+        windowInsets = WindowInsets(0),
         navigationIcon = {
             IconButton(onClick = actions.onClearSelection) {
                 Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.library_selection_clear))
