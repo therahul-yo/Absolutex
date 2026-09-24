@@ -47,6 +47,15 @@ interface CoverTransitionHost {
      */
     @Composable
     fun coverModifier(path: String, visible: Boolean): Modifier
+
+    /**
+     * A card was tapped. Only a card that shows its art flies: a document whose cover is hidden
+     * for privacy must not have its first page rendered by the reader end instead.
+     */
+    fun opened(path: String, showsCover: Boolean)
+
+    /** Whether the book at [path] was opened from a card whose art may fly. Snapshot state. */
+    fun flies(path: String): Boolean
 }
 
 /**
@@ -61,7 +70,8 @@ val LocalCoverTransitionHost = staticCompositionLocalOf<CoverTransitionHost?> { 
  * the card chrome (title, pill, progress) stays behind and the cover grows out of the card.
  */
 @Composable
-fun Modifier.sharedCoverElement(openCoverPath: String?, bookPath: String): Modifier {
+internal fun Modifier.sharedCoverElement(openCoverPath: String?, book: LibraryBookUi): Modifier {
     val host = LocalCoverTransitionHost.current ?: return this
-    return then(host.coverModifier(bookPath, isCoverSourceVisible(openCoverPath, bookPath)))
+    if (!book.showCover) return this
+    return then(host.coverModifier(book.path, isCoverSourceVisible(openCoverPath, book.path)))
 }

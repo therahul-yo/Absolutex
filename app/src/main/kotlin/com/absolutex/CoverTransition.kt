@@ -4,7 +4,10 @@ import android.net.Uri
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.absolutex.core.ui.Motion
 import com.absolutex.feature.library.CoverTransitionHost
@@ -32,6 +35,15 @@ fun coverPathFor(uri: Uri): String =
  * path holds with no branch here.
  */
 private class SharedCoverHost(private val scope: SharedTransitionScope) : CoverTransitionHost {
+    /** The book last opened from a card showing its art; any other open keeps the plain sheet. */
+    private var flying by mutableStateOf<String?>(null)
+
+    override fun opened(path: String, showsCover: Boolean) {
+        flying = path.takeIf { showsCover }
+    }
+
+    override fun flies(path: String): Boolean = flying == path
+
     @OptIn(ExperimentalSharedTransitionApi::class)
     @Composable
     override fun coverModifier(path: String, visible: Boolean): Modifier {

@@ -260,6 +260,7 @@ private fun LibraryContent(
     openCoverPath: String? = null,
 ) {
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val coverHost = LocalCoverTransitionHost.current
     val error = state.error
     if (error != null) {
         // A database failure replaces the whole surface, including the empty state: "nothing here
@@ -275,7 +276,10 @@ private fun LibraryContent(
     // the lambdas it captures is how a stale callback survives a recomposition.
     val context = RowContext(
         selectionActive = state.selectionActive,
-        onOpen = { book -> onOpenBook(book.path) },
+        onOpen = { book ->
+            coverHost?.opened(book.path, book.showCover)
+            onOpenBook(book.path)
+        },
         onToggleSelection = actions.onToggleSelection,
         openCoverPath = openCoverPath,
     )

@@ -83,6 +83,10 @@ internal fun ReaderCoverHero(
     }
     val path = remember(uri) { coverPathFor(uri) }
     val host = LocalCoverTransitionHost.current
+    // Only a book opened from a card showing its art flies. Anything else (a hidden document
+    // cover, a book opened from Continue reading or another app) keeps the plain sheet, and the
+    // hero never renders a cover the library chose not to show.
+    if (host == null || !host.flies(path)) return
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Box(
             Modifier

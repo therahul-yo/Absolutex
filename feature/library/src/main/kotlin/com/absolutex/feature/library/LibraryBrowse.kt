@@ -181,7 +181,7 @@ internal fun CoverCard(book: LibraryBookUi, isSelected: Boolean, context: RowCon
             Box {
                 BookCover(
                     book,
-                    Modifier.fillMaxWidth().sharedCoverElement(context.openCoverPath, book.path),
+                    Modifier.fillMaxWidth().sharedCoverElement(context.openCoverPath, book),
                     shape = MaterialTheme.shapes.medium,
                 )
                 if (!book.isBook && book.readState == ReadState.UNREAD) NewBadge(Modifier.align(Alignment.TopStart))
@@ -217,7 +217,7 @@ private fun HeroCard(book: LibraryBookUi, isSelected: Boolean, context: RowConte
         Box {
             BookCover(
                 book,
-                Modifier.fillMaxWidth().sharedCoverElement(context.openCoverPath, book.path),
+                Modifier.fillMaxWidth().sharedCoverElement(context.openCoverPath, book),
                 aspect = HERO_ASPECT,
                 shape = MaterialTheme.shapes.large,
             )
@@ -256,7 +256,7 @@ private fun BookRow(state: LibraryUiState, book: LibraryBookUi, context: RowCont
         ) {
             val detailed = state.layout == BrowseLayout.DETAILED_LIST
             Box(Modifier.width(if (detailed) ThumbWidth else SmallThumbWidth)) {
-                BookCover(book, Modifier.fillMaxWidth().sharedCoverElement(context.openCoverPath, book.path))
+                BookCover(book, Modifier.fillMaxWidth().sharedCoverElement(context.openCoverPath, book))
                 SelectedMark(selected)
             }
             if (detailed) {
