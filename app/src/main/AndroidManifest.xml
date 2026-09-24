@@ -48,8 +48,10 @@
                 <data android:mimeType="application/x-cbr" />
                 <data android:mimeType="application/zip" />
                 <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/epub+zip" />
                 <!-- Extension filters for SAF tree picks where MIME isn't set. -->
                 <data android:pathPattern=".*\\.cbz" />
+                <data android:pathPattern=".*\\.epub" />
                 <data android:pathPattern=".*\\.cbr" />
                 <data android:pathPattern=".*\\.cb7" />
             </intent-filter>
