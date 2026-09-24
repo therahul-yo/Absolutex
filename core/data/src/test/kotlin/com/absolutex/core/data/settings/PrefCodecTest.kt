@@ -33,7 +33,7 @@ class PrefCodecTest {
         assertEquals(AppPrefs.DEFAULT_CACHE_MIB, app.cacheSizeMiB)
         assertFalse(app.showHiddenFolders)
         assertFalse(app.openGenericArchives)
-        assertTrue(app.openImageFolders)
+        assertFalse(app.openImageFolders)
         assertFalse(app.useOriginalFilename)
     }
 
@@ -80,7 +80,7 @@ class PrefCodecTest {
             cacheSizeMiB = 1024,
             showHiddenFolders = true,
             openGenericArchives = true,
-            openImageFolders = false,
+            openImageFolders = true,
         )
         val bag = MapPrefBag()
         PrefCodec.encodeApp(original, bag)

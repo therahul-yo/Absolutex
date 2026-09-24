@@ -98,4 +98,6 @@
     <string name="library_format_pill">.%1$s</string>
     <!-- Page count, then file size, e.g. "180 pages · 592 MB". -->
     <string name="library_book_facts">%1$s · %2$s</string>
+    <!-- The pill on an image-folder book: it has no file extension to show. -->
+    <string name="library_format_folder">Folder</string>
 </resources>

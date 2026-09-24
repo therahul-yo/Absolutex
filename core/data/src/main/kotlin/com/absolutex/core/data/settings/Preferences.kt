@@ -106,8 +106,12 @@ data class AppPrefs(
     val showHiddenFolders: Boolean = false,
     /** Offer .zip/.rar/.7z/.tar alongside the comic extensions. */
     val openGenericArchives: Boolean = false,
-    /** Treat a folder of loose images as a book. */
-    val openImageFolders: Boolean = true,
+    /**
+     * Treat a folder of loose images as a book. Off by default: on a phone the folders that
+     * qualify are overwhelmingly photo and messaging-app folders, which then filled the Comics
+     * shelf. Someone who keeps comics as loose images turns it on.
+     */
+    val openImageFolders: Boolean = false,
     /** Library locations (§5.1): SAF tree Uris the user granted, as strings. */
     val locations: Set<String> = emptySet(),
     /**

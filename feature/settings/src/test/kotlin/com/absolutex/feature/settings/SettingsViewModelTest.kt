@@ -110,10 +110,10 @@ class SettingsViewModelTest {
         val fake = FakeSettingsWriter()
         val vm = viewModel(fake)
         vm.setOpenGenericArchives(true)
-        vm.setOpenImageFolders(false)
+        vm.setOpenImageFolders(true)
         advanceUntilIdle()
         assertEquals(
-            AppPrefs().copy(openGenericArchives = true, openImageFolders = false),
+            AppPrefs().copy(openGenericArchives = true, openImageFolders = true),
             fake.app,
         )
     }

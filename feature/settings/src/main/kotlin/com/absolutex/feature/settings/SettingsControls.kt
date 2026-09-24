@@ -1,5 +1,6 @@
 package com.absolutex.feature.settings
 
+import androidx.compose.material3.ExperimentalMaterial3Api
 import com.absolutex.core.ui.rememberHaptics
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.Color
@@ -34,6 +35,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -191,6 +193,7 @@ fun RadioSettingRow(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CacheSizeRow(
     valueMiB: Int,
@@ -209,6 +212,8 @@ fun CacheSizeRow(
         )
         val sliderDescription = stringResource(R.string.settings_cache_size_desc, pending)
         Slider(
+            // No stop-indicator dot at the track's end: it marks nothing here.
+            track = { SliderDefaults.Track(it, drawStopIndicator = null) },
             value = pending.toFloat(),
             onValueChange = { pending = it.roundToInt() },
             onValueChangeFinished = { onChange(pending) },

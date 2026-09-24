@@ -1,5 +1,7 @@
 package com.absolutex.feature.reader
 
+import androidx.compose.material3.ExperimentalMaterial3Api
+import com.absolutex.core.ui.rememberHaptics
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.rememberCoroutineScope
@@ -34,6 +36,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import com.absolutex.model.TocEntry
 import androidx.compose.runtime.Composable
@@ -164,22 +167,7 @@ private fun BottomChrome(
             )
             strip?.let { ThumbnailStrip(pageCount, page, bookId, onSeek, it) }
             BookmarkBar(bookId, page, pageCount, onJump = onSeek)
-            // Slider works in page numbers, not fractions: a 45-page book has 45 stops and the
-            // value it reports is the page the reader lands on.
-            Slider(
-                value = dragging ?: page.toFloat(),
-                onValueChange = { dragging = it },
-                onValueChangeFinished = {
-                    dragging?.let { onSeek(it.roundToInt()) }
-                    dragging = null
-                },
-                valueRange = 0f..(pageCount - 1).toFloat().coerceAtLeast(0f),
-                // The slider's own value is 0-based; TalkBack should hear the page number shown.
-                modifier = Modifier.fillMaxWidth().semantics {
-                    contentDescription = seekLabel
-                    stateDescription = indicator
-                },
-            )
+            PageSlider(page, pageCount, dragging, { dragging = it }, onSeek, seekLabel, indicator)
             // Last, not first: the seek bar and the strip are what a reader reaches for on every
             // page, so they keep the top of the capped box and the options open below them.
             if (options) {
@@ -228,3 +216,47 @@ private val DISMISS_DISTANCE = 72.dp
 private val HANDLE_TOUCH_HEIGHT = 28.dp
 private const val DISMISS_VELOCITY = 1200f
 private const val HANDLE_ALPHA = 0.5f
+
+/**
+ * The seek bar. Works in page numbers, not fractions: a 45-page book has 45 stops and the value it
+ * reports is the page the reader lands on. [dragging] is the finger's position while held, so the
+ * label follows it and the pager moves once, on release.
+ *
+ * A tick for every page crossed while dragging, a firmer click on landing: the seek bar is felt as
+ * well as seen, like the detents of a physical dial. No stop-indicator dot at the track's end: it
+ * marks nothing here and read as a stray mark under the bookmark button.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PageSlider(
+    page: Int,
+    pageCount: Int,
+    dragging: Float?,
+    onDrag: (Float?) -> Unit,
+    onSeek: (Int) -> Unit,
+    seekLabel: String,
+    indicator: String,
+) {
+    val haptics = rememberHaptics()
+    Slider(
+        value = dragging ?: page.toFloat(),
+        onValueChange = {
+            if (it.roundToInt() != (dragging ?: page.toFloat()).roundToInt()) haptics.tick()
+            onDrag(it)
+        },
+        onValueChangeFinished = {
+            dragging?.let {
+                haptics.confirm()
+                onSeek(it.roundToInt())
+            }
+            onDrag(null)
+        },
+        valueRange = 0f..(pageCount - 1).toFloat().coerceAtLeast(0f),
+        track = { SliderDefaults.Track(it, drawStopIndicator = null) },
+        // The slider's own value is 0-based; TalkBack should hear the page number shown.
+        modifier = Modifier.fillMaxWidth().semantics {
+            contentDescription = seekLabel
+            stateDescription = indicator
+        },
+    )
+}
