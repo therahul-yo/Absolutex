@@ -1,5 +1,10 @@
 package com.absolutex.feature.library
 
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Row
 import androidx.compose.runtime.setValue
@@ -266,6 +271,54 @@ private fun LibraryContent(
         modifier = Modifier.fillMaxSize(),
         label = "tab",
     ) { shown ->
-        LibraryPane(shown, context, landscape, onSeeAll = { actions.onSectionChange(HomeSection.RECENT) })
+        SeriesOrShelf(shown, context, landscape, onSeeAll = { actions.onSectionChange(HomeSection.RECENT) })
+    }
+}
+
+/**
+ * The shelf, or one series opened from it: a back arrow and the series' name over its issues.
+ * Back (the arrow or the system gesture) returns to the shelf. Keyed on the tab, so another tab
+ * never opens on a series left open in this one.
+ */
+@Composable
+private fun SeriesOrShelf(
+    state: LibraryUiState,
+    context: RowContext,
+    landscape: Boolean,
+    onSeeAll: () -> Unit,
+) {
+    var openSeries by rememberSaveable(state.section) { mutableStateOf<String?>(null) }
+    val series = openSeries
+    AnimatedContent(
+        series,
+        transitionSpec = { fadeIn(Motion.enter()) togetherWith fadeOut(Motion.exit()) },
+        label = "series",
+    ) { shown ->
+        if (shown == null) {
+            LibraryPane(state, context, landscape, onSeeAll = onSeeAll, onOpenSeries = { openSeries = it })
+        } else {
+            BackHandler { openSeries = null }
+            Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = Space.Tight),
+                ) {
+                    IconButton(onClick = { openSeries = null }) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.ArrowBack,
+                            contentDescription = stringResource(R.string.library_series_back),
+                        )
+                    }
+                    Text(
+                        shown,
+                        style = MaterialTheme.typography.titleLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                val issues = state.visibleBooks.filter { it.series == shown }
+                LibraryPane(state.copy(visibleBooks = issues), context, landscape)
+            }
+        }
     }
 }

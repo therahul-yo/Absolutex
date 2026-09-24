@@ -106,4 +106,10 @@
     <string name="library_badge_new">New</string>
     <string name="library_continue_reading">Continue reading</string>
     <string name="library_see_all">See all</string>
+    <!-- Under a series stack: how many issues, and how many of them are finished. -->
+    <plurals name="library_series_count">
+        <item quantity="one">%1$d issue · %2$d read</item>
+        <item quantity="other">%1$d issues · %2$d read</item>
+    </plurals>
+    <string name="library_series_back">Back to the shelf</string>
 </resources>

@@ -74,13 +74,15 @@ internal fun LibraryPane(
     landscape: Boolean,
     modifier: Modifier = Modifier,
     onSeeAll: () -> Unit = {},
+    onOpenSeries: ((String) -> Unit)? = null,
 ) {
     val books = state.visibleBooks
     val hero = books.firstOrNull()?.takeIf { state.section == HomeSection.RECENT }
     val rest = if (hero == null) books else books.drop(1)
     // Continue reading: in-progress comics on the Comics tab, newest first.
     // Not while searching: the strip is a shortcut home, not a search result.
-    val continueReading = if (state.section == HomeSection.COMICS && state.query.isBlank()) {
+    val browsingComics = state.section == HomeSection.COMICS && state.query.isBlank() && onOpenSeries != null
+    val continueReading = if (browsingComics) {
         state.allBooks.filter { !it.isBook && it.readState == ReadState.IN_PROGRESS }
             .sortedByDescending { it.lastReadAt ?: 0L }
             .take(CONTINUE_LIMIT)
@@ -96,7 +98,13 @@ internal fun LibraryPane(
             horizontalArrangement = Arrangement.spacedBy(Space.Row),
             verticalArrangement = Arrangement.spacedBy(Space.Row),
         ) {
-            gridContent(state, hero, rest, context, continueReading, onSeeAll)
+            // Series stack on the Comics tab while browsing; a search or an open series lists issues.
+            val entries = if (browsingComics) {
+                rest.stacked()
+            } else {
+                rest.map { ShelfEntry.One(it) }
+            }
+            gridContent(state, hero, entries, context, continueReading, onSeeAll, onOpenSeries ?: {})
         }
     } else {
         LazyColumn(
@@ -112,10 +120,11 @@ internal fun LibraryPane(
 private fun LazyGridScope.gridContent(
     state: LibraryUiState,
     hero: LibraryBookUi?,
-    rest: List<LibraryBookUi>,
+    rest: List<ShelfEntry>,
     context: RowContext,
     continueReading: List<LibraryBookUi>,
     onSeeAll: () -> Unit,
+    onOpenSeries: (String) -> Unit,
 ) {
     if (continueReading.isNotEmpty()) {
         item(key = "continue_reading", span = { GridItemSpan(maxLineSpan) }) {
@@ -127,8 +136,11 @@ private fun LazyGridScope.gridContent(
             HeroCard(book, book.path in state.selected, context, Modifier)
         }
     }
-    items(rest, key = { it.path }) { book ->
-        CoverCard(book, book.path in state.selected, context, Modifier)
+    items(rest, key = { it.key }) { entry ->
+        when (entry) {
+            is ShelfEntry.One -> CoverCard(entry.book, entry.book.path in state.selected, context, Modifier)
+            is ShelfEntry.Stack -> SeriesCard(entry, onOpenSeries, Modifier)
+        }
     }
 }
 
