@@ -295,7 +295,12 @@ private fun SeriesOrShelf(
         label = "series",
     ) { shown ->
         if (shown == null) {
-            LibraryPane(state, context, landscape, onSeeAll = onSeeAll, onOpenSeries = { openSeries = it })
+            Column {
+                if (state.section == HomeSection.RECENT && state.query.isBlank()) {
+                    ReadingStatsRow(Modifier.padding(bottom = Space.Gap))
+                }
+                LibraryPane(state, context, landscape, onSeeAll = onSeeAll, onOpenSeries = { openSeries = it })
+            }
         } else {
             BackHandler { openSeries = null }
             Column {

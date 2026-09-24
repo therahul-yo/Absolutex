@@ -186,7 +186,10 @@ private fun LoadAndRemember(
         vm.saveScroll(box.scroll)
         onDispose { vm.savePosition(book, chapter, pager.fraction()) }
     }
-    LaunchedEffect(chapter, pager.page) { vm.savePosition(book, chapter, pager.fraction()) }
+    LaunchedEffect(chapter, pager.page) {
+        vm.savePosition(book, chapter, pager.fraction())
+        vm.recordPage(book, chapter, pager.page)
+    }
 }
 
 /** A solid strip behind the status bar: scrolling text passed under the clock and icons. */

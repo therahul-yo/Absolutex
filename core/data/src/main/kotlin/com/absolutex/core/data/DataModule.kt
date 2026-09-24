@@ -38,6 +38,10 @@ object DataModule {
     @Provides
     fun bookFactsDao(db: AbsolutexDatabase): BookFactsDao = db.bookFactsDao()
 
+    /** Reading history's store. The table and ReadingHistory shipped; nothing could inject them. */
+    @Provides
+    fun pageViewDao(db: AbsolutexDatabase): PageViewDao = db.pageViewDao()
+
     @Provides
     fun bookmarkDao(db: AbsolutexDatabase): BookmarkDao = db.bookmarkDao()
 

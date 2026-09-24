@@ -1,5 +1,7 @@
 package com.absolutex.feature.reader
 
+import com.absolutex.core.stats.PageSettled
+import com.absolutex.core.data.ReadingHistory
 import com.absolutex.core.data.TEXT_EPUB_FORMAT
 import com.absolutex.core.data.BookFactsDao
 import android.content.Context
@@ -68,6 +70,7 @@ class TextEpubViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val progress: ProgressDao,
     private val facts: BookFactsDao,
+    private val history: ReadingHistory,
 ) : ViewModel() {
 
     /** The book and the chapter to resume at, or null when it could not be opened. */
@@ -86,6 +89,18 @@ class TextEpubViewModel @Inject constructor(
     /** How far through [chapter] the reader is, as a fraction; saved as they read. */
     fun savePosition(book: TextEpubBook, chapter: Int, fraction: Float) {
         prefs.edit().putString(POSITION + book.identity, "$chapter|$fraction").apply()
+    }
+
+    /**
+     * Logs a page read for stats. A text book's page is only meaningful within its chapter, so
+     * the key spaces chapters apart: stats count distinct pages, and page 3 of two chapters are
+     * two pages read.
+     */
+    fun recordPage(book: TextEpubBook, chapter: Int, page: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val key = chapter * PAGES_PER_CHAPTER_KEY + page
+            runCatching { history.record(listOf(PageSettled(book.identity, key, System.currentTimeMillis()))) }
+        }
     }
 
     /** Pages or scroll, for every text book: a way of reading, not a property of one book. */
@@ -107,3 +122,4 @@ class TextEpubViewModel @Inject constructor(
 private const val PREFS = "text_epub"
 private const val SCROLL = "scroll"
 private const val POSITION = "position:"
+private const val PAGES_PER_CHAPTER_KEY = 10_000

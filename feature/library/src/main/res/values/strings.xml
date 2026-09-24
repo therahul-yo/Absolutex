@@ -112,4 +112,14 @@
         <item quantity="other">%1$d issues · %2$d read</item>
     </plurals>
     <string name="library_series_back">Back to the shelf</string>
+    <plurals name="library_stats_pages">
+        <item quantity="one">%1$d page this week</item>
+        <item quantity="other">%1$d pages this week</item>
+    </plurals>
+    <plurals name="library_stats_streak">
+        <item quantity="one">%1$d-day streak</item>
+        <item quantity="other">%1$d-day streak</item>
+    </plurals>
+    <!-- Time read this week: hours, minutes. -->
+    <string name="library_stats_time">%1$dh %2$dm read</string>
 </resources>
