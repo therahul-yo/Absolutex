@@ -157,6 +157,7 @@ private fun CoverCard(book: LibraryBookUi, isSelected: Boolean, context: RowCont
         Column {
             Box {
                 BookCover(book, Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
+                if (!book.isBook && book.readState == ReadState.UNREAD) NewBadge(Modifier.align(Alignment.TopStart))
                 SelectedMark(isSelected)
             }
             book.progressFraction?.let { ReadingProgress(it, Modifier.padding(horizontal = Space.Gap)) }
@@ -170,9 +171,10 @@ private fun CoverCard(book: LibraryBookUi, isSelected: Boolean, context: RowCont
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+                // A comic card says how far in you are; a document, how big it is.
                 Text(
-                    book.sizeLabel(),
-                    style = MaterialTheme.typography.labelSmall,
+                    (if (book.isBook) null else book.progressLabel()) ?: book.sizeLabel(),
+                    style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 FormatAndDate(book, Modifier.padding(top = Space.Tight))
@@ -327,6 +329,23 @@ private fun SelectableSurface(
             .clearAndSetSemantics { contentDescription = label },
         content = content,
     )
+}
+
+/** A small solid tag on a comic that has never been opened. */
+@Composable
+private fun NewBadge(modifier: Modifier) {
+    Surface(
+        shape = MaterialTheme.shapes.extraSmall,
+        color = MaterialTheme.colorScheme.inverseSurface,
+        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+        modifier = modifier.padding(Space.Gap),
+    ) {
+        Text(
+            stringResource(R.string.library_badge_new).uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+        )
+    }
 }
 
 /** Horizontal strip of in-progress comics on the Comics tab (§5.1). */
