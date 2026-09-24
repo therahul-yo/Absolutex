@@ -198,6 +198,8 @@ fun ReaderScreen(
                 }
             }
         }
+        // The prompt overlays every state, including the generic failure it rides on.
+        PasswordPrompt(ui.passwordRequired, ui.passwordIncorrect, { vm.open(uri, it) }, vm::cancelPasswordPrompt)
     }
 }
 

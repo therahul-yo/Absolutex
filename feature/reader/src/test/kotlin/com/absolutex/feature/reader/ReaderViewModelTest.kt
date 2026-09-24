@@ -17,6 +17,7 @@ import com.absolutex.remote.core.RemoteBookOpener
 import com.absolutex.remote.core.RemoteOpenResult
 import com.absolutex.source.ComicSource
 import com.absolutex.source.PageReadability
+import com.absolutex.source.pdf.PdfPasswordException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeout
@@ -357,7 +358,7 @@ class ReaderViewModelTest {
             override fun close() = Unit
         }
         val vm = vm(object : BookOpener {
-            override suspend fun open(uri: Uri): Pair<Closeable, String> =
+            override suspend fun open(uri: Uri, password: String?): Pair<Closeable, String> =
                 (if (uri.lastPathSegment == "damaged") damaged else FakeComicSource("normal")) to uri.toString()
         })
         vm.open(uri("damaged"))
@@ -379,11 +380,96 @@ class ReaderViewModelTest {
         )
     }
 
+    // ---- encrypted PDFs: the one open failure the reader recovers from in place ----------
+
+    @Test fun `an encrypted pdf prompts for a password instead of failing`() = test {
+        val vm = vm(PasswordBookOpener(correct = "secret"))
+        vm.open(uri("locked.pdf"))
+        advanceUntilIdle()
+
+        val state = vm.ui.value
+        assertTrue("must prompt, not just fail", state.passwordRequired)
+        assertTrue("first prompt is not a retry", !state.passwordIncorrect)
+        assertTrue("the prompt must not spin", !state.loading)
+        assertEquals(genericError(), state.error)
+    }
+
+    @Test fun `submitting the right password opens the book and clears the prompt`() = test {
+        val opener = PasswordBookOpener(correct = "secret")
+        val vm = vm(opener)
+        vm.open(uri("locked.pdf"))
+        advanceUntilIdle()
+
+        vm.open(uri("locked.pdf"), "secret")
+        advanceUntilIdle()
+
+        assertEquals(listOf(null, "secret"), opener.attempts)
+        assertEquals(1, vm.ui.value.pageCount)
+        assertTrue("the prompt must be gone", !vm.ui.value.passwordRequired)
+        assertTrue(
+            "the password must never land in the UI state",
+            !vm.ui.value.toString().contains("secret"),
+        )
+    }
+
+    @Test fun `a wrong password re-shows the prompt as incorrect`() = test {
+        val vm = vm(PasswordBookOpener(correct = "secret"))
+        vm.open(uri("locked.pdf"), "guess")
+        advanceUntilIdle()
+
+        assertTrue(vm.ui.value.passwordRequired)
+        assertTrue("a refused password must read as incorrect", vm.ui.value.passwordIncorrect)
+        assertEquals(genericError(), vm.ui.value.error)
+    }
+
+    @Test fun `cancelling the prompt leaves the generic error and opens nothing`() = test {
+        val opener = PasswordBookOpener(correct = "secret")
+        val vm = vm(opener)
+        vm.open(uri("locked.pdf"))
+        advanceUntilIdle()
+
+        vm.cancelPasswordPrompt()
+
+        assertTrue("the prompt must be gone", !vm.ui.value.passwordRequired)
+        assertEquals(genericError(), vm.ui.value.error)
+        assertEquals("cancel must not retry the open", listOf(null), opener.attempts)
+    }
+
+    @Test fun `an ordinary failure never prompts for a password`() = test {
+        val vm = vm(object : BookOpener {
+            override suspend fun open(uri: Uri, password: String?): Pair<Closeable, String> =
+                throw IOException("not a pdf")
+        })
+        vm.open(uri("broken.cbz"))
+        advanceUntilIdle()
+
+        assertTrue(!vm.ui.value.passwordRequired)
+        assertEquals(genericError(), vm.ui.value.error)
+    }
+
+    private fun genericError(): String =
+        ApplicationProvider.getApplicationContext<Context>().getString(R.string.reader_open_failed)
+
     private companion object {
         const val TOTAL_RAM_BYTES = 4L * 1024 * 1024 * 1024
 
         /** Real milliseconds now, so it is a genuine bound rather than a virtual-clock no-op. */
         const val CLOSE_TIMEOUT_MS = 10_000L
+    }
+}
+
+/**
+ * A [BookOpener] guarding one encrypted book: only [correct] opens it, anything else throws
+ * [PdfPasswordException] the way `PdfDocument.open` does for a real encrypted PDF — without
+ * needing the native library, so the reader's prompt routing is a plain JVM test.
+ */
+private class PasswordBookOpener(val correct: String) : BookOpener {
+    val attempts = mutableListOf<String?>()
+
+    override suspend fun open(uri: Uri, password: String?): Pair<Closeable, String> {
+        attempts += password
+        if (password != correct) throw PdfPasswordException()
+        return FakeComicSource(uri.lastPathSegment.orEmpty()) to uri.toString()
     }
 }
 
@@ -395,7 +481,7 @@ private class FakeBookOpener : BookOpener {
     /** [open] for [uri] suspends until the returned gate is completed. */
     fun gate(uri: Uri): CompletableDeferred<Unit> = CompletableDeferred<Unit>().also { gates[uri.toString()] = it }
 
-    override suspend fun open(uri: Uri): Pair<Closeable, String> {
+    override suspend fun open(uri: Uri, password: String?): Pair<Closeable, String> {
         gates[uri.toString()]?.await()
         val name = uri.lastPathSegment.orEmpty()
         val source = FakeComicSource(name)
