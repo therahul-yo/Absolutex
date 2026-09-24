@@ -410,5 +410,5 @@ private val FAKE_IMAGE: PageImage = object : PageImage {
         throw UnsupportedOperationException("not used in engine tests")
     override fun decodeTile(tile: Tile): android.graphics.Bitmap? = null
     override fun decodeThumbnail(targetEdge: Int): android.graphics.Bitmap? = null
-    override fun close() {}
+    override fun close() = Unit
 }

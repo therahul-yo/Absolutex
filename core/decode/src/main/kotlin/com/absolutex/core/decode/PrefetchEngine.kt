@@ -145,15 +145,20 @@ class PrefetchEngine(
         for (target in window) {
             if (batchStopped) return
             if (inFlight.containsKey(target) || resident.containsKey(target)) continue
-            // Make room farthest-first, never dropping the settled page or the page about to
-            // be decoded; if the budget still says no, skip the page until the next settle.
-            while (tileBytes() + residentBytes + pageBytesEstimate(target) > budgetBytes()) {
-                val order = evictCandidates(page, protect = target)
-                if (order.isEmpty() || evictOne(order) <= 0) break
-            }
-            if (tileBytes() + residentBytes + pageBytesEstimate(target) > budgetBytes()) continue
-            launchDecode(target)
+            planOne(target, page)
         }
+    }
+
+    /** Plans a single target: makes room, checks budget, launches. */
+    private fun planOne(target: Int, page: Int) {
+        // Make room farthest-first, never dropping the settled page or the page about to
+        // be decoded; if the budget still says no, skip the page until the next settle.
+        while (tileBytes() + residentBytes + pageBytesEstimate(target) > budgetBytes()) {
+            val order = evictCandidates(page, protect = target)
+            if (order.isEmpty() || evictOne(order) <= 0) break
+        }
+        if (tileBytes() + residentBytes + pageBytesEstimate(target) > budgetBytes()) return
+        launchDecode(target)
     }
 
     private fun launchDecode(target: Int) {
@@ -210,12 +215,11 @@ class PrefetchEngine(
     /** Restores the budget invariant: evict farthest-first until tile + resident fits. */
     private fun reconcile(protect: Int) {
         var over = tileBytes() + residentBytes - budgetBytes()
-        while (over > 0) {
+        var canEvict = true
+        while (over > 0 && canEvict) {
             val order = evictCandidates(settled, protect)
-            if (order.isEmpty()) break
-            val freed = evictOne(order)
-            if (freed <= 0) break
-            over -= freed
+            val freed = if (order.isEmpty()) -1 else evictOne(order)
+            if (freed <= 0) canEvict = false else over -= freed
         }
     }
 

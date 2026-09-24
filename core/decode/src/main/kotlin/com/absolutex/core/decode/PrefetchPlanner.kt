@@ -35,27 +35,14 @@ object PrefetchPlanner {
     ): List<Int> {
         if (pageCount <= 0 || depth <= 0) return emptyList()
         if (page !in 0 until pageCount) return emptyList()
-        val step = if (layout == PageLayout.SINGLE || layout == PageLayout.CONTINUOUS_VERTICAL) {
-            1
-        } else {
-            // Spread layouts: advance whole spreads so both halves arrive together.
-            2
-        }
+        val step = stepForLayout(layout)
         val dir = if (direction >= 0) 1 else -1
         val planned = ArrayList<Int>(depth)
         var cursor = page + dir * step
         var pagesLeft = depth
         while (cursor in 0 until pageCount && pagesLeft > 0) {
-            // For spread layouts also include the other half of the spread containing cursor,
-            // so a window entering a spread from its second page still prefetches its first.
-            if (step == 2 && layout != PageLayout.SINGLE && layout != PageLayout.CONTINUOUS_VERTICAL) {
-                val spreads = Spreads.of(pageCount, layout)
-                val spreadIndex = Spreads.indexOf(spreads, cursor)
-                val spread = spreads.getOrNull(spreadIndex) ?: cursor..cursor
-                for (p in spread) {
-                    if (p != page && p !in planned) planned += p
-                }
-                pagesLeft -= spread.count()
+            if (step == 2 && layout.isSpreadLayout()) {
+                cursor = addSpreadPlanned(cursor, page, pageCount, layout, planned) { pagesLeft -= it }
             } else {
                 if (cursor != page && cursor !in planned) planned += cursor
                 pagesLeft--
@@ -63,6 +50,32 @@ object PrefetchPlanner {
             cursor += dir * step
         }
         return planned
+    }
+
+    /** Step size: 2 for spread layouts (both halves together), 1 for single/continuous. */
+    private fun stepForLayout(layout: PageLayout): Int =
+        if (layout == PageLayout.SINGLE || layout == PageLayout.CONTINUOUS_VERTICAL) 1 else 2
+
+    private fun PageLayout.isSpreadLayout(): Boolean =
+        this != PageLayout.SINGLE && this != PageLayout.CONTINUOUS_VERTICAL
+
+    /** Adds the spread containing [cursor] to [planned], returns the cursor unchanged. */
+    private fun addSpreadPlanned(
+        cursor: Int,
+        page: Int,
+        pageCount: Int,
+        layout: PageLayout,
+        planned: ArrayList<Int>,
+        decrement: (Int) -> Unit,
+    ): Int {
+        val spreads = Spreads.of(pageCount, layout)
+        val spreadIndex = Spreads.indexOf(spreads, cursor)
+        val spread = spreads.getOrNull(spreadIndex) ?: cursor..cursor
+        for (p in spread) {
+            if (p != page && p !in planned) planned += p
+        }
+        decrement(spread.count())
+        return cursor
     }
 
     /**

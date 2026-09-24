@@ -24,6 +24,7 @@ import com.absolutex.core.decode.MemoryBudget
 import com.absolutex.core.decode.PageImage
 import com.absolutex.core.thumbnails.ThumbRequest
 import com.absolutex.core.thumbnails.ThumbnailPipeline
+import com.absolutex.core.decode.PrefetchEngine
 import com.absolutex.core.decode.TileCache
 import com.absolutex.model.BookIdentity
 import com.absolutex.model.Toc
@@ -158,7 +159,7 @@ class ReaderViewModel internal constructor(
      * correctly. distinctUntilChanged: resize is idempotent but not free, and every app-pref
      * write re-emits the whole AppPrefs object.
      */
-    private val cacheSizeJob: Job = viewModelScope.launch {
+    private var cacheSizeJob: Job = viewModelScope.launch {
         appPrefs.appPrefs
             .map { it.cacheSizeMiB }
             .distinctUntilChanged()
@@ -213,7 +214,6 @@ class ReaderViewModel internal constructor(
             val keepSize = bases.keys.firstOrNull { it.page == settledPage }
             bases.keys.retainAll(setOfNotNull(keepSize))
         }
->>>>>>> 5b9303f (M10: fix three wiring-between-components findings from #77)
     }
 
     /** The open book: a [ComicSource] whose pages are encoded images, or a [PdfDocument]. */
@@ -274,6 +274,8 @@ class ReaderViewModel internal constructor(
     companion object {
         /** Resident decoded pages. ~12 covers viewport + prefetch without ballooning native heap. */
         const val MAX_RESIDENT_PAGES = 12
+
+        const val PREFETCH_DEPTH = 10
 
         /** Base layers kept around the settled page: it and two either side, ~9 MB each here. */
         const val BASE_WINDOW = 2

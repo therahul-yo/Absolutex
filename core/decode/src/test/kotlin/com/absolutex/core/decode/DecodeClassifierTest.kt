@@ -69,7 +69,7 @@ class DecodeClassifierTest {
                 throw UnsupportedOperationException("not used")
             override fun decodeTile(tile: Tile): android.graphics.Bitmap? = null
             override fun decodeThumbnail(targetEdge: Int): android.graphics.Bitmap? = null
-            override fun close() {}
+            override fun close() = Unit
         }
     }
 }
