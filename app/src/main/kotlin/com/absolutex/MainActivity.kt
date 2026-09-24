@@ -8,6 +8,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import com.absolutex.core.ui.Motion
+import javax.inject.Inject
+import com.absolutex.feature.reader.BookCovers
+import com.absolutex.feature.library.LocalBookCovers
+import com.absolutex.feature.library.BookCoverSource
+import androidx.compose.runtime.CompositionLocalProvider
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
@@ -53,6 +58,9 @@ class MainActivity : ComponentActivity() {
     private val readerViewModel: ReaderViewModel by viewModels()
     private val shell: ShellViewModel by viewModels()
 
+    /** Library cover art, provided down the tree so :feature:library never depends on the reader. */
+    @Inject lateinit var covers: BookCovers
+
     private val trimCallback = object : ComponentCallbacks2 {
         override fun onTrimMemory(level: Int) {
             readerViewModel.onTrimMemory(level)
@@ -90,7 +98,9 @@ class MainActivity : ComponentActivity() {
                 NightMode.SYSTEM -> isSystemInDarkTheme()
             }
             AbsolutexTheme(darkTheme = dark, dynamicColor = app.dynamicColour, trueBlack = app.trueBlack) {
-                Root(directUri = direct)
+                CompositionLocalProvider(LocalBookCovers provides BookCoverSource(covers::cover)) {
+                    Root(directUri = direct)
+                }
             }
         }
     }

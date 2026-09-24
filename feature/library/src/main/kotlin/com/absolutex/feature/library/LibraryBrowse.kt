@@ -36,9 +36,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.absolutex.core.ui.A11y
 
-/** Cover aspect ratio. Comic pages are taller than wide; 2:3 is the common trim. */
-private const val COVER_ASPECT = 2f / 3f
-
 private val ThumbWidth = 56.dp
 
 /** What a row needs to render and report itself, bundled so parameter lists stay short. */
@@ -137,7 +134,7 @@ private fun BookRow(state: LibraryUiState, book: LibraryBookUi, context: RowCont
 @Composable
 private fun DetailedBookContent(book: LibraryBookUi) {
     Row(horizontalArrangement = Arrangement.spacedBy(Space.Row)) {
-        CoverPlaceholder(Modifier.width(ThumbWidth))
+        BookCover(book, Modifier.width(ThumbWidth))
         Column(verticalArrangement = Arrangement.spacedBy(Space.Tight)) {
             Text(
                 book.displayName,
@@ -165,7 +162,7 @@ private fun DetailedBookContent(book: LibraryBookUi) {
 private fun GridCell(book: LibraryBookUi, isSelected: Boolean, context: RowContext) {
     SelectableSurface(book, isSelected, context, Modifier) {
         Column(Modifier.padding(Space.Tight)) {
-            CoverPlaceholder(Modifier.fillMaxWidth())
+            BookCover(book, Modifier.fillMaxWidth())
             Text(
                 book.displayName,
                 style = MaterialTheme.typography.labelMedium,
@@ -235,14 +232,3 @@ private fun SelectableSurface(
     )
 }
 
-/** No cover pipeline yet; a labelled placeholder is honest where a blank box is not. */
-@Composable
-private fun CoverPlaceholder(modifier: Modifier = Modifier) {
-    val label = stringResource(R.string.library_cover_placeholder)
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        modifier = modifier
-            .aspectRatio(COVER_ASPECT)
-            .clearAndSetSemantics { contentDescription = label },
-    ) { Box(Modifier) }
-}
