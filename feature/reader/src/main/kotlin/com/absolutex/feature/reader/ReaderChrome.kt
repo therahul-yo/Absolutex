@@ -1,5 +1,6 @@
 package com.absolutex.feature.reader
 
+import com.absolutex.model.ReadingFlow
 import androidx.compose.material3.ExperimentalMaterial3Api
 import com.absolutex.core.ui.rememberHaptics
 import androidx.compose.ui.platform.LocalDensity
@@ -98,6 +99,7 @@ internal fun ReaderChrome(
     ) {
         BottomChrome(page, pageCount, onSeek, onDismiss, bookId, strip, toc, onExport, fitFor, prefs)
     }
+    TapGuide(rightToLeft = prefs.readingFlow == ReadingFlow.RTL)
     }
 }
 

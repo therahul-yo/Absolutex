@@ -61,4 +61,7 @@
     <string name="reader_text_next_chapter">Next chapter</string>
     <string name="reader_favourite">Add to favourites</string>
     <string name="reader_unfavourite">Remove from favourites</string>
+    <string name="reader_guide_back">Previous page</string>
+    <string name="reader_guide_next">Next page</string>
+    <string name="reader_guide_menu">Controls</string>
 </resources>
