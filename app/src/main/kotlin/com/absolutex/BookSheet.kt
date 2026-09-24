@@ -31,11 +31,17 @@ import kotlin.coroutines.cancellation.CancellationException
  * to [PEEK], and either finishes closing on release or springs back if the gesture is cancelled.
  * Only transforms change per frame, so the book itself is never recomposed by the motion.
  *
+ * @param onGone called once the sheet has fully left the screen after a close.
  * @param uri the book to show, or null for none. Changing it while shown swaps the book in place
  *   (auto-advance); clearing it slides the sheet away and then drops its content.
  */
 @Composable
-internal fun BookSheet(uri: Uri?, onClose: () -> Unit, content: @Composable (Uri) -> Unit) {
+internal fun BookSheet(
+    uri: Uri?,
+    onClose: () -> Unit,
+    onGone: () -> Unit,
+    content: @Composable (Uri) -> Unit,
+) {
     var shown by remember { mutableStateOf(uri) }
     // 0 = covering the library, 1 = fully below the screen.
     val offset = remember { Animatable(if (uri == null) 1f else 0f) }
@@ -46,6 +52,7 @@ internal fun BookSheet(uri: Uri?, onClose: () -> Unit, content: @Composable (Uri
         } else if (shown != null) {
             offset.animateTo(1f, tween(Motion.MEDIUM_MS, easing = Motion.EmphasizedAccelerate))
             shown = null
+            onGone()
         }
     }
     PredictiveBackHandler(enabled = uri != null) { gesture ->

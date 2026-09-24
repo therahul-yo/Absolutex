@@ -314,6 +314,11 @@ private fun LibraryWithBook(
     onOpenSettings: () -> Unit,
     reader: @Composable (Uri) -> Unit,
 ) {
+    // Covered until the sheet has fully left, not merely been asked to: un-pausing catches the
+    // library up on everything read meanwhile, and doing that on the first frame of the close
+    // stalled it for 60 ms. After the motion, nobody sees the frame it costs.
+    var covered by remember { mutableStateOf(openBook != null) }
+    if (openBook != null) covered = true
     Box(Modifier.fillMaxSize()) {
         LibraryRoute(
             // A library row holds whatever the scan found it by: a document Uri from a SAF
@@ -323,9 +328,9 @@ private fun LibraryWithBook(
             // The library is the launch destination, so this is the only route to settings a
             // fresh install has: the reader's own settings action needs a book open first.
             onOpenSettings = onOpenSettings,
-            paused = openBook != null,
+            paused = covered,
         )
-        BookSheet(openBook, onClose = onCloseBook, content = reader)
+        BookSheet(openBook, onClose = onCloseBook, onGone = { covered = false }, content = reader)
     }
 }
 
