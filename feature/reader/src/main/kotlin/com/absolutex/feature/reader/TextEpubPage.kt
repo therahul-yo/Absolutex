@@ -2,6 +2,7 @@ package com.absolutex.feature.reader
 
 import android.graphics.Color as AndroidColor
 import android.net.Uri
+import android.os.SystemClock
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.webkit.WebResourceRequest
@@ -16,6 +17,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import java.io.ByteArrayInputStream
+import org.json.JSONObject
+import org.json.JSONTokener
 
 @Composable
 internal fun rememberBookWebView(book: TextEpubBook): BookWebView {
@@ -37,13 +40,18 @@ internal fun rememberBookWebView(book: TextEpubBook): BookWebView {
             // Paging, gestures are Compose's (TurnGestures) and the WebView only draws. Scrolling,
             // it scrolls itself, and a single tap still toggles the chrome.
             val taps = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
-                override fun onSingleTapConfirmed(e: MotionEvent): Boolean = true.also { onTap() }
+                // A tap that followed a link is the link's, not a request for the chrome.
+                override fun onSingleTapConfirmed(e: MotionEvent): Boolean = true.also {
+                    if (SystemClock.uptimeMillis() - lastLinkAt > LINK_TAP_MS) onTap()
+                }
             })
             setOnTouchListener { _, event ->
                 if (scrollMode) taps.onTouchEvent(event)
                 !scrollMode
             }
-            webViewClient = BookClient(book) { view, count -> (view as BookWebView).onMeasured(count) }
+            val client = BookClient(book) { view, count -> (view as BookWebView).onMeasured(count) }
+            webViewClient = client
+            follow = { link -> client.route(this, link) }
         }
     }
     DisposableEffect(web) { onDispose { web.destroy() } }
@@ -55,7 +63,30 @@ internal class BookWebView(context: android.content.Context) : WebView(context) 
     var onMeasured: (Int) -> Unit = {}
     var onTap: () -> Unit = {}
     var onChapterLink: (Boolean) -> Unit = {}
+
+    /** A link in the book to one of its chapters (a contents page, a footnote): its spine index and anchor. */
+    var onLinkTo: (chapter: Int, anchor: String?) -> Unit = { _, _ -> }
     var scrollMode = false
+
+    /** When a link in the page was last followed, so the tap that followed it opens no chrome. */
+    var lastLinkAt = 0L
+
+    /** Follows a link of the book's own, as a tap on it would. */
+    var follow: (Uri) -> Unit = {}
+
+    /**
+     * The link under a point of the view, in physical pixels, or null. Paging, the WebView takes
+     * no touches (Compose turns the pages), so a tap asks the page what it landed on first.
+     */
+    fun linkAt(x: Float, y: Float, then: (Uri?) -> Unit) {
+        val density = resources.displayMetrics.density
+        val script = "(function(){var e=document.elementFromPoint(${x / density},${y / density});" +
+            "e=e&&e.closest('a[href]');return e?e.href:'';})()"
+        evaluateJavascript(script) { result ->
+            val href = runCatching { JSONTokener(result).nextValue() as? String }.getOrNull()
+            then(href?.takeIf { it.isNotEmpty() }?.let(Uri::parse))
+        }
+    }
 }
 
 /**
@@ -78,13 +109,30 @@ private class BookClient(
         return WebResourceResponse(type, "UTF-8", ByteArrayInputStream(body))
     }
 
-    /** The chapter links a scrolling chapter ends with; every other navigation is refused. */
+    /**
+     * The reader decides every navigation, and the WebView follows none itself: a scrolling
+     * chapter's previous/next links turn chapters, and a link to one of the book's own chapters
+     * (a contents page, a footnote) opens it at its anchor. Anything else, the network included,
+     * goes nowhere.
+     */
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-        when (request.url.toString()) {
-            ORIGIN + NEXT_LINK -> (view as BookWebView).onChapterLink(true)
-            ORIGIN + PREV_LINK -> (view as BookWebView).onChapterLink(false)
-        }
+        route(view as BookWebView, request.url)
         return true
+    }
+
+    /** Where a followed link goes; see [shouldOverrideUrlLoading]. Also how a paged tap follows one. */
+    fun route(web: BookWebView, link: Uri) {
+        web.lastLinkAt = SystemClock.uptimeMillis()
+        val url = link.toString()
+        when {
+            url == ORIGIN + NEXT_LINK -> web.onChapterLink(true)
+            url == ORIGIN + PREV_LINK -> web.onChapterLink(false)
+            url.startsWith(ORIGIN) -> {
+                val entry = Uri.decode(url.removePrefix(ORIGIN).substringBefore('#').substringBefore('?'))
+                val chapter = book.spine.indexOfFirst { it.equals(entry, ignoreCase = true) }
+                if (chapter >= 0) web.onLinkTo(chapter, link.fragment?.takeIf { it.isNotEmpty() })
+            }
+        }
     }
 
     override fun onPageFinished(view: WebView, url: String) {
@@ -141,9 +189,14 @@ private fun withChapterLinks(html: String, links: ChapterLinks?): String {
  * WebView is laid out, and the window's own width grows to fit the very columns that overflow
  * it — measuring it fed the columns back into their own width.
  */
-private fun readingCss(box: PageBox) = if (box.scroll) scrollCss(box) else pagedCss(box)
+internal fun readingCss(box: PageBox) = if (box.scroll) scrollCss(box) else pagedCss(box)
 
-/** Scrolling: one long, calm column, and the chapter links as full-width buttons. */
+/**
+ * Scrolling: one long, calm column, and the chapter links as small centred pills. The links sit in
+ * a paragraph inside the book's own markup, so its paragraph rules (a first-line indent above all)
+ * are undone for them. No markup may appear in this CSS, not even in a comment: a chapter is XHTML,
+ * and an angle bracket inside its style element breaks the whole document.
+ */
 private fun scrollCss(box: PageBox) = """
     html { overflow-x: hidden !important; overflow-y: auto !important; background: #000 !important; }
     body {
@@ -156,12 +209,18 @@ private fun scrollCss(box: PageBox) = """
     ::-webkit-scrollbar { display: none; }
     body * { color: inherit !important; background-color: transparent !important; max-width: 100%; }
     a { color: #BDBDBD !important; }
+    ${MARK_CSS}
     img, svg, image { height: auto; }
-    .abx-nav { margin: 40px 0 !important; text-align: center !important; }
+    .abx-nav {
+        margin: 8px 0 28px 0 !important; padding: 0 !important; text-indent: 0 !important;
+        text-align: center !important; line-height: 1 !important;
+    }
+    .abx-nav:last-child { margin: 36px 0 8px 0 !important; }
     .abx-nav a {
-        display: inline-block !important; padding: 14px 28px !important; border-radius: 28px !important;
-        background-color: #262626 !important; color: #EDEDED !important; text-decoration: none !important;
-        font-family: sans-serif !important; font-size: 15px !important;
+        display: inline-block !important; padding: 9px 18px !important; border-radius: 999px !important;
+        border: 1px solid #333333 !important; background-color: transparent !important;
+        color: #A6A6A6 !important; text-decoration: none !important; text-indent: 0 !important;
+        font-family: sans-serif !important; font-size: 13px !important; letter-spacing: 0.02em !important;
     }
 """.trimIndent()
 
@@ -197,6 +256,7 @@ private fun pagedCss(box: PageBox) = """
     }
     div, section, nav, article, header, footer, aside, main { display: block !important; }
     a { color: #BDBDBD !important; }
+    ${MARK_CSS}
     img, svg, image {
         max-height: calc(var(--h, 100vh) - ${TOP_PX + BOTTOM_PX}px) !important; object-fit: contain; height: auto;
     }
@@ -218,6 +278,66 @@ private fun mimeOf(entry: String): String = when (entry.substringAfterLast('.').
     "woff2" -> "font/woff2"
     else -> "application/octet-stream"
 }
+
+/** A search hit, highlighted: light on grey, the one mark on an otherwise monochrome page. */
+private const val MARK_CSS =
+    "body mark.abx-hit { background-color: #5E5E5E !important; color: #FFFFFF !important; border-radius: 3px; }"
+
+/**
+ * Highlights the [occurrence]-th match of [pattern] in the chapter and says where it is: the page
+ * it falls on when paging, the scroll offset that puts it a third down the screen when scrolling.
+ * -1 when the chapter has no such match. Any earlier highlight is removed first.
+ *
+ * Counts matches text node by text node, which is how [com.absolutex.source.epub.EpubSearch]
+ * counted them, so the occurrence found there is the one marked here. Should the two ever
+ * disagree (a book whose markup the WebView repairs), the first match is marked rather than none.
+ */
+internal fun markJs(pattern: String, occurrence: Int, pageWidth: Int, scroll: Boolean): String = """
+    (function() {
+      document.querySelectorAll('mark.abx-hit').forEach(function(m) { m.replaceWith(document.createTextNode(m.textContent)); });
+      document.body.normalize();
+      var re = new RegExp(${JSONObject.quote(pattern)}, 'giu'), seen = 0, target = null, first = null, node, m;
+      var walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, { acceptNode: function(t) {
+        return t.parentElement.closest('script,style,.abx-nav') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; } });
+      while (!target && (node = walk.nextNode())) {
+        re.lastIndex = 0;
+        while ((m = re.exec(node.data))) {
+          if (!m[0].length) { re.lastIndex++; continue; }
+          var hit = [node, m.index, m[0].length];
+          if (!first) first = hit;
+          if (seen++ === $occurrence) { target = hit; break; }
+        }
+      }
+      target = target || first;
+      if (!target) return -1;
+      var range = document.createRange();
+      range.setStart(target[0], target[1]);
+      range.setEnd(target[0], target[1] + target[2]);
+      var mark = document.createElement('mark');
+      mark.className = 'abx-hit';
+      range.surroundContents(mark);
+      var box = mark.getBoundingClientRect();
+      return $scroll ? Math.max(0, box.top + scrollY - innerHeight / 3) : Math.floor((box.left + scrollX) / $pageWidth);
+    })()
+""".trimIndent()
+
+/**
+ * Where the element [anchor] names sits in the chapter: its page when paging, its scroll offset
+ * (just below the top) when scrolling. The chapter's start when there is no such element, so a
+ * link to a chapter with a stale anchor still opens the chapter.
+ */
+internal fun anchorJs(anchor: String?, pageWidth: Int, scroll: Boolean): String = """
+    (function() {
+      var id = ${JSONObject.quote(anchor.orEmpty())};
+      var el = id && (document.getElementById(id) || document.getElementsByName(id)[0]);
+      if (!el) return 0;
+      var box = el.getBoundingClientRect();
+      return $scroll ? Math.max(0, box.top + scrollY - $ANCHOR_MARGIN_PX) : Math.floor((box.left + scrollX) / $pageWidth);
+    })()
+""".trimIndent()
+
+/** A linked heading lands just below the top edge, not flush against it. */
+private const val ANCHOR_MARGIN_PX = 24
 
 /** A private origin: https so the WebView treats it as secure, a reserved name so it is never real. */
 internal const val ORIGIN = "https://book.absolutex.invalid/"
@@ -246,6 +366,9 @@ private const val PREV_LINK = "abx-previous-chapter"
 /** A fixed, unscalable viewport: the layout width must not grow to fit the overflowing columns. */
 private const val VIEWPORT = "width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no"
 private const val LAYOUT_SETTLE_MS = 120L
+
+/** A single tap is confirmed well within this of the link it followed. */
+private const val LINK_TAP_MS = 600L
 private const val FULL_TEXT_ZOOM = 100
 internal const val DEFAULT_FONT_PX = 18
 internal const val MIN_FONT_PX = 12
