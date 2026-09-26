@@ -23,7 +23,6 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
 /**
@@ -42,7 +41,12 @@ class TextEpubBook internal constructor(
     /** The file from its start, for one sequential pass over every chapter (see [openZip]). */
     private val openStream: () -> InputStream,
 ) {
-    private val cache = ConcurrentHashMap<String, ByteArray>()
+    /**
+     * Entries read so far, most recently used kept. Bounded by bytes: stylesheets, fonts and
+     * images are asked for on every chapter load and stay warm, while a 2,700-chapter novel read
+     * start to finish no longer ends up entirely in memory.
+     */
+    private val cache = ByteLru(CACHE_BYTES)
     private val byLowerName = entries.names.associateBy { it.lowercase() }
 
     /** The book's own contents, chapters as spine indices; empty when it declares none. */
@@ -52,7 +56,7 @@ class TextEpubBook internal constructor(
     fun read(name: String): ByteArray? {
         val entry = byLowerName[name.lowercase()] ?: return null
         cache[entry]?.let { return it }
-        return entries.read(entry)?.also { cache[entry] = it }
+        return entries.read(entry)?.also { cache.put(entry, it) }
     }
 
     /**
@@ -152,3 +156,38 @@ private const val PREFS = "text_epub"
 private const val SCROLL = "scroll"
 private const val POSITION = "position:"
 private const val PAGES_PER_CHAPTER_KEY = 10_000
+
+/** What a book keeps of the entries it has read: a few chapters and every stylesheet and image. */
+private const val CACHE_BYTES = 16L * 1024 * 1024
+
+/**
+ * A least-recently-used map of byte arrays, bounded by their total size rather than their count:
+ * one chapter can be a hundred times the size of a stylesheet. An entry larger than the whole
+ * budget is not kept at all. Thread-safe: the WebView asks for entries off the main thread.
+ */
+internal class ByteLru(private val budget: Long) {
+    private val map = LinkedHashMap<String, ByteArray>(INITIAL_CAPACITY, LOAD_FACTOR, true)
+    private var size = 0L
+
+    @Synchronized operator fun get(key: String): ByteArray? = map[key]
+
+    @Synchronized fun put(key: String, value: ByteArray) {
+        map.remove(key)?.let { size -= it.size }
+        if (value.size > budget) return
+        map[key] = value
+        size += value.size
+        val oldest = map.entries.iterator()
+        while (size > budget && oldest.hasNext()) {
+            size -= oldest.next().value.size
+            oldest.remove()
+        }
+    }
+
+    /** Bytes held now. */
+    @get:Synchronized val bytes: Long get() = size
+
+    private companion object {
+        const val INITIAL_CAPACITY = 64
+        const val LOAD_FACTOR = 0.75f
+    }
+}
