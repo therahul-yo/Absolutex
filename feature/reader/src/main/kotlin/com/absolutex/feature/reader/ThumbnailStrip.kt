@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,6 +35,7 @@ import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
@@ -123,7 +125,14 @@ private fun ThumbnailCell(
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize(),
             )
-        } ?: Text("${index + 1}", style = MaterialTheme.typography.labelSmall)
+        } ?: Text(
+            "${index + 1}",
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            // The cell is a fixed-size image slot, so the number shrinks to fit it rather than
+            // clipping at a large font scale (audit C2). The cell's description carries the page.
+            autoSize = TextAutoSize.StepBased(minFontSize = MIN_NUMBER_SP.sp),
+        )
         if (bookmarked) {
             Box(
                 Modifier
@@ -152,3 +161,6 @@ internal fun thumbnailLabelRes(bookmarked: Boolean): Int =
 @StringRes
 internal fun bookmarkActionRes(bookmarked: Boolean): Int =
     if (bookmarked) R.string.reader_bookmark_remove else R.string.reader_bookmark_add
+
+/** The smallest a page number shrinks to in a cell that has not decoded yet. */
+private const val MIN_NUMBER_SP = 8

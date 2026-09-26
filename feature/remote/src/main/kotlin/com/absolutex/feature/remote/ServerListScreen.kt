@@ -34,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -229,9 +230,10 @@ private fun ServerRows(
                         Icon(Icons.Filled.Delete, contentDescription = null)
                     }
                 },
-                modifier = Modifier
-                    .semantics { contentDescription = label }
-                    .clickable { open() },
+                // No contentDescription on the row: it replaced the headline and subtitle, so
+                // TalkBack heard the server name and never its kind or user (audit B1). The
+                // clickable merges both texts, and the role says the row does something.
+                modifier = Modifier.clickable(role = Role.Button) { open() },
             )
         }
     }
