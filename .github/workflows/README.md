@@ -144,3 +144,43 @@ Every `uses:` is pinned to an exact tag, resolved against the live repository on
 | `actions/upload-artifact` | `v7.0.1` |
 | `gradle/actions/setup-gradle` | `v6.3.0` |
 | `github/codeql-action/upload-sarif` | `v4.38.0` |
+
+## Releases — `release.yml`
+
+Push a tag named `v` + `versionName` and the workflow builds the release APK, signs it with
+the release key, **refuses it if it is unsigned or debug-signed**, runs the size gate, and
+attaches the APK, its SHA-256 and the R8 mapping to a **draft** GitHub release. Nothing is
+public until the draft is published by hand. Run from the Actions tab instead, it builds and
+uploads the signed APK as an artifact without creating a release.
+
+```sh
+# 1. bump versionName and versionCode in app/build.gradle.kts, merge
+# 2. tag the merge and push the tag
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The tag must equal `v<versionName>`; a mismatch fails the job before anything is built.
+
+### One-time setup: the release key
+
+Create the key once and keep the `.jks` and its passwords somewhere safe: every later update
+must be signed with the same key, or Android refuses to install it over the previous one.
+
+```sh
+keytool -genkeypair -v -keystore absolutex-release.jks -alias absolutex \
+  -keyalg RSA -keysize 4096 -validity 10000
+base64 -i absolutex-release.jks | pbcopy        # macOS: copies the keystore as base64
+```
+
+Then add four repository secrets (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|---|---|
+| `RELEASE_KEYSTORE_BASE64` | the base64 text copied above |
+| `KEYSTORE_PASSWORD` | the keystore password |
+| `KEY_ALIAS` | `absolutex` (the `-alias` above) |
+| `KEY_PASSWORD` | the key password |
+
+The keystore is written only to the runner's temp directory and deleted at the end of the
+job. Locally, the same four values can be given as `KEYSTORE_FILE`, `KEYSTORE_PASSWORD`,
+`KEY_ALIAS` and `KEY_PASSWORD` environment variables (see `app/build.gradle.kts`).
