@@ -2,6 +2,7 @@ package com.absolutex
 
 import android.net.Uri
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
@@ -72,7 +73,13 @@ internal fun ReaderCoverHero(
     val wantHero = !ready || closing
     val alpha by animateFloatAsState(
         targetValue = heroAlphaTarget(wantHero, handedOff),
-        animationSpec = if (wantHero) Motion.enter() else Motion.exit(),
+        // Closing, the hero appears at once rather than fading in: the fade made every close wait
+        // 200 ms before the cover could fly home, and measured twice as long as a plain close.
+        animationSpec = when {
+            closing -> snap()
+            wantHero -> Motion.enter()
+            else -> Motion.exit()
+        },
         label = "coverHero",
     )
     // Caller-managed, never both ends at once: the source card hides exactly while this hero
