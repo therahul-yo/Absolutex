@@ -2,6 +2,8 @@
 
 **A fast, minimal comic and manga reader for flagship Android phones.**
 
+**[Download the latest APK](https://github.com/therahul-yo/Absolutex/releases/latest)** · [Website](https://therahul-yo.github.io/Absolutex/)
+
 Open your comics, manga, PDFs and EPUBs straight from your phone or a network share, and read
 them on a true-black, distraction-free screen that keeps up with a 120 Hz display. Pages are
 rendered in tiles on the GPU, so zooming into a 6-megapixel scan stays sharp and smooth.
