@@ -56,7 +56,19 @@ interface CoverTransitionHost {
 
     /** Whether the book at [path] was opened from a card whose art may fly. Snapshot state. */
     fun flies(path: String): Boolean
+
+    /**
+     * The reader sheet is gone. Nothing is in flight any more, so the next open of the same book
+     * from somewhere other than its card (Continue reading, another app) keeps the plain sheet.
+     */
+    fun landed()
 }
+
+/**
+ * The book a tap may fly, or null when it may not: only a card that shows its art. A document
+ * whose cover is hidden for privacy must never have its first page drawn by the reader end.
+ */
+fun flyablePath(path: String, showsCover: Boolean): String? = path.takeIf { showsCover }
 
 /**
  * Null until `:app` provides the host above its library-and-reader composition. Library cards

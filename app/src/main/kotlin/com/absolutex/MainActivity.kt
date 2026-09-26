@@ -363,7 +363,8 @@ private fun LibraryWithOverlays(
     val context = androidx.compose.ui.platform.LocalContext.current
     val readerVm: ReaderViewModel = hiltViewModel(context as ComponentActivity)
     SharedTransitionLayout {
-        CompositionLocalProvider(LocalCoverTransitionHost provides rememberCoverHost()) {
+        val coverHost = rememberCoverHost()
+        CompositionLocalProvider(LocalCoverTransitionHost provides coverHost) {
             Box(Modifier.fillMaxSize()) {
                 LibraryRoute(
                     // A library row holds whatever the scan found it by: a document Uri from a SAF
@@ -380,6 +381,7 @@ private fun LibraryWithOverlays(
                     onGone = {
                         bookCovers = false
                         lastCover = null
+                        coverHost.landed()
                     },
                 ) { book ->
                     reader(book)

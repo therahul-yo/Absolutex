@@ -69,4 +69,14 @@ class CoverTransitionTest {
         )
         assertFalse(failed)
     }
+
+    @Test
+    fun `a card showing its art may fly`() {
+        assertEquals("/books/one.cbz", flyablePath("/books/one.cbz", showsCover = true))
+    }
+
+    @Test
+    fun `a card hiding its art never flies, so the reader never renders its first page`() {
+        assertEquals(null, flyablePath("/docs/statement.pdf", showsCover = false))
+    }
 }

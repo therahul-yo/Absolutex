@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import com.absolutex.core.ui.Motion
 import com.absolutex.feature.library.CoverTransitionHost
 import com.absolutex.feature.library.coverTransitionKey
+import com.absolutex.feature.library.flyablePath
 
 /**
  * The library path for a book open as [uri]. Library rows are keyed by path — a device path, or
@@ -39,7 +40,11 @@ private class SharedCoverHost(private val scope: SharedTransitionScope) : CoverT
     private var flying by mutableStateOf<String?>(null)
 
     override fun opened(path: String, showsCover: Boolean) {
-        flying = path.takeIf { showsCover }
+        flying = flyablePath(path, showsCover)
+    }
+
+    override fun landed() {
+        flying = null
     }
 
     override fun flies(path: String): Boolean = flying == path
