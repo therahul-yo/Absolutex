@@ -46,6 +46,10 @@ internal fun <T : Any> OverlaySheet(
 ) {
     val uri = value
     var shown by remember { mutableStateOf(value) }
+    // Set synchronously, not only in the effect below: a shared-element destination in the
+    // content must compose in the same frame the source hides, or the flight has nothing to
+    // fly to. (The library's paused flag uses the same synchronous catch-up pattern.)
+    if (uri != null) shown = uri
     // 0 = covering the library, 1 = fully below the screen.
     val offset = remember { Animatable(if (uri == null) 1f else 0f) }
     LaunchedEffect(uri) {

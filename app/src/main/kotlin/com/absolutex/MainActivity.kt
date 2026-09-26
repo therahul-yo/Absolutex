@@ -5,6 +5,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Box
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.tween
 import android.content.ComponentCallbacks2
 import androidx.compose.animation.EnterTransition
@@ -17,6 +18,7 @@ import com.absolutex.core.ui.Motion
 import javax.inject.Inject
 import com.absolutex.feature.reader.BookCovers
 import com.absolutex.feature.library.LocalBookCovers
+import com.absolutex.feature.library.LocalCoverTransitionHost
 import com.absolutex.feature.library.BookCoverSource
 import androidx.compose.runtime.CompositionLocalProvider
 import android.content.Intent
@@ -320,6 +322,14 @@ private fun keepGrant(context: android.content.Context, picked: Uri): Boolean {
  * The library with an open book and settings as sheets over it ([OverlaySheet]). Neither ever
  * tears the library down, so closing either has no library to rebuild. Under a sheet the library
  * holds still: it would otherwise recompose the hidden grid on every page the reader saves.
+ *
+ * The whole composition also sits under one [SharedTransitionLayout], which is what lets a
+ * library cover grow into the reader: the card's art (source) and the reader sheet's hero
+ * ([ReaderCoverHero], destination) key by the same [coverPathFor] string. [effectiveCover]
+ * names the hidden card — the open book while reading, the last book through the close fade —
+ * and the hero's handoff reports when the card may return, so open and close are one element
+ * flown in opposite directions. The paused grid is untouched by all of it: hiding one card's
+ * art flips visibility only, and the feed stays frozen until the sheet is fully gone.
  */
 @Composable
 private fun LibraryWithOverlays(
@@ -339,22 +349,58 @@ private fun LibraryWithOverlays(
     var settingsCovers by remember { mutableStateOf(settingsOpen) }
     if (openBook != null) bookCovers = true
     if (settingsOpen) settingsCovers = true
-    Box(Modifier.fillMaxSize()) {
-        LibraryRoute(
-            // A library row holds whatever the scan found it by: a document Uri from a SAF
-            // location, or a device path from a filesystem one. The reader opens either.
-            onOpenBook = { path -> onOpenBook(bookUri(path)) },
-            onAddLocation = onAddLocation,
-            onOpenSettings = { onSettings(true) },
-            paused = bookCovers || settingsCovers,
-        )
-        OverlaySheet(openBook, onClose = onCloseBook, onGone = { bookCovers = false }, content = reader)
-        OverlaySheet(
-            if (settingsOpen) Unit else null,
-            onClose = { onSettings(false) },
-            onGone = { settingsCovers = false },
-            fromEnd = true,
-        ) { settings() }
+    // The open book in library-path domain, or null once a close starts. The last book stays
+    // named until the sheet is gone so its card stays hidden through the close fade; the hero's
+    // handoff (handedOff) ends that cover early, in the same frame the hero leaves.
+    val coverKey = openBook?.let(::coverPathFor)
+    var lastCover by remember { mutableStateOf<String?>(null) }
+    if (coverKey != null) lastCover = coverKey
+    var handedOff by remember { mutableStateOf(false) }
+    if (coverKey != null) handedOff = false
+    val effectiveCover = coverKey ?: if (!handedOff && bookCovers) lastCover else null
+    // The activity's ReaderViewModel, looked up by owner like Root does: the same instance the
+    // reader destination opens with, so the hero reads the loading cycle it gates on.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val readerVm: ReaderViewModel = hiltViewModel(context as ComponentActivity)
+    SharedTransitionLayout {
+        val coverHost = rememberCoverHost()
+        CompositionLocalProvider(LocalCoverTransitionHost provides coverHost) {
+            Box(Modifier.fillMaxSize()) {
+                LibraryRoute(
+                    // A library row holds whatever the scan found it by: a document Uri from a SAF
+                    // location, or a device path from a filesystem one. The reader opens either.
+                    onOpenBook = { path -> onOpenBook(bookUri(path)) },
+                    onAddLocation = onAddLocation,
+                    onOpenSettings = { onSettings(true) },
+                    paused = bookCovers || settingsCovers,
+                    openCoverPath = effectiveCover,
+                )
+                OverlaySheet(
+                    openBook,
+                    onClose = onCloseBook,
+                    onGone = {
+                        bookCovers = false
+                        lastCover = null
+                        coverHost.landed()
+                    },
+                ) { book ->
+                    reader(book)
+                    ReaderCoverHero(
+                        uri = book,
+                        closing = coverKey == null,
+                        handedOff = handedOff,
+                        onSettledVisible = { handedOff = true },
+                        vm = readerVm,
+                    )
+                }
+                OverlaySheet(
+                    if (settingsOpen) Unit else null,
+                    onClose = { onSettings(false) },
+                    onGone = { settingsCovers = false },
+                    fromEnd = true,
+                ) { settings() }
+            }
+        }
     }
 }
 
