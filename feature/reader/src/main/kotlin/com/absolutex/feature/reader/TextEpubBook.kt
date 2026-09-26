@@ -12,6 +12,8 @@ import com.absolutex.core.data.ProgressDao
 import com.absolutex.core.data.ReadingProgress
 import com.absolutex.source.epub.EpubBook
 import com.absolutex.source.epub.EpubPackage
+import com.absolutex.source.epub.EpubToc
+import com.absolutex.model.TocEntry
 import com.absolutex.source.libarchive.ArchiveEntries
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -38,6 +40,9 @@ class TextEpubBook internal constructor(
     private val cache = ConcurrentHashMap<String, ByteArray>()
     private val byLowerName = entries.names.associateBy { it.lowercase() }
 
+    /** The book's own contents, chapters as spine indices; empty when it declares none. */
+    val toc: List<TocEntry> by lazy { EpubToc.parse(entries.names, spine, ::read) }
+
     /** An entry's bytes, matched case-insensitively as EPUB paths are in practice. */
     fun read(name: String): ByteArray? {
         val entry = byLowerName[name.lowercase()] ?: return null
@@ -51,6 +56,8 @@ class TextEpubBook internal constructor(
             val entries = ArchiveEntries.list { context.openDescriptor(uri) } ?: return null
             val book = EpubPackage.parse(entries.names) { entries.read(it) } as? EpubBook.Reflowable ?: return null
             return TextEpubBook(book.spine, context.identityOf(uri), book.coverEntryName, entries)
+                // Parsed here, off the main thread, so the contents button never parses on a tap.
+                .also { it.toc }
         }
     }
 }

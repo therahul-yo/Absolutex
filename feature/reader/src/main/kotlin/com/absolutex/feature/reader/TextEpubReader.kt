@@ -12,7 +12,9 @@ import android.webkit.WebView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -27,7 +29,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Column
 import androidx.compose.material.icons.Icons
+import com.absolutex.model.TocEntry
+import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.SwapVert
 import androidx.compose.material.icons.outlined.TextDecrease
@@ -108,6 +113,7 @@ private fun TextBook(
     var chapter by rememberSaveable { mutableIntStateOf(resume.chapter) }
     var fontPx by rememberSaveable { mutableIntStateOf(DEFAULT_FONT_PX) }
     var chrome by rememberSaveable { mutableStateOf(false) }
+    var contents by rememberSaveable { mutableStateOf(false) }
     // Pages turn like a book; scroll reads a chapter as one long page (the user's choice).
     var scroll by rememberSaveable { mutableStateOf(resume.scroll) }
     val haptics = rememberHaptics()
@@ -119,10 +125,7 @@ private fun TextBook(
             p.resumeAt = resume.fraction
         }
     }
-    val labels = ChapterLinks(
-        stringResource(R.string.reader_text_prev_chapter),
-        stringResource(R.string.reader_text_next_chapter),
-    )
+    val labels = chapterLinks()
 
     // One place that decides what a turn means, so taps, swipes and chapter edges agree.
     val leaveChapter: (Boolean) -> Unit = { forward ->
@@ -154,7 +157,9 @@ private fun TextBook(
             TurnGestures(pager, onTurn = turn, onLeaveChapter = leaveChapter, onMiddle = { chrome = !chrome })
         }
         TextChrome(chrome, title, book.identity, onSettings) {
+            ContentsAbove(book.toc, chapter, contents, onJump = { chapter = it; contents = false })
             TextBottomBar(
+                onContents = { contents = !contents }.takeIf { book.toc.isNotEmpty() },
                 chapter = chapter,
                 chapters = book.spine.size,
                 page = pager.page,
@@ -224,7 +229,7 @@ private fun BoxScope.TextChrome(
         enter = slideInVertically(Motion.enter()) { it } + fadeIn(Motion.enter()),
         exit = slideOutVertically(Motion.exit()) { it } + fadeOut(Motion.exit()),
         modifier = Modifier.align(Alignment.BottomCenter),
-    ) { bottom() }
+    ) { Column { bottom() } }
 }
 
 /**
@@ -272,8 +277,24 @@ private fun TurnGestures(
     )
 }
 
+/** The previous/next chapter links a scrolled chapter ends with, in the reader's language. */
+@Composable
+private fun chapterLinks() = ChapterLinks(
+    stringResource(R.string.reader_text_prev_chapter),
+    stringResource(R.string.reader_text_next_chapter),
+)
+
+/** The book's contents, opened from the bottom bar and sitting just above it. */
+@Composable
+private fun ContentsAbove(toc: List<TocEntry>, chapter: Int, open: Boolean, onJump: (Int) -> Unit) {
+    AnimatedVisibility(open, enter = expandVertically(Motion.enter()), exit = shrinkVertically(Motion.exit())) {
+        TocPanel(toc, onJump = onJump, current = chapter)
+    }
+}
+
 @Composable
 private fun TextBottomBar(
+    onContents: (() -> Unit)?,
     chapter: Int,
     chapters: Int,
     page: Int,
@@ -312,6 +333,14 @@ private fun TextBottomBar(
                 style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.weight(1f),
             )
+            onContents?.let { open ->
+                FilledTonalIconButton(onClick = open, modifier = Modifier.size(A11y.MinTouchTarget)) {
+                    Icon(
+                        Icons.AutoMirrored.Outlined.List,
+                        contentDescription = stringResource(R.string.reader_contents),
+                    )
+                }
+            }
             FilledTonalIconButton(onClick = onToggleScroll, modifier = Modifier.size(A11y.MinTouchTarget)) {
                 Icon(
                     if (scroll) Icons.AutoMirrored.Outlined.MenuBook else Icons.Outlined.SwapVert,

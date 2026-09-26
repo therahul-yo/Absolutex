@@ -28,7 +28,7 @@ import java.io.ByteArrayInputStream
 object EpubPackage {
 
     /** Where every EPUB says its package document is. Fixed by the container specification. */
-    private const val CONTAINER_XML = "META-INF/container.xml"
+    internal const val CONTAINER_XML = "META-INF/container.xml"
 
     /**
      * Largest XML document this will parse, matching [com.absolutex.source.ComicInfoParser]'s cap
@@ -160,7 +160,7 @@ object EpubPackage {
     }
 
     /** The `full-path` of the first rootfile in container.xml. */
-    private fun rootfilePath(containerXml: ByteArray): String? {
+    internal fun rootfilePath(containerXml: ByteArray): String? {
         val root = parseXml(containerXml) ?: return null
         return root.descendantElements()
             .firstOrNull { it.localName() == "rootfile" }
@@ -173,8 +173,8 @@ object EpubPackage {
     // we can open", not a crash. Not logged: :source:epub is pure Kotlin with no logger, and a
     // corrupt book would spam whatever it had, once per spine document.
     @Suppress("SwallowedException", "TooGenericExceptionCaught")
-    private fun parseXml(bytes: ByteArray): Element? {
-        if (bytes.size.toLong() > MAX_XML_BYTES) return null
+    internal fun parseXml(bytes: ByteArray, maxBytes: Long = MAX_XML_BYTES): Element? {
+        if (bytes.size.toLong() > maxBytes) return null
         return try {
             SafeXml.newBuilder().parse(ByteArrayInputStream(bytes)).documentElement
         } catch (e: Exception) {
