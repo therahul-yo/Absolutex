@@ -155,9 +155,14 @@ class PrefetchEngine(
      * lands after [dropAll] and stages A's bytes under page numbers book B also has, and B
      * then decodes and shows A's page. This is the same guard [launchDecode] applies to a
      * landing, extended to the staging path that precedes it.
+     *
+     * [targets] is the window this stage serves, and it is what [takeStagedBytes] consults
+     * to decide whether a page should wait at all. Only a page the walk can actually feed
+     * has a reason to block on it.
      */
     private class WindowStage(
         val generation: Int,
+        val targets: List<Int>,
         val ready: CompletableDeferred<Unit>,
     )
 
@@ -221,7 +226,7 @@ class PrefetchEngine(
         // whose decodes are already running but whose stage is not yet visible. The job is
         // retained so dropAll can cancel it; before this it was launched untracked, and a
         // walk still in flight at a book switch landed into the next book's page numbers.
-        val thisStage = WindowStage(generation, CompletableDeferred())
+        val thisStage = WindowStage(generation, targets, CompletableDeferred())
         stage = thisStage
         stageJob = scope.launch(decodeDispatcher) {
             try {
@@ -262,12 +267,12 @@ class PrefetchEngine(
         // would not be, and this is where that would be refused.
         if (targets.withIndex().any { (i, target) -> target != first + i }) return
         val bytes = runCatching { batch(targets) }.getOrNull()
-        // A book switched while this walk was in flight: A's bytes must not be staged under
-        // page numbers B also has, or B's decode claims them and the reader shows A's page.
-        // Uncancellable in the real path (a blocking JNI extract), so dropAll's cancel
-        // cannot be relied on to stop this -- it is the second line of defence, after it.
-        if (launchedGeneration != generation) return
-        staged.put(targets, bytes)
+        // The generation is handed to StagedBytes, which compares and writes under ONE
+        // lock. Doing it here as a separate `if` was check-then-act: a dropAll landing
+        // between the check and the put would pass the check and then write the old book's
+        // bytes into the new book's map moments after emptying it. StagedBytes owns the
+        // generation so the two cannot interleave.
+        staged.put(targets, bytes, launchedGeneration)
     }
 
     /**
@@ -284,7 +289,12 @@ class PrefetchEngine(
      * sees a page's bytes, only its decoded image, so it cannot claim on the host's behalf.
      */
     suspend fun takeStagedBytes(page: Int): ByteArray? {
-        stage?.ready?.await()
+        // Wait ONLY for a page this window is actually reading. The on-screen page, a seek
+        // target and a thumbnail tap all come through here, and they are usually OUTSIDE the
+        // prefetch window: the walk cannot produce their bytes, so waiting on it would put a
+        // background 10-page read in front of a user-visible page load for nothing. Those
+        // return immediately and read their own page, as before.
+        stage?.takeIf { page in it.targets }?.ready?.await()
         return staged.take(page)
     }
 
@@ -383,11 +393,9 @@ class PrefetchEngine(
         inFlight.values.forEach { it.job.cancel() }
         inFlight.clear()
         synchronized(resident) { resident.clear() }
-        // Staged bytes belong to the book being dropped. A decode that claims one of them
-        // after a book switch would decode the OLD book's page and bill the NEW book for
-        // it -- the same mistake the generation guard exists to prevent, in a field the
-        // guard does not cover.
-        staged.clear()
+        // Staged bytes belong to the book being dropped, and the generation bump is part of
+        // the same lock as a staging write -- see StagedBytes.put.
+        staged.clear(generation)
     }
 
 }

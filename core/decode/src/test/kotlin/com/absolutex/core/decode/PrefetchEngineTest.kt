@@ -6,7 +6,9 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -365,6 +367,45 @@ class PrefetchEngineTest {
         advanceUntilIdle()
         assertEquals("all three must complete once the walk returns", 3, h.decode.finished.size)
         assertEquals("staged bytes must be left unclaimed, not left behind", 0, h.engine.stagedPageCount)
+    }
+
+    @Test
+    fun `a page outside the window does not wait for the walk`() = runTest {
+        // The on-screen page, a seek target and a thumbnail tap all reach takeStagedBytes,
+        // and the walk cannot produce their bytes -- so making them wait on it would put a
+        // background 10-page read in front of a user-visible page load for nothing. The
+        // gate stays SHUT for this whole test.
+        //
+        // withTimeout, not advanceUntilIdle: a non-window page that wrongly blocks never
+        // completes, so the FIRST version of this test hung the whole suite instead of
+        // failing it -- which in CI reads as a timed-out job with no diagnosis. A timeout
+        // turns the same regression into a named assertion failure.
+        val gate = CompletableDeferred<Unit>()
+        val h = harness(
+            batch = { pages -> gate.await(); pages.associateWith { byteArrayOf(7) } },
+        )
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 3)
+        runCurrent()                              // window is [11,12,13]; the walk is gated
+
+        // Page 10 is the SETTLED page, outside the window, and is what the reader shows.
+        assertNull(
+            "the on-screen page must not wait for a background walk",
+            withTimeout(1_000) { h.engine.takeStagedBytes(10) },
+        )
+
+        // A far seek target, likewise outside the window.
+        assertNull(
+            "a seek target outside the window must not wait either",
+            withTimeout(1_000) { h.engine.takeStagedBytes(180) },
+        )
+
+        // And a window page DOES wait, which is what the timeout above is protecting.
+        val inWindow = async { h.engine.takeStagedBytes(11) }
+        runCurrent()
+        assertTrue("a page inside the window must still wait for the walk", !inWindow.isCompleted)
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertTrue("and resolves once the walk returns", inWindow.isCompleted)
     }
 
     @Test
