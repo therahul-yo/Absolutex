@@ -1,10 +1,62 @@
 # Absolutex
 
-A comic and manga reader built exclusively for modern flagship Android hardware.
+**A fast, minimal comic and manga reader for flagship Android phones.**
+
+Open your comics, manga, PDFs and EPUBs straight from your phone or a network share, and read
+them on a true-black, distraction-free screen that keeps up with a 120 Hz display. Pages are
+rendered in tiles on the GPU, so zooming into a 6-megapixel scan stays sharp and smooth.
 
 Absolutex deliberately does not support low-end devices. There are no 16-bit colour paths, no
 small-cache fallbacks, no single-threaded decode kept around for weak SoCs. The hardware floor
 is a feature: every compromise removed is a code path that cannot rot or drop a frame.
+
+## Features
+
+**Reads what you have**
+- Comic archives: CBZ, CBR (including RAR5), CB7 and CBT
+- PDF, including password-protected files
+- EPUB: fixed-layout comic EPUBs as pages, novels and web novels as reflowable text
+- Opens from any folder you pick, from the file manager, or from SMB and FTP/FTPS shares
+
+**Reading comics and PDFs**
+- Left-to-right, right-to-left (manga) and vertical reading, chosen per book
+- Single page, two-page spreads in landscape, and a continuous vertical strip (the default for PDFs)
+- Four fit modes, remembered for each screen and page shape
+- Smooth pinch and double-tap zoom, tap zones mirrored for right-to-left books
+- A seek slider with haptic ticks, a thumbnail strip, bookmarks and a table of contents
+- Dark pages for documents, rotation lock, keep-screen-on, volume-key, keyboard and gamepad turning
+- Finishing a book offers the next one in the series
+- Save any page as an image
+
+**Picture quality, on the GPU**
+- Colour correction: brightness, contrast, saturation, vibrance, warmth and gamma
+- Smart border crop that trims scan margins before the first frame
+- Mitchell and Lanczos upscaling for sharp text when zoomed
+- A background that matches each page's own edge colour
+
+**Reading novels**
+- Pages that turn like a book, or one continuous scroll per chapter
+- Adjustable text size, dark theme, chapter links that work
+- Your place is saved per book and restored when you come back
+
+**Library**
+- Comics, Recent, Favourites and Documents tabs
+- Real cover art, series stacks, a continue-reading strip and "new" badges
+- Reading stats: pages read, time spent reading and your daily streak
+- Search across the whole library, sort by name, date or size, grid or list
+- Stays in sync with your folders as files are added or removed
+- Document covers stay hidden unless you turn them on, for privacy
+
+**Design**
+- Minimal Material 3 in true black, fast non-bouncy motion and haptics throughout
+- Resumes the last book you were reading when the app opens
+
+**Requirements:** Android 13 or newer on a 64-bit flagship-class phone (Snapdragon 8 Gen 1-class
+or better). Developed and measured on a OnePlus 11R.
+
+---
+
+*Everything below is for people working on the code.*
 
 ## Status
 
@@ -23,7 +75,7 @@ destinations. A parallel scanner with a filesystem watcher keeps it live, and th
 thumbnail pipeline, a settings surface, and remote modules for SMB, FTP/FTPS and Komga/Kavita
 progress sync, wired into the app.
 
-**Built but not yet connected.** Five features are merged, tested and unreachable, which is
+**Built but not yet connected.** Four features are merged, tested and unreachable, which is
 worth stating plainly rather than leaving for someone to discover:
 
 - **Progress sync is inert.** `SyncController.onAppStart` and `onAppBackgrounded` fire from the
@@ -31,8 +83,6 @@ worth stating plainly rather than leaving for someone to discover:
   the controller never learns which book is open — and `onAppBackgrounded` takes no book id
   precisely because it expects to have been told. Nothing is pushed to or pulled from Komga or
   Kavita today.
-- **EPUB does not open.** `:source:epub` parses and renders fixed-layout comic EPUBs, and
-  `openBook` has no `ContainerFormat.EPUB` branch to route to it.
 - **Remote covers are never fetched.** `TransportCoverFetcher` and `FtpCovers` exist; no screen
   mints the `ThumbRequest` that would drive them.
 - **No cloud account can be added.** `:remote:cloud` holds the PKCE flow, the token endpoint, the
@@ -44,7 +94,7 @@ worth stating plainly rather than leaving for someone to discover:
   calls it, and there is no registry recording that a copy exists, so a local copy could not be
   preferred over the network even if one were made.
 
-Those last two are a step further from reachable than the other three, and the distinction
+Those last two are a step further from reachable than the other two, and the distinction
 matters when estimating the work: **no module depends on `:remote:cloud` or `:remote:offline`.**
 They are in `settings.gradle.kts`, so they compile and their tests run on every PR, but they are
 not on the app's dependency graph and contribute nothing to the APK. Connecting them is a build
