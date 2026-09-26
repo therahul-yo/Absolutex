@@ -67,7 +67,7 @@ static inline int __android_log_print(int priority, const char *tag, const char 
 }
 HEADER
 
-cp "$ROOT/tools/LibArchive.java" "$OUT/com/absolutex/source/libarchive/LibArchive.java"
+cp "$ROOT/tools/ArchiveWalkBench.java" "$OUT/com/absolutex/source/libarchive/LibArchive.java"
 
 echo "bench-decode: building the JNI bridge from source/libarchive/src/main/cpp/archive_jni.c"
 clang -shared -fPIC -O2 -Wall -Wextra -Werror -fstack-protector-strong -D_FORTIFY_SOURCE=2 \

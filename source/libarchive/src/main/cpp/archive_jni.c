@@ -518,6 +518,119 @@ Java_com_absolutex_source_libarchive_LibArchive_nativeList(JNIEnv *env, jclass c
     return r;
 }
 
+/*
+ * Extracts [count] consecutive entries starting at [fromOrdinal], in ONE header walk.
+ *
+ * This exists because the per-ordinal extract_impl re-walks from zero every call, and the
+ * prefetch window is by definition a contiguous run. Measured on the decode M11 corpus (a
+ * 300-page CBZ of 6 MP JPEG, host harness tools/bench-decode.sh): reaching page 299 costs
+ * ~1.6 ms more than reaching page 0, which is 34% of a whole first page -- paid again for
+ * every window the reader opens, not once per book. The cost was invisible until now because
+ * every existing measurement looked at page 0, where the walk is zero headers.
+ *
+ * So the walk is hoisted out of the loop rather than made cheaper: a run of N consecutive
+ * entries costs N headers, once, instead of sum(i) headers across N calls. Sequential access
+ * is also the access pattern libarchive's reader is optimised for, so the win is larger than
+ * the header count alone.
+ *
+ * The ordinal contract is deliberately IDENTICAL to extract_impl's: both count entries
+ * through is_ordinal_entry, so a window and a loop of single extracts must agree entry for
+ * entry. Any future divergence is a silent "asking for page N extracts some other entry"
+ * bug, which is the exact failure the by-ordinal design exists to prevent.
+ *
+ * A null element means that one entry was absent or unreadable -- the same verdict the
+ * single-extract path gives, per entry, so a caller cannot tell from a window which of the
+ * two paths produced it. Never throws for one bad entry: a 300-page book with one torn page
+ * must still yield 299 readable ones.
+ */
+static jobjectArray
+extract_window_impl(JNIEnv *env, jclass clazz,
+                    jint fd, jint fromOrdinal, jint count, const char *passphrase) {
+    (void) clazz;
+    if (fd < 0 || fromOrdinal < 0 || count <= 0) return NULL;
+
+    int dfd = -1;
+    struct archive *a = open_fd(env, fd, &dfd, passphrase);
+    if (a == NULL) return NULL;
+
+    jclass array_class = (*env)->FindClass(env, "[B");
+    if (array_class == NULL) { close_archive(a, dfd); return NULL; }
+    jobjectArray result = (*env)->NewObjectArray(env, count, array_class, NULL);
+    if (result == NULL) { close_archive(a, dfd); return NULL; }
+
+    struct archive_entry *entry;
+    jint seen = -1;
+    jint produced = 0;
+    int r;
+    int need_password = 0;
+    /* Stop as soon as the run is filled: walking past the last wanted entry would make a
+       window at the end of a book pay for headers nobody asked for. */
+    while (produced < count && header_ok(r = archive_read_next_header(a, &entry))) {
+        if (!is_ordinal_entry(entry)) continue;
+        if (++seen < fromOrdinal) continue;
+        if (seen >= fromOrdinal + count) break;
+
+        if (archive_entry_is_encrypted(entry) > 0 && passphrase == NULL) {
+            /* No exception-throwing call may run from here until the archive is closed: JNI
+               forbids most calls while an exception is pending, and -Xcheck:jni reports it on
+               a device run exactly as it does on the host. So the flag is latched, the walk
+               stops, and the throw happens after close_archive. */
+            need_password = 1;
+            break;
+        }
+        jbyteArray bytes = read_entry(env, a, entry);
+        /* read_entry calls password_error, which THROWS, on a wrong passphrase mid-entry.
+           That leaves an exception pending, and continuing the walk would make JNI calls with
+           one pending -- forbidden, and reported by -Xcheck:jni on device exactly as on the
+           host. So the run stops here and the already-thrown exception propagates, which is
+           also the right semantics: a wrong passphrase invalidates the whole window, not just
+           the entry that happened to fail first. */
+        if ((*env)->ExceptionCheck(env)) break;
+        /* A null element stays null. read_entry has already turned a torn entry into NULL
+           with the reason logged, and set_error_flags latches nothing here, so one bad
+           page does not poison the rest of the run. */
+        (*env)->SetObjectArrayElement(env, result, produced, bytes);
+        if ((*env)->ExceptionCheck(env)) break;
+        if (bytes != NULL) (*env)->DeleteLocalRef(env, bytes);
+        produced++;
+    }
+    /* Once an exception is pending, NO JNI call may follow. errstr reads libarchive state
+       (not a JNI call, so it is safe to read) but throw_named and ExceptionCheck are not, so
+       the archive is closed first and the pending exception is simply left to propagate --
+       there is nothing to add to it. */
+    if (!(*env)->ExceptionCheck(env) && produced < count && r == ARCHIVE_FATAL) {
+        /* A short run is a short book, not a failure: the tail stays null rather than
+           throwing, matching extract_impl returning NULL for an unreachable ordinal. */
+        char err[128];
+        snprintf(err, sizeof(err), "%s", errstr(a));
+        close_archive(a, dfd);
+        LOGE("extract window %d..%d short: %s", (int) fromOrdinal, (int) (fromOrdinal + count), err);
+        return result;
+    }
+
+    close_archive(a, dfd);
+    if (need_password && !(*env)->ExceptionCheck(env)) {
+        /* No throw happened during the walk, so make the one the single-extract path would
+           have made: same exception, same fixed message, same input. */
+        throw_named(env, PASSWORD_REQUIRED, "Archive password required");
+    }
+    /* A pending exception means the caller gets an exception, not this array. Returning the
+       partial run anyway would be a lie about how much of the window is trustworthy. */
+    return (*env)->ExceptionCheck(env) ? NULL : result;
+}
+
+JNIEXPORT jobjectArray JNICALL
+Java_com_absolutex_source_libarchive_LibArchive_nativeExtractWindow(JNIEnv *env, jclass clazz,
+        jint fd, jint fromOrdinal, jint count, jbyteArray password) {
+    char *passphrase = copy_passphrase(env, password);
+    if ((*env)->ExceptionCheck(env)) return NULL;
+    locale_t prev = enter_utf8();
+    jobjectArray r = extract_window_impl(env, clazz, fd, fromOrdinal, count, passphrase);
+    leave_utf8(prev);
+    wipe_free(passphrase);
+    return r;
+}
+
 JNIEXPORT jbyteArray JNICALL
 Java_com_absolutex_source_libarchive_LibArchive_nativeExtract(JNIEnv *env, jclass clazz,
         jint fd, jint ordinal, jbyteArray password) {
