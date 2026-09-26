@@ -75,11 +75,25 @@ class PrefetchEngine(
 
     /**
      * Compressed bytes fetched by one archive walk and waiting for their decode to claim
-     * them. Bounded by construction: [stageBytes] writes only the current window's pages and
-     * only when every requested page came back, and [takeStagedBytes] removes on claim, so
-     * nothing here outlives the decode that wanted it.
+     * them. Its own class because boundedness, consume-once and book-scoping are invariants
+     * with real failure modes, and they read better as one small unit than as four more
+     * functions in an already-full class.
      */
-    private val stagedBytes = mutableMapOf<Int, ByteArray>()
+    private val staged = StagedBytes()
+
+    /**
+     * The budget invariant, factored out so the engine keeps only the landing and planning
+     * that need its own state. Shares this class's [resident] map and monitor.
+     *
+     * `onEvicted` is a constructor parameter rather than a property, so it is readable here
+     * without declaring a field that would then need initialising before this one.
+     */
+    private val eviction = EvictionPolicy(
+        resident = resident,
+        tileBytes = { tileBytes() },
+        budgetBytes = { budgetBytes() },
+        onEvicted = { page, bytes -> onEvicted(page, bytes) },
+    )
 
     @Volatile
     private var settled = -1
@@ -179,65 +193,52 @@ class PrefetchEngine(
     }
 
     /**
-     * Reads a contiguous run of the window in one archive walk, for [decode] to find.
+     * Reads a contiguous run of the window in one archive walk, for the decodes to claim.
      *
-     * Best-effort throughout, and never a failure: a null return, a short map, or a source
-     * with no batch reader all leave [decode] reading the page itself, which is the
-     * pre-existing behaviour. The optimisation must not be able to fail a page.
+     * Best-effort throughout, and never a failure: a null supplier, a non-contiguous window,
+     * a short map, or a source that cannot batch all leave every page decoding individually,
+     * which is the pre-existing behaviour. The optimisation must not be able to fail a page.
      */
     private suspend fun stageBytes(targets: List<Int>) {
         val batch = prefetchWindow ?: return
         val first = targets.first()
-        // Only a genuinely consecutive run is worth one walk. PrefetchPlanner returns a
-        // window that walks off one end of the book, so the tail is not contiguous.
-        val contiguous = targets.withIndex().all { (i, target) -> target == first + i }
-        if (!contiguous) return
-        val staged = runCatching { batch(targets) }.getOrNull() ?: return
-        if (staged.size != targets.size) return
-        // Bounded: only the pages this window asked for, and only the ones still wanted.
-        // A page evicted between planning and staging must not be staged into.
-        synchronized(stagedBytes) {
-            targets.forEach { stagedBytes.remove(it) }
-            staged.forEach { (page, bytes) -> if (bytes != null) stagedBytes[page] = bytes }
-        }
+        // Only a genuinely consecutive run is worth one walk. A spread layout plans both
+        // halves of each spread, so its window is consecutive; a future stride-2 window
+        // would not be, and this is where that would be refused.
+        if (targets.withIndex().any { (i, target) -> target != first + i }) return
+        staged.put(targets, runCatching { batch(targets) }.getOrNull())
     }
 
     /**
-     * Bytes staged by [stageBytes] for [page], or null.
+     * Bytes staged for [page] by the window's single archive walk, or null.
      *
-     * Consumed once: the first decode takes the bytes and drops them, so a page cannot be
-     * held by the staging map after the image that owns it exists. That is what keeps this
-     * from becoming a second unbounded retention path alongside the resident set — the
-     * compressed bytes here are the same ones the resident set would hold, and holding both
-     * for the same page is exactly the duplication the budget exists to prevent.
-     *
-     * Public because the HOST owns the decode and must be the one to claim: the engine
-     * never sees a page's bytes, only its decoded image, so it cannot claim on the host's
-     * behalf. Null is the ordinary answer for a page outside the window.
+     * Public because the HOST owns the decode and must be the one to claim: the engine never
+     * sees a page's bytes, only its decoded image, so it cannot claim on the host's behalf.
      */
-    fun takeStagedBytes(page: Int): ByteArray? = synchronized(stagedBytes) {
-        stagedBytes.remove(page)
-    }
+    fun takeStagedBytes(page: Int): ByteArray? = staged.take(page)
 
     /**
      * Pages staged but not yet claimed.
      *
      * Public for the same reason [takeStagedBytes] is: the host is the claimant, so an
      * assertion that nothing leaked has to be able to ask. A test that could only observe
-     * "did the batch get called" would pass even with a staging map that never drained,
-     * which is precisely the leak this number exists to rule out.
+     * "did the batch get called" would pass even with a map that never drained, which is
+     * precisely the leak this number rules out.
      */
-    val stagedPageCount: Int get() = synchronized(stagedBytes) { stagedBytes.size }
+    val stagedPageCount: Int get() = staged.size
 
-    /** Plans a single target: makes room, checks budget, launches. */
+    /**
+     * Plans a single target: makes room, checks budget, launches.
+     *
+     * The eviction half is delegated because the same rule serves here and in [reconcile]:
+     * evict farthest from the reader first, never the page in hand or the one about to be
+     * decoded, and stop when a round frees nothing. Duplicating that loop is how the two
+     * would drift apart.
+     */
     private fun planOne(target: Int, page: Int) {
         // Make room farthest-first, never dropping the settled page or the page about to
         // be decoded; if the budget still says no, skip the page until the next settle.
-        while (tileBytes() + residentBytes + pageBytesEstimate(target) > budgetBytes()) {
-            val order = evictCandidates(page, protect = target)
-            if (order.isEmpty() || evictOne(order) <= 0) break
-        }
-        if (tileBytes() + residentBytes + pageBytesEstimate(target) > budgetBytes()) return
+        if (!eviction.makeRoom(page, protect = target, direction, pageBytesEstimate(target))) return
         launchDecode(target)
     }
 
@@ -293,33 +294,8 @@ class PrefetchEngine(
     }
 
     /** Restores the budget invariant: evict farthest-first until tile + resident fits. */
-    private fun reconcile(protect: Int) {
-        var over = tileBytes() + residentBytes - budgetBytes()
-        var canEvict = true
-        while (over > 0 && canEvict) {
-            val order = evictCandidates(settled, protect)
-            val freed = if (order.isEmpty()) -1 else evictOne(order)
-            if (freed <= 0) canEvict = false else over -= freed
-        }
-    }
-
-    /** Eviction candidates, farthest from [page] first, never the protected pages. */
-    private fun evictCandidates(page: Int, protect: Int): List<Int> =
-        PrefetchPlanner.evictOrder(
-            synchronized(resident) {
-                resident.keys.filter { it != settled && it != protect }
-            }.toSet(),
-            page,
-            direction,
-        )
-
-    /** Drops the first candidate and reports it through [onEvicted]; returns bytes freed. */
-    private fun evictOne(order: List<Int>): Long {
-        val victim = order.firstOrNull() ?: return 0
-        val bytes = synchronized(resident) { resident.remove(victim) } ?: return 0
-        onEvicted(victim, bytes)
-        return bytes
-    }
+    private fun reconcile(protect: Int) =
+        eviction.reconcile(settled, protect, direction)
 
     /** Drops every prefetched page and cancels every in-flight decode. For book close/trim. */
     fun dropAll() {
@@ -333,7 +309,7 @@ class PrefetchEngine(
         // after a book switch would decode the OLD book's page and bill the NEW book for
         // it -- the same mistake the generation guard exists to prevent, in a field the
         // guard does not cover.
-        synchronized(stagedBytes) { stagedBytes.clear() }
+        staged.clear()
     }
 
 }

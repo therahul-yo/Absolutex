@@ -215,54 +215,20 @@ class ReaderViewModel internal constructor(
         // One archive walk per prefetch window instead of one per page. Only a LibArchive
         // source has a batch reader; a folder, a PDF and a remote source return null here
         // and every page then decodes exactly as it did before.
-        prefetchWindow = { pages ->
-            // Recorded before the real call so a test can prove the wiring exists even when
-            // the source it ran against had no batch reader to offer.
-            batchRequests += pages
-            batchPageBytes(pages)
-        },
+        prefetchWindow = { pages -> batchPageBytes(source, pages, batchRequests, batchSources) },
     )
 
-    /** Windows the prefetch engine has asked this host to read in one walk. */
+    /**
+     * Windows the prefetch engine has asked this host to read in one walk.
+     *
+     * Recorded inside [batchPageBytes], not beside its call: a recording at the call site
+     * still fires when the call is replaced with a literal null, so it would not catch the
+     * unwired case. That is what these two are for.
+     */
     internal val batchRequests = mutableListOf<List<Int>>()
 
-    /**
-     * Sources [batchPageBytes] has actually consulted.
-     *
-     * Recorded inside the function, not beside the call: a recording at the call site still
-     * fires when the call is replaced with a literal null, so it would not catch the unwired
-     * case. This one cannot.
-     */
+    /** Sources the batch path has actually consulted. See [batchRequests]. */
     internal val batchSources = mutableListOf<Any?>()
-
-    /**
-     * Fetches a contiguous run of pages' compressed bytes in one archive walk.
-     *
-     * Null whenever the source cannot batch — a PDF (rendered, nothing to extract), a
-     * folder, a remote source, or no source at all — and null again on any failure, so the
-     * prefetch is a pure optimisation that can never fail a page. A page that comes back
-     * unreadable is left out of the map rather than mapped to null, which is why
-     * [PrefetchEngine] treats a short map as "no prefetch" and lets each page read itself.
-     */
-    private suspend fun batchPageBytes(pages: List<Int>): Map<Int, ByteArray?>? {
-        val src = source
-        // Recorded here, INSIDE the function, rather than at the call site: a recording made
-        // beside the call would still fire if the call were replaced with a literal null,
-        // which is the exact mutation this is meant to catch. Recording the source that was
-        // actually consulted cannot survive that.
-        batchSources += src
-        val archive = src as? LibArchiveSource ?: return null
-        return withContext(DecodeDispatchers.extract) {
-            runCatching {
-                archive.openPages(pages).mapIndexedNotNull { i, stream ->
-                    // readBytes on a ByteArrayInputStream, but the contract is a generic
-                    // InputStream and a source could return a slower one.
-                    val bytes = stream?.use { it.readBytes() }
-                    if (bytes != null) pages[i] to bytes else null
-                }.toMap()
-            }.getOrNull()
-        }
-    }
 
     init {
         // The engine has already dropped its own set when this fires; shed the host's
@@ -862,6 +828,47 @@ private fun evictFarPages(pages: ConcurrentHashMap<Int, PageImage>, center: Int)
         val farthest = pages.keys.maxByOrNull { kotlin.math.abs(it - center) } ?: break
         pages.remove(farthest)?.let { runCatching { it.close() } }
     }
+
+}
+
+
+/**
+ * Fetches a contiguous run of pages' compressed bytes in one archive walk.
+ *
+ * Null whenever the source cannot batch — a PDF (rendered, nothing to extract), a
+ * folder, a remote source, or no source at all — and null again on any failure, so the
+ * prefetch is a pure optimisation that can never fail a page. A page that comes back
+ * unreadable is left out of the map rather than mapped to null, which is why
+ * [com.absolutex.core.decode.PrefetchEngine] treats a short map as "no prefetch" and
+ * lets each page read itself.
+ *
+ * Top-level rather than a member because it needs nothing but its arguments, and
+ * [ReaderViewModel] was already a function over detekt's limit.
+ *
+ * @param requested appended with each window asked for, and @param consulted with the
+ *   source actually looked at. Both recorded HERE rather than at the call site on
+ *   purpose: a recording beside the call still fires when the call is replaced with a
+ *   literal null, so it cannot catch an unwired batch path.
+ */
+private suspend fun batchPageBytes(
+    source: Closeable?,
+    pages: List<Int>,
+    requested: MutableList<List<Int>>,
+    consulted: MutableList<Any?>,
+): Map<Int, ByteArray?>? {
+requested += pages
+consulted += source
+val archive = source as? LibArchiveSource ?: return null
+return withContext(DecodeDispatchers.extract) {
+    runCatching {
+        archive.openPages(pages).mapIndexedNotNull { i, stream ->
+            // readBytes on a ByteArrayInputStream, but the contract is a generic
+            // InputStream and a source could return a slower one.
+            val bytes = stream?.use { it.readBytes() }
+            if (bytes != null) pages[i] to bytes else null
+        }.toMap()
+    }.getOrNull()
+}
 }
 
 /**
