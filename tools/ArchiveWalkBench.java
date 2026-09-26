@@ -58,6 +58,12 @@ public final class LibArchive {
 
     private static native byte[] nativeExtract(int fd, int ordinal, byte[] password);
 
+    private static native byte[][] nativeExtractWindow(int fd, int fromOrdinal, int count,
+                                                       byte[] password);
+
+    /** ReaderViewModel's PREFETCH_DEPTH, restated here so the bench measures the real window. */
+    private static final int PREFETCH_DEPTH = 10;
+
     public static void main(String[] args) throws Exception {
         if (args.length < 2) {
             System.err.println("usage: LibArchive <book.cbz> <book.pdf> [rounds]");
@@ -141,6 +147,30 @@ public final class LibArchive {
             nativeExtract(fd, lastPage, null);
             long tExtractLast = System.nanoTime() - t5;
 
+            // ---- The prefetch window, both ways ----
+            // This is the shape the reader actually asks for: a contiguous run of
+            // PREFETCH_DEPTH pages starting at a settled page deep in the book. The single
+            // path is N calls, each re-walking from zero, so its cost grows with both the
+            // window's depth AND how far into the book it starts. The window path is one
+            // walk for the whole run. Both are measured from the same settled page, and the
+            // window is taken first so the second one cannot benefit from cache the first
+            // paid for -- a bias that would flatter the thing being compared against.
+            int windowStart = pageOrdinals[Math.max(0, pageOrdinals.length / 2)];
+            int windowCount = Math.min(PREFETCH_DEPTH, pageOrdinals.length - pageOrdinals.length / 2);
+
+            long t6 = System.nanoTime();
+            byte[][] viaWindow = nativeExtractWindow(fd, windowStart, windowCount, null);
+            long tWindowed = System.nanoTime() - t6;
+            if (viaWindow == null) {
+                throw new IllegalStateException("window extract returned null on a readable archive");
+            }
+
+            long t7 = System.nanoTime();
+            for (int i = 0; i < windowCount; i++) {
+                nativeExtract(fd, windowStart + i, null);
+            }
+            long tSingles = System.nanoTime() - t7;
+
             long total = tList + tOpen + tExtractCold + tParse;
             System.out.printf("  %-22s %8.2f ms   %5.1f%%%n", "list (entryList)", ms(tList), pct(tList, total));
             System.out.printf("  %-22s %8.2f ms   %5.1f%%%n", "open (sidecar)", ms(tOpen), pct(tOpen, total));
@@ -154,6 +184,12 @@ public final class LibArchive {
             long walk = tExtractLast - tExtractWarm;
             System.out.printf("  walk cost (last-warm)  %8.2f ms   = %.0f%% of a first page%n",
                     ms(walk), pct(walk, total));
+            System.out.println();
+            System.out.printf("  PREFETCH WINDOW of %d pages from page %d:%n", windowCount, windowStart);
+            System.out.printf("    nativeExtractWindow  %8.2f ms%n", ms(tWindowed));
+            System.out.printf("    %d x nativeExtract  %8.2f ms%n", windowCount, ms(tSingles));
+            System.out.printf("    saving              %8.2f ms   = %.1fx faster%n",
+                    ms(tSingles - tWindowed), tSingles / (double) Math.max(1L, tWindowed));
 
             if (detail) {
                 System.out.println();
