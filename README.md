@@ -250,7 +250,7 @@ only one who merges or installs builds on the device.
 | Agent 3 | Factory Droid | Library, settings and design |
 | Agent 4 | Claude Code (cloud) | Native hardening, archive recovery and encryption |
 | Agent 5 | Claude Code (cloud session) | Cloud sources (OneDrive, Dropbox, Google Drive), offline copies |
-| Agent 6 | Claude Code | Internationalisation, accessibility, reading insights |
+| Agent 6 | Claude Code (cloud) | Internationalisation, accessibility, reading insights |
 | Agent 7 | Cline (desktop) | Review and small fixes |
 
 **Attribution.** Commits carry the repository identity. An agent whose tool adds a
