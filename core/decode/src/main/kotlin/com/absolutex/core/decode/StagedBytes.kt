@@ -30,13 +30,17 @@ internal class StagedBytes {
      * Replaces the map's contents with [pages] → [bytes], or writes nothing at all when the
      * result is short, null, or an exception. A failure here is never a failure to the pages:
      * they simply decode individually, which is the pre-existing behaviour.
+     *
+     * REPLACES rather than merges, which is what bounds this map. A merge would keep entries
+     * from an earlier window that no decode ever claimed — pages that were evicted, or
+     * decodes that were cancelled — and the map would then grow with every window for the
+     * life of the book, holding compressed bytes no budget accounts for. Only the current
+     * window's pages are ever live here.
      */
     fun put(pages: List<Int>, bytes: Map<Int, ByteArray?>?) {
         if (bytes == null || bytes.size != pages.size) return
         synchronized(staged) {
-            // Drop the window being replaced first: a page that was evicted between planning
-            // and staging must not survive into the new window.
-            pages.forEach { staged.remove(it) }
+            staged.clear()
             bytes.forEach { (page, payload) -> if (payload != null) staged[page] = payload }
         }
     }

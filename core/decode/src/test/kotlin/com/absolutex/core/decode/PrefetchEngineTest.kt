@@ -31,6 +31,14 @@ class PrefetchEngineTest {
     private class FakeDecode {
         val started = mutableListOf<Int>()
         val cancelled = mutableListOf<Int>()
+        /**
+         * Pages whose decode actually RETURNED an outcome.
+         *
+         * Distinct from [started]: a decode that has started but is parked on the window's
+         * stage has not run, and a test that only watched `started` would call that
+         * "finished" and pass while the ordering it meant to pin was broken.
+         */
+        val finished = mutableListOf<Int>()
         val gates = mutableMapOf<Int, CompletableDeferred<Unit>>()
         var autoComplete = true
         /** Pages whose decode reports OutOfMemory instead of completing. */
@@ -50,8 +58,13 @@ class PrefetchEngineTest {
                 autoComplete -> DecodeOutcome.Decoded(FAKE_IMAGE)
                 else -> null
             }
-            if (early != null) return early
-            return parkAndDecode(page)
+            if (early != null) {
+                finished += page
+                return early
+            }
+            val outcome = parkAndDecode(page)
+            finished += page
+            return outcome
         }
 
         /**
@@ -87,6 +100,8 @@ class PrefetchEngineTest {
         val budget: java.util.concurrent.atomic.AtomicLong,
         val tileBytes: java.util.concurrent.atomic.AtomicLong,
         val evicted: MutableList<Int>,
+        /** Every (page, staged bytes or null) the engine's decodes actually claimed. */
+        val stagedClaims: MutableList<Pair<Int, ByteArray?>>,
     )
 
     private fun TestScope.harness(
@@ -100,6 +115,7 @@ class PrefetchEngineTest {
         val budget = java.util.concurrent.atomic.AtomicLong(budgetBytes)
         val tile = java.util.concurrent.atomic.AtomicLong(0)
         val evicted = mutableListOf<Int>()
+        val claims = mutableListOf<Pair<Int, ByteArray?>>()
         // Held so the decode lambda can claim from the engine it is a member of: the two are
         // mutually referential, and a lateinit would hide the ordering this actually has.
         var engineRef: PrefetchEngine? = null
@@ -116,13 +132,19 @@ class PrefetchEngineTest {
                 // stages bytes, and whoever decodes has to take them. Without this the
                 // staging path would look exercised in a test and never actually feed a
                 // decode, which is the "built but never called" defect one level down.
-                onStagedClaim(page, engineRef?.takeStagedBytes(page))
+                //
+                // A null claim is the single-read path: the host falls back to
+                // source.openPage(index) when this yields nothing. Recording it is what lets
+                // a test assert the fallback was NOT taken for a batch-served page.
+                val claimed = engineRef?.takeStagedBytes(page)
+                claims += page to claimed
+                onStagedClaim(page, claimed)
                 decode.decode(page)
             },
         )
         engineRef = engine
         engine.onEvicted = { page, _ -> evicted += page }
-        return Harness(this, decode, engine, budget, tile, evicted)
+        return Harness(this, decode, engine, budget, tile, evicted, claims)
     }
 
     @Test
@@ -250,10 +272,105 @@ class PrefetchEngineTest {
     }
 
     @Test
+    fun `a walk still in flight at a book switch stages nothing`() = runTest {
+        // The race, not the clear. The previous version of this test settled, THEN called
+        // advanceUntilIdle(), then dropped -- so the walk had already finished and staged its
+        // bytes before the drop ever happened. It proved the clear works and said nothing
+        // about a write that arrives after it, which is the actual defect.
+        //
+        // Here the batch supplier parks on a gate that is only released AFTER dropAll(), so
+        // the walk is provably in flight across the switch.
+        val gate = CompletableDeferred<Unit>()
+        val walked = CompletableDeferred<Unit>()
+        val h = harness(
+            batch = { pages ->
+                walked.complete(Unit)
+                // NON-cancellable, and that is the whole point. openPages is a blocking JNI
+                // call: cancel() is not observed until it returns, so the walk really does
+                // finish and reach its `put` after the book switch. A cancellable gate here
+                // would let dropAll's cancel() defeat the bug on its own and the test would
+                // pass against broken code -- which is exactly what it did on first run.
+                withContext(kotlinx.coroutines.NonCancellable) {
+                    gate.await()
+                }
+                pages.associateWith { byteArrayOf(3) }
+            },
+        )
+        h.decode.autoComplete = false            // keep the decodes from claiming early
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 3)
+        runCurrent()                             // let the walk reach the gate
+        walked.await()                           // it is now provably in flight
+
+        h.engine.dropAll()                       // book switch, walk still running
+        gate.complete(Unit)                      // now let it return
+        advanceUntilIdle()
+
+        assertEquals(
+            "a walk from the old book must not stage into the new book",
+            0,
+            h.engine.stagedPageCount,
+        )
+        assertNull("and the new book's decode must find no old bytes", h.engine.takeStagedBytes(11))
+    }
+
+    @Test
+    fun `a batch-served page never falls back to a single read`() = runTest {
+        // The saving the whole change exists for. If a decode can reach takeStagedBytes
+        // BEFORE the window's walk returns, it finds nothing, reads its page individually,
+        // and the window costs N walks PLUS the batch walk -- strictly worse than before.
+        // So: the batch must be asked once, and no page may take the single-read path.
+        //
+        // The walk is gated so it is still in flight when the decodes start, which is
+        // precisely the ordering that used to lose the race. Decodes must WAIT for it.
+        val gate = CompletableDeferred<Unit>()
+        val h = harness(
+            batch = { pages -> gate.await(); pages.associateWith { byteArrayOf(7) } },
+            onStagedClaim = { _, _ -> },
+        )
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 3)
+        runCurrent()                        // decodes are launched; the walk is still gated
+        assertTrue(
+            "decodes must not have completed before the walk returned",
+            h.decode.finished.isEmpty(),
+        )
+        gate.complete(Unit)                 // release the walk
+        advanceUntilIdle()
+
+        val singleReads = h.stagedClaims.filter { it.second == null }.map { it.first }
+        assertEquals(
+            "batch-served pages must not take the single-read path, but $singleReads did",
+            emptyList<Int>(),
+            singleReads,
+        )
+        assertEquals(
+            "and every staged claim must have found its bytes",
+            h.stagedClaims.size,
+            h.stagedClaims.count { it.second != null },
+        )
+    }
+
+    @Test
+    fun `a decode waits for the walk rather than reading past it`() = runTest {
+        // The ordering, stated directly: the walk is gated, so any decode that finished
+        // before the gate opened provably did not have the bytes and must have read alone.
+        val gate = CompletableDeferred<Unit>()
+        val h = harness(
+            batch = { pages -> gate.await(); pages.associateWith { byteArrayOf(7) } },
+            onStagedClaim = { _, _ -> },
+        )
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 3)
+        runCurrent()
+        assertEquals("no decode may complete while the walk is gated", 0, h.decode.finished.size)
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertEquals("all three must complete once the walk returns", 3, h.decode.finished.size)
+        assertEquals("staged bytes must be left unclaimed, not left behind", 0, h.engine.stagedPageCount)
+    }
+
+    @Test
     fun `dropAll clears staged bytes so a new book cannot claim them`() = runTest {
-        // A decode that claims a staged page AFTER a book switch would decode the OLD book's
-        // page and bill the NEW book for it -- the same mistake the generation guard prevents
-        // for landings, in a field the guard does not cover.
+        // The clear itself, kept as its own test: a walk that COMPLETED before the drop must
+        // not survive it either. Separate from the race above because they fail differently.
         val h = harness(
             batch = { pages -> pages.associateWith { byteArrayOf(3) } },
             onStagedClaim = { _, _ -> },
