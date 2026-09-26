@@ -189,9 +189,14 @@ private fun withChapterLinks(html: String, links: ChapterLinks?): String {
  * WebView is laid out, and the window's own width grows to fit the very columns that overflow
  * it — measuring it fed the columns back into their own width.
  */
-private fun readingCss(box: PageBox) = if (box.scroll) scrollCss(box) else pagedCss(box)
+internal fun readingCss(box: PageBox) = if (box.scroll) scrollCss(box) else pagedCss(box)
 
-/** Scrolling: one long, calm column, and the chapter links as full-width buttons. */
+/**
+ * Scrolling: one long, calm column, and the chapter links as small centred pills. The links sit in
+ * a paragraph inside the book's own markup, so its paragraph rules (a first-line indent above all)
+ * are undone for them. No markup may appear in this CSS, not even in a comment: a chapter is XHTML,
+ * and an angle bracket inside its style element breaks the whole document.
+ */
 private fun scrollCss(box: PageBox) = """
     html { overflow-x: hidden !important; overflow-y: auto !important; background: #000 !important; }
     body {
@@ -206,11 +211,16 @@ private fun scrollCss(box: PageBox) = """
     a { color: #BDBDBD !important; }
     ${MARK_CSS}
     img, svg, image { height: auto; }
-    .abx-nav { margin: 40px 0 !important; text-align: center !important; }
+    .abx-nav {
+        margin: 8px 0 28px 0 !important; padding: 0 !important; text-indent: 0 !important;
+        text-align: center !important; line-height: 1 !important;
+    }
+    .abx-nav:last-child { margin: 36px 0 8px 0 !important; }
     .abx-nav a {
-        display: inline-block !important; padding: 14px 28px !important; border-radius: 28px !important;
-        background-color: #262626 !important; color: #EDEDED !important; text-decoration: none !important;
-        font-family: sans-serif !important; font-size: 15px !important;
+        display: inline-block !important; padding: 9px 18px !important; border-radius: 999px !important;
+        border: 1px solid #333333 !important; background-color: transparent !important;
+        color: #A6A6A6 !important; text-decoration: none !important; text-indent: 0 !important;
+        font-family: sans-serif !important; font-size: 13px !important; letter-spacing: 0.02em !important;
     }
 """.trimIndent()
 
