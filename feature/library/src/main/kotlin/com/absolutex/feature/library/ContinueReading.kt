@@ -1,6 +1,10 @@
 package com.absolutex.feature.library
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.Role
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -8,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -55,9 +58,46 @@ internal fun ContinueReadingStrip(
             contentPadding = PaddingValues(horizontal = Space.Edge),
         ) {
             items(books, key = { "continue:${it.path}" }) { book ->
-                val tapOnly = context.copy(selectionActive = false, onToggleSelection = {})
-                CoverCard(book, false, tapOnly, Modifier.width(ContinueWidth))
+                ContinueCard(book, onOpen = { context.onOpen(book) }, Modifier.width(ContinueWidth))
             }
+        }
+    }
+}
+
+/**
+ * One book in the strip: its cover, how far in you are, and its name. Deliberately not the grid's
+ * card: at strip width that card's footer (format pill beside the date) could not fit and wrapped,
+ * and its surface squared the cover off against the card's edge. Here the cover is the card.
+ */
+@Composable
+private fun ContinueCard(book: LibraryBookUi, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    Column(
+        // Not clipped: the cover rounds its own corners, and a clip here cut into the last line.
+        modifier.clickable(role = Role.Button, onClick = onOpen),
+        verticalArrangement = Arrangement.spacedBy(Space.Tight),
+    ) {
+        BookCover(book, Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
+        book.progressFraction?.let { fraction ->
+            LinearProgressIndicator(
+                progress = { fraction },
+                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                drawStopIndicator = {},
+                modifier = Modifier.fillMaxWidth().padding(top = Space.Tight),
+            )
+        }
+        Text(
+            book.displayName,
+            style = MaterialTheme.typography.titleSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        book.progressLabel()?.let { progress ->
+            Text(
+                progress,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
         }
     }
 }
