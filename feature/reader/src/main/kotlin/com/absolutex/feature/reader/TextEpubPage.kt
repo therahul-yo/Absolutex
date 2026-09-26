@@ -56,6 +56,9 @@ internal class BookWebView(context: android.content.Context) : WebView(context) 
     var onMeasured: (Int) -> Unit = {}
     var onTap: () -> Unit = {}
     var onChapterLink: (Boolean) -> Unit = {}
+
+    /** A link in the book to one of its chapters (a contents page, a footnote): its spine index and anchor. */
+    var onLinkTo: (chapter: Int, anchor: String?) -> Unit = { _, _ -> }
     var scrollMode = false
 }
 
@@ -79,11 +82,23 @@ private class BookClient(
         return WebResourceResponse(type, "UTF-8", ByteArrayInputStream(body))
     }
 
-    /** The chapter links a scrolling chapter ends with; every other navigation is refused. */
+    /**
+     * The reader decides every navigation, and the WebView follows none itself: a scrolling
+     * chapter's previous/next links turn chapters, and a link to one of the book's own chapters
+     * (a contents page, a footnote) opens it at its anchor. Anything else, the network included,
+     * goes nowhere.
+     */
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-        when (request.url.toString()) {
-            ORIGIN + NEXT_LINK -> (view as BookWebView).onChapterLink(true)
-            ORIGIN + PREV_LINK -> (view as BookWebView).onChapterLink(false)
+        val web = view as BookWebView
+        val url = request.url.toString()
+        when {
+            url == ORIGIN + NEXT_LINK -> web.onChapterLink(true)
+            url == ORIGIN + PREV_LINK -> web.onChapterLink(false)
+            url.startsWith(ORIGIN) -> {
+                val entry = Uri.decode(url.removePrefix(ORIGIN).substringBefore('#').substringBefore('?'))
+                val chapter = book.spine.indexOfFirst { it.equals(entry, ignoreCase = true) }
+                if (chapter >= 0) web.onLinkTo(chapter, request.url.fragment?.takeIf { it.isNotEmpty() })
+            }
         }
         return true
     }
@@ -263,6 +278,24 @@ internal fun markJs(pattern: String, occurrence: Int, pageWidth: Int, scroll: Bo
       return $scroll ? Math.max(0, box.top + scrollY - innerHeight / 3) : Math.floor((box.left + scrollX) / $pageWidth);
     })()
 """.trimIndent()
+
+/**
+ * Where the element [anchor] names sits in the chapter: its page when paging, its scroll offset
+ * (just below the top) when scrolling. The chapter's start when there is no such element, so a
+ * link to a chapter with a stale anchor still opens the chapter.
+ */
+internal fun anchorJs(anchor: String?, pageWidth: Int, scroll: Boolean): String = """
+    (function() {
+      var id = ${JSONObject.quote(anchor.orEmpty())};
+      var el = id && (document.getElementById(id) || document.getElementsByName(id)[0]);
+      if (!el) return 0;
+      var box = el.getBoundingClientRect();
+      return $scroll ? Math.max(0, box.top + scrollY - $ANCHOR_MARGIN_PX) : Math.floor((box.left + scrollX) / $pageWidth);
+    })()
+""".trimIndent()
+
+/** A linked heading lands just below the top edge, not flush against it. */
+private const val ANCHOR_MARGIN_PX = 24
 
 /** A private origin: https so the WebView treats it as secure, a reserved name so it is never real. */
 internal const val ORIGIN = "https://book.absolutex.invalid/"

@@ -138,6 +138,7 @@ private fun TextBook(
     web.scrollMode = scroll
     web.onTap = { chrome = !chrome }
     web.onChapterLink = leaveChapter
+    web.onLinkTo = { target, anchor -> pager.show(AnchorMark(target, anchor)).also { chapter = target } }
     LoadAndRemember(book, pager, PageBox(fontPx, 0, 0, scroll, labels), chapter, vm)
     Box(Modifier.fillMaxSize()) {
         AndroidView(factory = { web }, modifier = Modifier.fillMaxSize())
@@ -371,8 +372,16 @@ private fun TextBottomBar(
  *
  * [landOnLastPage] makes a backwards chapter change arrive at the end of the previous chapter.
  */
+/** Somewhere inside a chapter for the pager to land once that chapter has laid out. */
+internal sealed interface Landing {
+    val chapter: Int
+}
+
 /** A search hit to show: its chapter, the pattern to find it with, and which match it is. */
-internal data class SearchMark(val chapter: Int, val pattern: String, val occurrence: Int)
+internal data class SearchMark(override val chapter: Int, val pattern: String, val occurrence: Int) : Landing
+
+/** A link's target: the chapter, and the element id it points at (its start when null). */
+internal data class AnchorMark(override val chapter: Int, val anchor: String?) : Landing
 
 private class ChapterPager(private val scope: CoroutineScope, private val web: WebView) {
     var page by mutableIntStateOf(0)
@@ -384,8 +393,8 @@ private class ChapterPager(private val scope: CoroutineScope, private val web: W
     private var loadedChapter = -1
     private var measuredChapter = -1
 
-    /** A search hit to highlight once its chapter has laid out. */
-    private var pendingMark: SearchMark? = null
+    /** A search hit or link target to land on once its chapter has laid out. */
+    private var pendingMark: Landing? = null
     private var motion: Job? = null
 
     /**
@@ -458,16 +467,21 @@ private class ChapterPager(private val scope: CoroutineScope, private val web: W
     }
 
     /** Shows [mark]: now, when its chapter is the one laid out, else once that chapter has laid out. */
-    fun show(mark: SearchMark) {
+    fun show(mark: Landing) {
         val laidOut = mark.chapter == loadedChapter && measuredChapter == loadedChapter
         if (laidOut) highlight(mark) {} else pendingMark = mark
     }
 
     /** Highlights the hit and moves to it: its page when paging, a third down the screen when scrolling. */
-    private fun highlight(mark: SearchMark, then: () -> Unit) {
+    private fun highlight(mark: Landing, then: () -> Unit) {
         val box = web.tag as? PageBox
         val scrolling = box?.scroll == true
-        web.evaluateJavascript(markJs(mark.pattern, mark.occurrence, box?.width ?: 1, scrolling)) { result ->
+        val width = box?.width ?: 1
+        val script = when (mark) {
+            is SearchMark -> markJs(mark.pattern, mark.occurrence, width, scrolling)
+            is AnchorMark -> anchorJs(mark.anchor, width, scrolling)
+        }
+        web.evaluateJavascript(script) { result ->
             val at = result?.toFloatOrNull() ?: -1f
             when {
                 at < 0f -> Unit
