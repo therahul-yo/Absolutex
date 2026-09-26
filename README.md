@@ -238,22 +238,39 @@ UnRAR-derived.
 
 ### Who works here, and how commits are attributed
 
-Work lands through parallel agent lanes coordinated by pull requests. Commits carry the
-repository identity, and every agent-authored commit ends with a `Co-authored-by:` trailer
-naming the agent that wrote it, so contributors are visible on the commit and not only in a
-PR body:
+Absolutex is built by AI coding agents working in parallel lanes, one branch and pull request
+per change. The lead reviews every pull request, runs it on the reference phone, and is the
+only one who merges or installs builds on the device.
 
-| Agent | Lane | Co-authored-by trailer |
+| Agent | Tool | Lanes |
 |---|---|---|
-| Claude Code (lead) | reviews, merges, on-device checks | `Claude Code <noreply@anthropic.com>` (varies by session) |
-| Factory Droid | library, formats, settings, design, release | `factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>` |
-| Claude Code (Agent05) | cloud sources, offline copies | `Claude Opus 5 <noreply@anthropic.com>` (varies by session) |
-| Claude Code (Agent06) | internationalisation, accessibility, reading insights | `Claude Opus 5 <noreply@anthropic.com>` (varies by session) |
-| Cline (Agent07) | review, small fixes | no distinct trailer; commits carry the repository identity |
+| Lead | Claude Code | Review and merge, on-device testing, the Material 3 redesign, the text EPUB reader |
+| Agent 1 | Hermes | Formats (container detection, folders, comic EPUB), CBZ export, decode prefetch |
+| Agent 2 | OpenCode | Network shares and remote browsing, PDF open and scroll performance, cover transition |
+| Agent 3 | Factory Droid | Library, settings and design |
+| Agent 4 | Claude Code (cloud) | Native hardening, archive recovery and encryption |
+| Agent 5 | Claude Code (cloud session) | Cloud sources (OneDrive, Dropbox, Google Drive), offline copies |
+| Agent 6 | Claude Code | Internationalisation, accessibility, reading insights |
+| Agent 7 | Cline (desktop) | Review and small fixes |
 
-A PR description additionally ends with a `🤖 Generated with ...` line from the tool that
-wrote it. If you review this repository, treat those trailers as the attribution record and
-match the convention in your own commits.
+**Attribution.** Commits carry the repository identity. An agent whose tool adds a
+`Co-authored-by:` trailer keeps it, so the tool that wrote a change is visible on the commit
+itself:
+
+| Tool | Trailer |
+|---|---|
+| Claude Code | `Claude <model> <noreply@anthropic.com>`, naming the model, for example `Claude Opus 5.5` |
+| Factory Droid | `factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>` |
+| Hermes, OpenCode, Cline | none; the pull request names the agent |
+
+Pull request descriptions end with the generating tool's `🤖 Generated with ...` line. When
+you contribute, follow the same convention.
+
+**Rules every agent follows.** Branch from `main` and open a pull request; never push to
+`main` or force-push someone else's branch. Only the lead installs on the phone. Schema
+changes to the Room database are agreed with the lead first. A pull request is green only
+when `detekt`, the unit tests of the touched modules, `tools/check-strings.py` and
+`tools/check-apk-size.py` pass, with their output shown.
 
 ### Never `dup()` a file descriptor to share it across threads
 
@@ -346,13 +363,13 @@ permission monitoring* is on **and the phone has been rebooted since**.
 
 | Phase | Scope | State |
 |---|---|---|
-| 1 | Audit, licensing gates, platform decisions | done |
-| 2 | Scaffold + CBZ/CBR vertical slice | done; page turn measured (see above) |
-| 3 | Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | tiles, colour (#22), upscaling (#24), crop (#25) and auto background (#26) done; prefetch engine in review (#77). `PageCanvas` still takes no `cropEnabled` — see its `TODO(lead)` |
-| 4 | Library: parallel scanner, metadata, home, browse, search | done, and the launch destination; live updates merged (#63) |
-| 5 | Reader depth: layouts, flows, transitions, bookmarks, TOC, input devices | done, transitions and per-book overrides included |
-| 6 | Formats: 7z, TAR, PDFium, image folders, full codec set | archives, PDF, image folders (#76) and recovery/encryption/indexed extraction (#39) all open in the reader; `:source:epub` (#90) is built but **not yet dispatched** by `openBook` |
-| 7 | Settings surface | done and reachable from the library |
-| 8 | Remote: SMB streaming, FTP, Komga/Kavita sync | transports merged and reachable — the settings row that opens the servers list is #98. Sync is merged but **inert**: `SyncController.onAppStart`/`onAppBackgrounded` fire, but `onBookOpened`/`onPageSettled`/`onBookClosed` have no callers, so the controller never learns a book is open and nothing is pushed or pulled. Browse UI in review (#50). See the `TODO(lead)`s in `SyncController.kt` |
-| 9 | NPU upscaling R&D (§4 M6); release polish: licence, signing, launcher icon, baseline profiles | R&D done and the verdict is **no** — see [`docs/npu-sr-report.md`](docs/npu-sr-report.md); Apache-2.0 (#70), signing config, licences screen and launcher icon (#56) done |
+| Audit, licensing gates, platform decisions | done |
+| Scaffold + CBZ/CBR vertical slice | done; page turn measured (see above) |
+| Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | tiles, colour (#22), upscaling (#24), crop (#25) and auto background (#26) done; prefetch engine in review (#77). `PageCanvas` still takes no `cropEnabled` — see its `TODO(lead)` |
+| Library: parallel scanner, metadata, home, browse, search | done, and the launch destination; live updates merged (#63) |
+| Reader depth: layouts, flows, transitions, bookmarks, TOC, input devices | done, transitions and per-book overrides included |
+| Formats: 7z, TAR, PDFium, image folders, full codec set | archives, PDF, image folders (#76) and recovery/encryption/indexed extraction (#39) all open in the reader; `:source:epub` (#90) is built but **not yet dispatched** by `openBook` |
+| Settings surface | done and reachable from the library |
+| Remote: SMB streaming, FTP, Komga/Kavita sync | transports merged and reachable — the settings row that opens the servers list is #98. Sync is merged but **inert**: `SyncController.onAppStart`/`onAppBackgrounded` fire, but `onBookOpened`/`onPageSettled`/`onBookClosed` have no callers, so the controller never learns a book is open and nothing is pushed or pulled. Browse UI in review (#50). See the `TODO(lead)`s in `SyncController.kt` |
+| NPU upscaling R&D (§4 M6); release polish: licence, signing, launcher icon, baseline profiles | R&D done and the verdict is **no** — see [`docs/npu-sr-report.md`](docs/npu-sr-report.md); Apache-2.0 (#70), signing config, licences screen and launcher icon (#56) done |
 | — | Cloud sources (OneDrive, Dropbox, Drive) and offline copies | **work in progress, out of current scope.** Engine merged and tested; not on the app's dependency graph, no UI, and the OAuth client registrations are the project owner's to create. See [Cloud and offline are work in progress](#cloud-and-offline-are-work-in-progress) |
