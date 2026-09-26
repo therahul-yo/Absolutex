@@ -48,6 +48,11 @@ class EpubSearchTest {
         assertTrue(hit.snippet, hit.snippet.contains("the long wait came the Void itself."))
     }
 
+    @Test fun `words either side of a tag stay apart in a snippet`() {
+        val hit = search("<body><h2>Chapter 4:</h2><h1>Mountain King</h1></body>", "mountain").single()
+        assertTrue(hit.snippet, hit.snippet.contains("Chapter 4: Mountain King"))
+    }
+
     @Test fun `long context is cut with ellipses`() {
         val text = "x".repeat(200) + " needle " + "y".repeat(200)
         val hit = search("<body><p>$text</p></body>", "needle").single()

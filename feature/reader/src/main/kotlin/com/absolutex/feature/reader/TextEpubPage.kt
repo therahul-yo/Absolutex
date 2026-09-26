@@ -2,6 +2,7 @@ package com.absolutex.feature.reader
 
 import android.graphics.Color as AndroidColor
 import android.net.Uri
+import android.os.SystemClock
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.webkit.WebResourceRequest
@@ -17,6 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import java.io.ByteArrayInputStream
 import org.json.JSONObject
+import org.json.JSONTokener
 
 @Composable
 internal fun rememberBookWebView(book: TextEpubBook): BookWebView {
@@ -38,13 +40,18 @@ internal fun rememberBookWebView(book: TextEpubBook): BookWebView {
             // Paging, gestures are Compose's (TurnGestures) and the WebView only draws. Scrolling,
             // it scrolls itself, and a single tap still toggles the chrome.
             val taps = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
-                override fun onSingleTapConfirmed(e: MotionEvent): Boolean = true.also { onTap() }
+                // A tap that followed a link is the link's, not a request for the chrome.
+                override fun onSingleTapConfirmed(e: MotionEvent): Boolean = true.also {
+                    if (SystemClock.uptimeMillis() - lastLinkAt > LINK_TAP_MS) onTap()
+                }
             })
             setOnTouchListener { _, event ->
                 if (scrollMode) taps.onTouchEvent(event)
                 !scrollMode
             }
-            webViewClient = BookClient(book) { view, count -> (view as BookWebView).onMeasured(count) }
+            val client = BookClient(book) { view, count -> (view as BookWebView).onMeasured(count) }
+            webViewClient = client
+            follow = { link -> client.route(this, link) }
         }
     }
     DisposableEffect(web) { onDispose { web.destroy() } }
@@ -60,6 +67,26 @@ internal class BookWebView(context: android.content.Context) : WebView(context) 
     /** A link in the book to one of its chapters (a contents page, a footnote): its spine index and anchor. */
     var onLinkTo: (chapter: Int, anchor: String?) -> Unit = { _, _ -> }
     var scrollMode = false
+
+    /** When a link in the page was last followed, so the tap that followed it opens no chrome. */
+    var lastLinkAt = 0L
+
+    /** Follows a link of the book's own, as a tap on it would. */
+    var follow: (Uri) -> Unit = {}
+
+    /**
+     * The link under a point of the view, in physical pixels, or null. Paging, the WebView takes
+     * no touches (Compose turns the pages), so a tap asks the page what it landed on first.
+     */
+    fun linkAt(x: Float, y: Float, then: (Uri?) -> Unit) {
+        val density = resources.displayMetrics.density
+        val script = "(function(){var e=document.elementFromPoint(${x / density},${y / density});" +
+            "e=e&&e.closest('a[href]');return e?e.href:'';})()"
+        evaluateJavascript(script) { result ->
+            val href = runCatching { JSONTokener(result).nextValue() as? String }.getOrNull()
+            then(href?.takeIf { it.isNotEmpty() }?.let(Uri::parse))
+        }
+    }
 }
 
 /**
@@ -89,18 +116,23 @@ private class BookClient(
      * goes nowhere.
      */
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-        val web = view as BookWebView
-        val url = request.url.toString()
+        route(view as BookWebView, request.url)
+        return true
+    }
+
+    /** Where a followed link goes; see [shouldOverrideUrlLoading]. Also how a paged tap follows one. */
+    fun route(web: BookWebView, link: Uri) {
+        web.lastLinkAt = SystemClock.uptimeMillis()
+        val url = link.toString()
         when {
             url == ORIGIN + NEXT_LINK -> web.onChapterLink(true)
             url == ORIGIN + PREV_LINK -> web.onChapterLink(false)
             url.startsWith(ORIGIN) -> {
                 val entry = Uri.decode(url.removePrefix(ORIGIN).substringBefore('#').substringBefore('?'))
                 val chapter = book.spine.indexOfFirst { it.equals(entry, ignoreCase = true) }
-                if (chapter >= 0) web.onLinkTo(chapter, request.url.fragment?.takeIf { it.isNotEmpty() })
+                if (chapter >= 0) web.onLinkTo(chapter, link.fragment?.takeIf { it.isNotEmpty() })
             }
         }
-        return true
     }
 
     override fun onPageFinished(view: WebView, url: String) {
@@ -324,6 +356,9 @@ private const val PREV_LINK = "abx-previous-chapter"
 /** A fixed, unscalable viewport: the layout width must not grow to fit the overflowing columns. */
 private const val VIEWPORT = "width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no"
 private const val LAYOUT_SETTLE_MS = 120L
+
+/** A single tap is confirmed well within this of the link it followed. */
+private const val LINK_TAP_MS = 600L
 private const val FULL_TEXT_ZOOM = 100
 internal const val DEFAULT_FONT_PX = 18
 internal const val MIN_FONT_PX = 12

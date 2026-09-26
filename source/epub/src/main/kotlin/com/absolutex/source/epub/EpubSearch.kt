@@ -68,9 +68,13 @@ object EpubSearch {
         return SearchMatch(occurrence, snippet, at, at + hit.length)
     }
 
-    /** Separators out, whitespace runs to one space: a snippet reads as prose, not markup. */
+    /**
+     * Separators to spaces, whitespace runs to one space: a snippet reads as prose, not markup.
+     * A space, because a tag between two words is usually a line or a heading ("Chapter 4:" then
+     * "Mountain King"), and running them together read as one word.
+     */
     private fun tidy(part: String): String =
-        part.replace(SEPARATOR.toString(), "").replace(WHITESPACE, " ")
+        part.replace(SEPARATOR, ' ').replace(WHITESPACE, " ")
 
     private fun decodeEntities(html: String): String = ENTITY.replace(html) { match ->
         val name = match.groupValues[1]

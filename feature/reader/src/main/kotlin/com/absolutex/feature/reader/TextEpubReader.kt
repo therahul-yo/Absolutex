@@ -145,7 +145,7 @@ private fun TextBook(
         StatusBarStrip()
         // Scrolling, the WebView takes its own touches (see BookWebView); paging, Compose does.
         if (!scroll) {
-            TurnGestures(pager, onTurn = turn, onLeaveChapter = leaveChapter, onMiddle = { chrome = !chrome })
+            TurnGestures(pager, web, onTurn = turn, onLeaveChapter = leaveChapter, onMiddle = { chrome = !chrome })
         }
         TextChrome(chrome, title, book.identity, onSettings) {
             FindAndContents(
@@ -235,12 +235,14 @@ private fun BoxScope.TextChrome(
 }
 
 /**
- * Taps in the side thirds turn, the middle toggles the chrome, and a horizontal drag moves the
- * page with the finger, settling on release through [ChapterPager.release].
+ * A tap on a link follows it; otherwise taps in the side thirds turn, the middle toggles the
+ * chrome, and a horizontal drag moves the page with the finger, settling on release through
+ * [ChapterPager.release].
  */
 @Composable
 private fun TurnGestures(
     pager: ChapterPager,
+    web: BookWebView,
     onTurn: (Boolean) -> Unit,
     onLeaveChapter: (Boolean) -> Unit,
     onMiddle: () -> Unit,
@@ -253,10 +255,16 @@ private fun TurnGestures(
             .fillMaxSize()
             .pointerInput(Unit) {
                 detectTapGestures { at ->
-                    when {
-                        at.x < size.width / THIRDS -> turn(false)
-                        at.x > size.width * 2 / THIRDS -> turn(true)
-                        else -> middle()
+                    // A link under the finger wins over the tap zones: a contents page is a page
+                    // of links, and turning the page instead of opening the chapter was wrong.
+                    val width = size.width
+                    web.linkAt(at.x, at.y) { link ->
+                        when {
+                            link != null -> web.follow(link)
+                            at.x < width / THIRDS -> turn(false)
+                            at.x > width * 2 / THIRDS -> turn(true)
+                            else -> middle()
+                        }
                     }
                 }
             }
