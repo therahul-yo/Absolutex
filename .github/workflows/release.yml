@@ -1,0 +1,178 @@
+# Absolutex release.
+#
+# Push a tag named v<versionName> (for example v0.1.0) and this builds the release APK, signs it
+# with the release key from repository secrets, proves the signature is that key and not the
+# debug one, and attaches the APK, its SHA-256 and the R8 mapping to a DRAFT GitHub release.
+# Nothing is published until the owner opens the draft and presses Publish.
+#
+# Run by hand (workflow_dispatch) it does everything except the release: the signed APK is
+# uploaded as a workflow artifact, for trying a build before tagging it.
+#
+# Secrets (Settings → Secrets and variables → Actions), see .github/workflows/README.md:
+#   RELEASE_KEYSTORE_BASE64   the .jks keystore, base64-encoded
+#   KEYSTORE_PASSWORD         its store password
+#   KEY_ALIAS                 the key's alias
+#   KEY_PASSWORD              the key's password
+# Without them the job stops with an error. It never falls back to an unsigned or debug APK.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # Keep in sync with ci.yml and gradle/libs.versions.toml.
+  NDK_VERSION: "28.2.13676358"
+  CMAKE_VERSION: "4.1.2"
+  COMPILE_SDK: "37"
+
+jobs:
+  release:
+    name: Signed release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      # Only to create the draft release on a tag push.
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # A tag is a promise about the version inside the APK. v0.2.0 over a build that still
+      # says 0.1.0 would ship an APK Android cannot install over the previous one.
+      - name: Tag matches versionName
+        id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version=$(sed -nE 's/^[[:space:]]*versionName = "([^"]+)".*/\1/p' app/build.gradle.kts | head -1)
+          code=$(sed -nE 's/^[[:space:]]*versionCode = ([0-9]+).*/\1/p' app/build.gradle.kts | head -1)
+          if [ -z "$version" ] || [ -z "$code" ]; then
+            echo "::error::could not read versionName/versionCode from app/build.gradle.kts"
+            exit 1
+          fi
+          if [ "$REF_TYPE" = "tag" ] && [ "$REF_NAME" != "v$version" ]; then
+            echo "::error::tag $REF_NAME does not match versionName $version — bump versionName and versionCode first"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building Absolutex $version (versionCode $code)"
+
+      # The keystore only ever exists in the runner's temp directory, never in the workspace.
+      # Secrets reach the shell through env, never through ${{ }} inside the script.
+      - name: Release keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "$KEYSTORE_B64" ] || missing="$missing RELEASE_KEYSTORE_BASE64"
+          [ -n "$KEYSTORE_PASSWORD" ] || missing="$missing KEYSTORE_PASSWORD"
+          [ -n "$KEY_ALIAS" ] || missing="$missing KEY_ALIAS"
+          [ -n "$KEY_PASSWORD" ] || missing="$missing KEY_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::release secrets missing:$missing (see .github/workflows/README.md)"
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+          echo "KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v6.3.0
+        with:
+          # A release is built from a clean cache: nothing a PR build wrote can end up in it.
+          cache-read-only: true
+
+      - name: Install SDK components
+        run: |
+          set -uo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes 2>/dev/null | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          for pkg in "platforms;android-${COMPILE_SDK}" "ndk;${NDK_VERSION}" "cmake;${CMAKE_VERSION}"; do
+            if "$SDKMANAGER" "$pkg" > /dev/null 2>&1; then
+              echo "installed    $pkg"
+            else
+              echo "unavailable  $pkg - continuing; AGP resolves it if the build needs it"
+            fi
+          done
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - name: Assemble release
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease
+
+      - name: APK size gate
+        run: |
+          python3 tools/check-apk-size.py \
+            --apk app/build/outputs/apk/release \
+            --baseline .github/apk-size-baseline.json \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+      # The signing config is skipped silently when any value is missing, and an unsigned APK
+      # still "builds". So the signature is checked here, and a debug certificate is refused.
+      - name: Verify signature
+        id: apk
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          apk=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
+          certs=$("$apksigner" verify --print-certs "$apk")
+          echo "$certs"
+          if echo "$certs" | grep -q "CN=Android Debug"; then
+            echo "::error::the release APK is signed with the debug key"
+            exit 1
+          fi
+          out="$RUNNER_TEMP/Absolutex-$VERSION.apk"
+          cp "$apk" "$out"
+          (cd "$RUNNER_TEMP" && sha256sum "Absolutex-$VERSION.apk" > "Absolutex-$VERSION.apk.sha256")
+          cp app/build/outputs/mapping/release/mapping.txt "$RUNNER_TEMP/mapping-$VERSION.txt"
+          echo "path=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: absolutex-${{ steps.version.outputs.version }}
+          path: |
+            ${{ runner.temp }}/Absolutex-*.apk
+            ${{ runner.temp }}/Absolutex-*.apk.sha256
+            ${{ runner.temp }}/mapping-*.txt
+
+      - name: Draft GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$TAG" \
+            "$RUNNER_TEMP/Absolutex-$VERSION.apk" \
+            "$RUNNER_TEMP/Absolutex-$VERSION.apk.sha256" \
+            "$RUNNER_TEMP/mapping-$VERSION.txt" \
+            --draft --generate-notes --title "Absolutex $VERSION"
+
+      # The keystore is on an ephemeral runner, but it is removed anyway.
+      - name: Remove keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"

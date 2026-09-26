@@ -1,10 +1,62 @@
 # Absolutex
 
-A comic and manga reader built exclusively for modern flagship Android hardware.
+**A fast, minimal comic and manga reader for flagship Android phones.**
+
+Open your comics, manga, PDFs and EPUBs straight from your phone or a network share, and read
+them on a true-black, distraction-free screen that keeps up with a 120 Hz display. Pages are
+rendered in tiles on the GPU, so zooming into a 6-megapixel scan stays sharp and smooth.
 
 Absolutex deliberately does not support low-end devices. There are no 16-bit colour paths, no
 small-cache fallbacks, no single-threaded decode kept around for weak SoCs. The hardware floor
 is a feature: every compromise removed is a code path that cannot rot or drop a frame.
+
+## Features
+
+**Reads what you have**
+- Comic archives: CBZ, CBR (including RAR5), CB7 and CBT
+- PDF, including password-protected files
+- EPUB: fixed-layout comic EPUBs as pages, novels and web novels as reflowable text
+- Opens from any folder you pick, from the file manager, or from SMB and FTP/FTPS shares
+
+**Reading comics and PDFs**
+- Left-to-right, right-to-left (manga) and vertical reading, chosen per book
+- Single page, two-page spreads in landscape, and a continuous vertical strip (the default for PDFs)
+- Four fit modes, remembered for each screen and page shape
+- Smooth pinch and double-tap zoom, tap zones mirrored for right-to-left books
+- A seek slider with haptic ticks, a thumbnail strip, bookmarks and a table of contents
+- Dark pages for documents, rotation lock, keep-screen-on, volume-key, keyboard and gamepad turning
+- Finishing a book offers the next one in the series
+- Save any page as an image
+
+**Picture quality, on the GPU**
+- Colour correction: brightness, contrast, saturation, vibrance, warmth and gamma
+- Smart border crop that trims scan margins before the first frame
+- Mitchell and Lanczos upscaling for sharp text when zoomed
+- A background that matches each page's own edge colour
+
+**Reading novels**
+- Pages that turn like a book, or one continuous scroll per chapter
+- Adjustable text size, dark theme, chapter links that work
+- Your place is saved per book and restored when you come back
+
+**Library**
+- Comics, Recent, Favourites and Documents tabs
+- Real cover art, series stacks, a continue-reading strip and "new" badges
+- Reading stats: pages read, time spent reading and your daily streak
+- Search across the whole library, sort by name, date or size, grid or list
+- Stays in sync with your folders as files are added or removed
+- Document covers stay hidden unless you turn them on, for privacy
+
+**Design**
+- Minimal Material 3 in true black, fast non-bouncy motion and haptics throughout
+- Resumes the last book you were reading when the app opens
+
+**Requirements:** Android 13 or newer on a 64-bit flagship-class phone (Snapdragon 8 Gen 1-class
+or better). Developed and measured on a OnePlus 11R.
+
+---
+
+*Everything below is for people working on the code.*
 
 ## Status
 
@@ -23,7 +75,7 @@ destinations. A parallel scanner with a filesystem watcher keeps it live, and th
 thumbnail pipeline, a settings surface, and remote modules for SMB, FTP/FTPS and Komga/Kavita
 progress sync, wired into the app.
 
-**Built but not yet connected.** Five features are merged, tested and unreachable, which is
+**Built but not yet connected.** Four features are merged, tested and unreachable, which is
 worth stating plainly rather than leaving for someone to discover:
 
 - **Progress sync is inert.** `SyncController.onAppStart` and `onAppBackgrounded` fire from the
@@ -31,8 +83,6 @@ worth stating plainly rather than leaving for someone to discover:
   the controller never learns which book is open — and `onAppBackgrounded` takes no book id
   precisely because it expects to have been told. Nothing is pushed to or pulled from Komga or
   Kavita today.
-- **EPUB does not open.** `:source:epub` parses and renders fixed-layout comic EPUBs, and
-  `openBook` has no `ContainerFormat.EPUB` branch to route to it.
 - **Remote covers are never fetched.** `TransportCoverFetcher` and `FtpCovers` exist; no screen
   mints the `ThumbRequest` that would drive them.
 - **No cloud account can be added.** `:remote:cloud` holds the PKCE flow, the token endpoint, the
@@ -44,7 +94,7 @@ worth stating plainly rather than leaving for someone to discover:
   calls it, and there is no registry recording that a copy exists, so a local copy could not be
   preferred over the network even if one were made.
 
-Those last two are a step further from reachable than the other three, and the distinction
+Those last two are a step further from reachable than the other two, and the distinction
 matters when estimating the work: **no module depends on `:remote:cloud` or `:remote:offline`.**
 They are in `settings.gradle.kts`, so they compile and their tests run on every PR, but they are
 not on the app's dependency graph and contribute nothing to the APK. Connecting them is a build
@@ -188,22 +238,39 @@ UnRAR-derived.
 
 ### Who works here, and how commits are attributed
 
-Work lands through parallel agent lanes coordinated by pull requests. Commits carry the
-repository identity, and every agent-authored commit ends with a `Co-authored-by:` trailer
-naming the agent that wrote it, so contributors are visible on the commit and not only in a
-PR body:
+Absolutex is built by AI coding agents working in parallel lanes, one branch and pull request
+per change. The lead reviews every pull request, runs it on the reference phone, and is the
+only one who merges or installs builds on the device.
 
-| Agent | Lane | Co-authored-by trailer |
+| Agent | Tool | Lanes |
 |---|---|---|
-| Claude Code (lead) | reviews, merges, on-device checks | `Claude Code <noreply@anthropic.com>` (varies by session) |
-| Factory Droid | library, formats, settings, design, release | `factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>` |
-| Claude Code (Agent05) | cloud sources, offline copies | `Claude Opus 5 <noreply@anthropic.com>` (varies by session) |
-| Claude Code (Agent06) | internationalisation, accessibility, reading insights | `Claude Opus 5 <noreply@anthropic.com>` (varies by session) |
-| Cline (Agent07) | review, small fixes | no distinct trailer; commits carry the repository identity |
+| Lead | Claude Code | Review and merge, on-device testing, the Material 3 redesign, the text EPUB reader |
+| Agent 1 | Hermes | Formats (container detection, folders, comic EPUB), CBZ export, decode prefetch |
+| Agent 2 | OpenCode | Network shares and remote browsing, PDF open and scroll performance, cover transition |
+| Agent 3 | Factory Droid | Library, settings and design |
+| Agent 4 | Claude Code (cloud) | Native hardening, archive recovery and encryption |
+| Agent 5 | Claude Code (cloud session) | Cloud sources (OneDrive, Dropbox, Google Drive), offline copies |
+| Agent 6 | Claude Code (cloud) | Internationalisation, accessibility, reading insights |
+| Agent 7 | Cline (desktop) | Review and small fixes |
 
-A PR description additionally ends with a `🤖 Generated with ...` line from the tool that
-wrote it. If you review this repository, treat those trailers as the attribution record and
-match the convention in your own commits.
+**Attribution.** Commits carry the repository identity. An agent whose tool adds a
+`Co-authored-by:` trailer keeps it, so the tool that wrote a change is visible on the commit
+itself:
+
+| Tool | Trailer |
+|---|---|
+| Claude Code | `Claude <model> <noreply@anthropic.com>`, naming the model, for example `Claude Opus 5.5` |
+| Factory Droid | `factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>` |
+| Hermes, OpenCode, Cline | none; the pull request names the agent |
+
+Pull request descriptions end with the generating tool's `🤖 Generated with ...` line. When
+you contribute, follow the same convention.
+
+**Rules every agent follows.** Branch from `main` and open a pull request; never push to
+`main` or force-push someone else's branch. Only the lead installs on the phone. Schema
+changes to the Room database are agreed with the lead first. A pull request is green only
+when `detekt`, the unit tests of the touched modules, `tools/check-strings.py` and
+`tools/check-apk-size.py` pass, with their output shown.
 
 ### Never `dup()` a file descriptor to share it across threads
 
@@ -296,13 +363,13 @@ permission monitoring* is on **and the phone has been rebooted since**.
 
 | Phase | Scope | State |
 |---|---|---|
-| 1 | Audit, licensing gates, platform decisions | done |
-| 2 | Scaffold + CBZ/CBR vertical slice | done; page turn measured (see above) |
-| 3 | Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | tiles, colour (#22), upscaling (#24), crop (#25) and auto background (#26) done; prefetch engine in review (#77). `PageCanvas` still takes no `cropEnabled` — see its `TODO(lead)` |
-| 4 | Library: parallel scanner, metadata, home, browse, search | done, and the launch destination; live updates merged (#63) |
-| 5 | Reader depth: layouts, flows, transitions, bookmarks, TOC, input devices | done, transitions and per-book overrides included |
-| 6 | Formats: 7z, TAR, PDFium, image folders, full codec set | archives, PDF, image folders (#76) and recovery/encryption/indexed extraction (#39) all open in the reader; `:source:epub` (#90) is built but **not yet dispatched** by `openBook` |
-| 7 | Settings surface | done and reachable from the library |
-| 8 | Remote: SMB streaming, FTP, Komga/Kavita sync | transports merged and reachable — the settings row that opens the servers list is #98. Sync is merged but **inert**: `SyncController.onAppStart`/`onAppBackgrounded` fire, but `onBookOpened`/`onPageSettled`/`onBookClosed` have no callers, so the controller never learns a book is open and nothing is pushed or pulled. Browse UI in review (#50). See the `TODO(lead)`s in `SyncController.kt` |
-| 9 | NPU upscaling R&D (§4 M6); release polish: licence, signing, launcher icon, baseline profiles | R&D done and the verdict is **no** — see [`docs/npu-sr-report.md`](docs/npu-sr-report.md); Apache-2.0 (#70), signing config, licences screen and launcher icon (#56) done |
+| Audit, licensing gates, platform decisions | done |
+| Scaffold + CBZ/CBR vertical slice | done; page turn measured (see above) |
+| Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | tiles, colour (#22), upscaling (#24), crop (#25) and auto background (#26) done; prefetch engine in review (#77). `PageCanvas` still takes no `cropEnabled` — see its `TODO(lead)` |
+| Library: parallel scanner, metadata, home, browse, search | done, and the launch destination; live updates merged (#63) |
+| Reader depth: layouts, flows, transitions, bookmarks, TOC, input devices | done, transitions and per-book overrides included |
+| Formats: 7z, TAR, PDFium, image folders, full codec set | archives, PDF, image folders (#76) and recovery/encryption/indexed extraction (#39) all open in the reader; `:source:epub` (#90) is built but **not yet dispatched** by `openBook` |
+| Settings surface | done and reachable from the library |
+| Remote: SMB streaming, FTP, Komga/Kavita sync | transports merged and reachable — the settings row that opens the servers list is #98. Sync is merged but **inert**: `SyncController.onAppStart`/`onAppBackgrounded` fire, but `onBookOpened`/`onPageSettled`/`onBookClosed` have no callers, so the controller never learns a book is open and nothing is pushed or pulled. Browse UI in review (#50). See the `TODO(lead)`s in `SyncController.kt` |
+| NPU upscaling R&D (§4 M6); release polish: licence, signing, launcher icon, baseline profiles | R&D done and the verdict is **no** — see [`docs/npu-sr-report.md`](docs/npu-sr-report.md); Apache-2.0 (#70), signing config, licences screen and launcher icon (#56) done |
 | — | Cloud sources (OneDrive, Dropbox, Drive) and offline copies | **work in progress, out of current scope.** Engine merged and tested; not on the app's dependency graph, no UI, and the OAuth client registrations are the project owner's to create. See [Cloud and offline are work in progress](#cloud-and-offline-are-work-in-progress) |
