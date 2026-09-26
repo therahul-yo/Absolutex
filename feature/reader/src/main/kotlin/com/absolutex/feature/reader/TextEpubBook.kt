@@ -6,6 +6,9 @@ import com.absolutex.core.data.TEXT_EPUB_FORMAT
 import com.absolutex.core.data.BookFactsDao
 import android.content.Context
 import android.net.Uri
+import android.os.ParcelFileDescriptor
+import java.io.InputStream
+import java.util.zip.ZipInputStream
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.absolutex.core.data.ProgressDao
@@ -36,6 +39,8 @@ class TextEpubBook internal constructor(
     /** The cover image's entry, when the package declares one. */
     val coverEntryName: String?,
     private val entries: ArchiveEntries,
+    /** The file from its start, for one sequential pass over every chapter (see [openZip]). */
+    private val openStream: () -> InputStream,
 ) {
     private val cache = ConcurrentHashMap<String, ByteArray>()
     private val byLowerName = entries.names.associateBy { it.lowercase() }
@@ -50,12 +55,29 @@ class TextEpubBook internal constructor(
         return entries.read(entry)?.also { cache[entry] = it }
     }
 
+    /**
+     * An entry's bytes without keeping them: a search reads every chapter once, and caching 2,700
+     * chapters would hold the whole book in memory for a single query.
+     */
+    fun peek(name: String): ByteArray? {
+        val entry = byLowerName[name.lowercase()] ?: return null
+        return cache[entry] ?: entries.read(entry)
+    }
+
+    /**
+     * The file as a ZIP stream, or null when it cannot be opened. An EPUB is always a ZIP, and
+     * reading it front to back is one pass over the file, where reading each chapter by ordinal
+     * would walk the archive's headers again for every one of them.
+     */
+    fun openZip(): ZipInputStream? = runCatching { ZipInputStream(openStream().buffered()) }.getOrNull()
+
     internal companion object {
         /** Opens [uri] as a text EPUB, or null when it is not one. Blocking: call off the main thread. */
         fun open(context: Context, uri: Uri): TextEpubBook? {
             val entries = ArchiveEntries.list { context.openDescriptor(uri) } ?: return null
             val book = EpubPackage.parse(entries.names) { entries.read(it) } as? EpubBook.Reflowable ?: return null
-            return TextEpubBook(book.spine, context.identityOf(uri), book.coverEntryName, entries)
+            val stream = { ParcelFileDescriptor.AutoCloseInputStream(context.openDescriptor(uri)) }
+            return TextEpubBook(book.spine, context.identityOf(uri), book.coverEntryName, entries, stream)
                 // Parsed here, off the main thread, so the contents button never parses on a tap.
                 .also { it.toc }
         }

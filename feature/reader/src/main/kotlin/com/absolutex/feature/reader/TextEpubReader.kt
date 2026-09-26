@@ -30,10 +30,12 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.material.icons.Icons
 import com.absolutex.model.TocEntry
 import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SwapVert
 import androidx.compose.material.icons.outlined.TextDecrease
 import androidx.compose.material.icons.outlined.TextIncrease
@@ -117,14 +119,8 @@ private fun TextBook(
     // Pages turn like a book; scroll reads a chapter as one long page (the user's choice).
     var scroll by rememberSaveable { mutableStateOf(resume.scroll) }
     val haptics = rememberHaptics()
-    val scope = rememberCoroutineScope()
     val web = rememberBookWebView(book)
-    val pager = remember(book, web) {
-        ChapterPager(scope, web).also { p ->
-            web.onMeasured = p::measured
-            p.resumeAt = resume.fraction
-        }
-    }
+    val pager = rememberChapterPager(web, resume.fraction)
     val labels = chapterLinks()
 
     // One place that decides what a turn means, so taps, swipes and chapter edges agree.
@@ -138,13 +134,7 @@ private fun TextBook(
             else -> haptics.confirm() // the book's first or last page: nothing further to turn to
         }
     }
-    val turn: (Boolean) -> Unit = { forward ->
-        when {
-            forward && pager.page < pager.pages - 1 -> pager.slideTo(pager.page + 1)
-            !forward && pager.page > 0 -> pager.slideTo(pager.page - 1)
-            else -> leaveChapter(forward)
-        }
-    }
+    val turn: (Boolean) -> Unit = { pager.turn(it, leaveChapter) }
     web.scrollMode = scroll
     web.onTap = { chrome = !chrome }
     web.onChapterLink = leaveChapter
@@ -157,9 +147,19 @@ private fun TextBook(
             TurnGestures(pager, onTurn = turn, onLeaveChapter = leaveChapter, onMiddle = { chrome = !chrome })
         }
         TextChrome(chrome, title, book.identity, onSettings) {
-            ContentsAbove(book.toc, chapter, contents, onJump = { chapter = it; contents = false })
+            FindAndContents(
+                book, chapter, contents,
+                onChapter = { chapter = it; contents = false },
+                onHit = { hit, pattern ->
+                    contents = false
+                    chrome = false
+                    pager.show(SearchMark(hit.chapter, pattern, hit.match.occurrence))
+                    chapter = hit.chapter
+                },
+            )
             TextBottomBar(
-                onContents = { contents = !contents }.takeIf { book.toc.isNotEmpty() },
+                hasContents = book.toc.isNotEmpty(),
+                onContents = { contents = !contents },
                 chapter = chapter,
                 chapters = book.spine.size,
                 page = pager.page,
@@ -229,7 +229,8 @@ private fun BoxScope.TextChrome(
         enter = slideInVertically(Motion.enter()) { it } + fadeIn(Motion.enter()),
         exit = slideOutVertically(Motion.exit()) { it } + fadeOut(Motion.exit()),
         modifier = Modifier.align(Alignment.BottomCenter),
-    ) { Column { bottom() } }
+        // Above the keyboard while the search field has it, never behind it.
+    ) { Column(Modifier.imePadding()) { bottom() } }
 }
 
 /**
@@ -277,6 +278,18 @@ private fun TurnGestures(
     )
 }
 
+/** The pager for [web], reporting its measurements to it, resuming [fraction] into the first chapter. */
+@Composable
+private fun rememberChapterPager(web: BookWebView, fraction: Float): ChapterPager {
+    val scope = rememberCoroutineScope()
+    return remember(web) {
+        ChapterPager(scope, web).also { pager ->
+            web.onMeasured = pager::measured
+            pager.resumeAt = fraction
+        }
+    }
+}
+
 /** The previous/next chapter links a scrolled chapter ends with, in the reader's language. */
 @Composable
 private fun chapterLinks() = ChapterLinks(
@@ -284,17 +297,10 @@ private fun chapterLinks() = ChapterLinks(
     stringResource(R.string.reader_text_next_chapter),
 )
 
-/** The book's contents, opened from the bottom bar and sitting just above it. */
-@Composable
-private fun ContentsAbove(toc: List<TocEntry>, chapter: Int, open: Boolean, onJump: (Int) -> Unit) {
-    AnimatedVisibility(open, enter = expandVertically(Motion.enter()), exit = shrinkVertically(Motion.exit())) {
-        TocPanel(toc, onJump = onJump, current = chapter)
-    }
-}
-
 @Composable
 private fun TextBottomBar(
-    onContents: (() -> Unit)?,
+    hasContents: Boolean,
+    onContents: () -> Unit,
     chapter: Int,
     chapters: Int,
     page: Int,
@@ -333,13 +339,11 @@ private fun TextBottomBar(
                 style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.weight(1f),
             )
-            onContents?.let { open ->
-                FilledTonalIconButton(onClick = open, modifier = Modifier.size(A11y.MinTouchTarget)) {
-                    Icon(
-                        Icons.AutoMirrored.Outlined.List,
-                        contentDescription = stringResource(R.string.reader_contents),
-                    )
-                }
+            FilledTonalIconButton(onClick = onContents, modifier = Modifier.size(A11y.MinTouchTarget)) {
+                Icon(
+                    if (hasContents) Icons.AutoMirrored.Outlined.List else Icons.Outlined.Search,
+                    contentDescription = stringResource(R.string.reader_text_find),
+                )
             }
             FilledTonalIconButton(onClick = onToggleScroll, modifier = Modifier.size(A11y.MinTouchTarget)) {
                 Icon(
@@ -367,6 +371,9 @@ private fun TextBottomBar(
  *
  * [landOnLastPage] makes a backwards chapter change arrive at the end of the previous chapter.
  */
+/** A search hit to show: its chapter, the pattern to find it with, and which match it is. */
+internal data class SearchMark(val chapter: Int, val pattern: String, val occurrence: Int)
+
 private class ChapterPager(private val scope: CoroutineScope, private val web: WebView) {
     var page by mutableIntStateOf(0)
     var pages by mutableIntStateOf(1)
@@ -375,6 +382,10 @@ private class ChapterPager(private val scope: CoroutineScope, private val web: W
     /** How far into the next laid-out chapter to land, as a fraction; null lands at its start. */
     var resumeAt: Float? = null
     private var loadedChapter = -1
+    private var measuredChapter = -1
+
+    /** A search hit to highlight once its chapter has laid out. */
+    private var pendingMark: SearchMark? = null
     private var motion: Job? = null
 
     /**
@@ -428,7 +439,46 @@ private class ChapterPager(private val scope: CoroutineScope, private val web: W
         }
         landOnLastPage = false
         resumeAt = null
-        web.animate().alpha(1f).setDuration(Motion.MEDIUM_MS.toLong()).start()
+        measuredChapter = loadedChapter
+        // A search hit lands on its own page, and the chapter fades in there, not on page one first.
+        val mark = pendingMark?.takeIf { it.chapter == loadedChapter }
+        pendingMark = null
+        if (mark != null) highlight(mark, fadeIn) else fadeIn()
+    }
+
+    private val fadeIn: () -> Unit = { web.animate().alpha(1f).setDuration(Motion.MEDIUM_MS.toLong()).start() }
+
+    /** A page on, or back; past the chapter's first or last page, [leave] loads the neighbour. */
+    fun turn(forward: Boolean, leave: (Boolean) -> Unit) {
+        when {
+            forward && page < pages - 1 -> slideTo(page + 1)
+            !forward && page > 0 -> slideTo(page - 1)
+            else -> leave(forward)
+        }
+    }
+
+    /** Shows [mark]: now, when its chapter is the one laid out, else once that chapter has laid out. */
+    fun show(mark: SearchMark) {
+        val laidOut = mark.chapter == loadedChapter && measuredChapter == loadedChapter
+        if (laidOut) highlight(mark) {} else pendingMark = mark
+    }
+
+    /** Highlights the hit and moves to it: its page when paging, a third down the screen when scrolling. */
+    private fun highlight(mark: SearchMark, then: () -> Unit) {
+        val box = web.tag as? PageBox
+        val scrolling = box?.scroll == true
+        web.evaluateJavascript(markJs(mark.pattern, mark.occurrence, box?.width ?: 1, scrolling)) { result ->
+            val at = result?.toFloatOrNull() ?: -1f
+            when {
+                at < 0f -> Unit
+                scrolling -> web.evaluateJavascript("window.scrollTo(0, $at)", null)
+                else -> {
+                    page = at.toInt().coerceIn(0, pages - 1)
+                    web.scrollTo(page * stride(), 0)
+                }
+            }
+            then()
+        }
     }
 
     /** Follows the finger, never past the chapter's first or last page. */

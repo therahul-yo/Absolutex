@@ -16,6 +16,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import java.io.ByteArrayInputStream
+import org.json.JSONObject
 
 @Composable
 internal fun rememberBookWebView(book: TextEpubBook): BookWebView {
@@ -156,6 +157,7 @@ private fun scrollCss(box: PageBox) = """
     ::-webkit-scrollbar { display: none; }
     body * { color: inherit !important; background-color: transparent !important; max-width: 100%; }
     a { color: #BDBDBD !important; }
+    ${MARK_CSS}
     img, svg, image { height: auto; }
     .abx-nav { margin: 40px 0 !important; text-align: center !important; }
     .abx-nav a {
@@ -197,6 +199,7 @@ private fun pagedCss(box: PageBox) = """
     }
     div, section, nav, article, header, footer, aside, main { display: block !important; }
     a { color: #BDBDBD !important; }
+    ${MARK_CSS}
     img, svg, image {
         max-height: calc(var(--h, 100vh) - ${TOP_PX + BOTTOM_PX}px) !important; object-fit: contain; height: auto;
     }
@@ -218,6 +221,48 @@ private fun mimeOf(entry: String): String = when (entry.substringAfterLast('.').
     "woff2" -> "font/woff2"
     else -> "application/octet-stream"
 }
+
+/** A search hit, highlighted: light on grey, the one mark on an otherwise monochrome page. */
+private const val MARK_CSS =
+    "body mark.abx-hit { background-color: #5E5E5E !important; color: #FFFFFF !important; border-radius: 3px; }"
+
+/**
+ * Highlights the [occurrence]-th match of [pattern] in the chapter and says where it is: the page
+ * it falls on when paging, the scroll offset that puts it a third down the screen when scrolling.
+ * -1 when the chapter has no such match. Any earlier highlight is removed first.
+ *
+ * Counts matches text node by text node, which is how [com.absolutex.source.epub.EpubSearch]
+ * counted them, so the occurrence found there is the one marked here. Should the two ever
+ * disagree (a book whose markup the WebView repairs), the first match is marked rather than none.
+ */
+internal fun markJs(pattern: String, occurrence: Int, pageWidth: Int, scroll: Boolean): String = """
+    (function() {
+      document.querySelectorAll('mark.abx-hit').forEach(function(m) { m.replaceWith(document.createTextNode(m.textContent)); });
+      document.body.normalize();
+      var re = new RegExp(${JSONObject.quote(pattern)}, 'giu'), seen = 0, target = null, first = null, node, m;
+      var walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, { acceptNode: function(t) {
+        return t.parentElement.closest('script,style,.abx-nav') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; } });
+      while (!target && (node = walk.nextNode())) {
+        re.lastIndex = 0;
+        while ((m = re.exec(node.data))) {
+          if (!m[0].length) { re.lastIndex++; continue; }
+          var hit = [node, m.index, m[0].length];
+          if (!first) first = hit;
+          if (seen++ === $occurrence) { target = hit; break; }
+        }
+      }
+      target = target || first;
+      if (!target) return -1;
+      var range = document.createRange();
+      range.setStart(target[0], target[1]);
+      range.setEnd(target[0], target[1] + target[2]);
+      var mark = document.createElement('mark');
+      mark.className = 'abx-hit';
+      range.surroundContents(mark);
+      var box = mark.getBoundingClientRect();
+      return $scroll ? Math.max(0, box.top + scrollY - innerHeight / 3) : Math.floor((box.left + scrollX) / $pageWidth);
+    })()
+""".trimIndent()
 
 /** A private origin: https so the WebView treats it as secure, a reserved name so it is never real. */
 internal const val ORIGIN = "https://book.absolutex.invalid/"
