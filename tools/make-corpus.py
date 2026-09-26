@@ -30,6 +30,7 @@ Usage
 -----
     python3 tools/make-corpus.py --out build/corpus
     python3 tools/make-corpus.py --out build/corpus --include-huge
+    python3 tools/make-corpus.py --out build/corpus --include-bench
     python3 tools/make-corpus.py --out build/corpus --check
 """
 
@@ -543,6 +544,162 @@ def _epub_bytes(rtl: bool = False) -> bytes:
     return buf.getvalue()
 
 
+def bench_page_png(index: int, width: int, height: int) -> bytes:
+    """A 6 MP page with real high-frequency detail, which page_png deliberately lacks.
+
+    page_png encodes its index in flat colour bands. That is ideal for spotting a mis-ordered
+    read -- the page number is countable in a viewer -- and useless as a *decode* benchmark:
+    a JPEG encoder compresses a flat field to almost nothing, so a CBZ of them would report
+    ~180 KB per page and the inflate cost the benchmark is trying to measure would be an order
+    of magnitude below a real scan's.
+
+    So the bench page is noise, not bands. A deterministic xorshift field at one byte per
+    channel is roughly what a scanner's grain looks like after a 4:2:0 subsample, and it does
+    not compress: the resulting JPEG lands in the 1-3 MB range a 6 MP scan actually occupies,
+    which is the whole point of the case.
+    """
+    import io
+
+    rng = Rng(SEED ^ (index * 0x9E37_79B9))
+    # One noise row is reused down the page: real scans have vertical structure, and building
+    # 3000 independent 6000-byte rows in Python costs seconds for no extra signal.
+    # width*3 is wider than the (width-bar_w)*3 that remains after the edge, so one repeat
+    # always suffices and the slice is what makes the row exactly the right length -- a row
+    # that is even one byte short is a corrupt PNG, and a corrupt PNG is a silently skipped case.
+    noise_row = bytes(rng.block(width * 3))
+    # A luma ramp down the left edge keeps the page identifiable at a glance, like page_png's
+    # bands, without adding anything a JPEG encoder can throw away.
+    bar_w = max(1, width // 40)
+    fill_len = (width - bar_w) * 3
+    ramp = [min(255, (y * 255) // max(1, height - 1)) for y in range(height)]
+
+    def rows() -> Iterator[bytes]:
+        for y in range(height):
+            edge = bytes((ramp[y], ramp[y], ramp[y])) * bar_w
+            yield edge + (noise_row * 2)[:fill_len]
+
+    buf = io.BytesIO()
+    write_png(buf, width, height, rows(), colour=2)
+    return buf.getvalue()
+
+
+def case_bench_cbz(out: Path) -> None:
+    """300 pages of 6 MP JPEG: the first-page-latency case from the decode M11 brief.
+
+    Not a hostile-input case -- it is a *size* case. 300 is well past the ~45-entry archive the
+    native comment measured its 2.4 ms header walk against, so this is where the
+    re-walk-per-ordinal cost stops being noise and starts being the page-turn budget.
+
+    JPEG rather than PNG on purpose: PNG's zlib level 6 makes a 6 MP page cheap to *build* but
+    cheap to inflate too, and a corpus that flatters the decompressor hides the very cost being
+    measured. A 6 MP baseline JPEG is ~1.5 MB of real entropy, so inflating page N costs what
+    inflating a real scan costs. Pinned to quality 78 and 4:2:0 because anything else makes the
+    bytes, and therefore the digest, depend on the encoder's defaults.
+    """
+    exe = which("cjpeg", "jpeg", "magick", "convert", "sips")
+    if not exe:
+        skip("30_bench_300page_6mp.cbz", "no JPEG encoder on PATH (libjpeg-turbo / ImageMagick / sips)")
+        return
+    # One 6 MP page, encoded once and reused 300 times. Encoding 300 distinct 6 MP pages in
+    # Python costs minutes for no extra signal: the benchmark measures the archive walk and the
+    # decoder, both of which see the same bytes either way.
+    six_mp = 6_000_000
+    w, h = 2000, 3000                       # exactly 6 MP, portrait like a real page
+    assert w * h == six_mp, (w, h)
+    staging = out / ".tmp_jpeg"
+    staging.mkdir(parents=True, exist_ok=True)
+    src = staging / "page.png"
+    src.write_bytes(bench_page_png(0, w, h))
+    dst = staging / "page.jpg"
+    if _encode_jpeg(exe, src, dst, quality=78) is False:
+        shutil.rmtree(staging)
+        skip("30_bench_300page_6mp.cbz", "%s could not encode a %dx%d JPEG" % (exe, w, h))
+        return
+    blob = dst.read_bytes()
+    shutil.rmtree(staging)
+    if len(blob) < 200_000:
+        skip("30_bench_300page_6mp.cbz",
+             "encoder produced %d bytes: suspiciously small for 6 MP, not a real page" % len(blob))
+        return
+    entries = [("page%03d.jpg" % (i + 1), blob) for i in range(300)]
+    build_cbz(out / "30_bench_300page_6mp.cbz", entries,
+              comic_info=COMIC_INFO.format(count=300, manga="No"))
+
+
+def _encode_jpeg(exe: str, src: Path, dst: Path, quality: int) -> bool:
+    """Encode [src] to [dst] as JPEG with whichever encoder is on PATH. True on success."""
+    name = Path(exe).name
+    if name == "cjpeg":
+        cmd = [exe, "-quality", str(quality), "-sample", "2x2", "-outfile", str(dst), str(src)]
+    elif name == "jpeg":
+        cmd = [exe, "-quality", str(quality), "-sample", "2x2", "-outfile", str(dst), str(src)]
+    elif name in ("magick", "convert"):
+        cmd = [exe, str(src), "-quality", str(quality), "-sampling-factor", "2x2", str(dst)]
+    else:  # sips: macOS's own encoder. -s format jpeg, and it picks its own sampling.
+        cmd = [exe, "-s", "format", "jpeg", "-s", "formatOptions", "78", str(src), "--out", str(dst)]
+    proc = subprocess.run(cmd, capture_output=True)
+    return proc.returncode == 0 and dst.exists() and dst.stat().st_size > 0
+
+
+def case_bench_pdf(out: Path) -> None:
+    """600 text pages: the big-file memory case from the decode M11 brief.
+
+    Vector, not raster, on purpose. A raster 600-page PDF would be ~1.5 GB and would test the
+    *file system*; what the prefetch window has to survive is 600 page objects it may hold
+    resident at once, and the page-size probe (PdfDocument.pageSize) has to walk 600 of them.
+    Text pages make the document a few hundred KB, so the case is reproducible, diffable, and
+    cheap enough to regenerate in CI, while still being a genuine 600-page document.
+    """
+    build_pdf_with_outline(out / "13_outline.pdf")   # unchanged: the small hostile-outline case
+    build_pdf_pages(out / "31_bench_600page.pdf", pages_n=600)
+
+
+def build_pdf_pages(path: Path, pages_n: int) -> None:
+    """[pages_n] text pages, no outline, MediaBox 612x792.
+
+    Object numbering mirrors build_pdf_with_outline so the two share a reader habit: catalog 1,
+    page tree 2, then alternating page/content objects from 3 up.
+    """
+    first_page_obj = 3
+    objs: dict[int, bytes] = {
+        1: b"<< /Type /Catalog /Pages 2 0 R /PageMode /UseNone >>",
+        2: ("<< /Type /Pages /Kids [%s] /Count %d >>"
+             % (" ".join("%d 0 R" % (first_page_obj + 2 * i) for i in range(pages_n)), pages_n)
+             ).encode("ascii"),
+    }
+    font_obj = first_page_obj + 2 * pages_n
+    objs[font_obj] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+
+    for i in range(pages_n):
+        pobj = first_page_obj + 2 * i
+        stream = ("BT /F1 12 Tf 72 720 Td (Absolutex bench page %d) Tj ET\n"
+                  "1 0 0 RG 1 w 72 700 m 540 700 l S\n"
+                  "0 0 0 rg BT /F1 10 Tf 72 120 Td (M11 first-page latency corpus) Tj ET\n"
+                  % (i + 1)).encode("ascii")
+        objs[pobj] = (b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                      b"/Resources << /Font << /F1 %d 0 R >> >> /Contents %d 0 R >>"
+                      % (font_obj, pobj + 1))
+        objs[pobj + 1] = b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream"
+
+    out = bytearray(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
+    offsets: dict[int, int] = {}
+    for num in sorted(objs):
+        offsets[num] = len(out)
+        out += b"%d 0 obj\n" % num + objs[num] + b"\nendobj\n"
+
+    xref_at = len(out)
+    top = max(objs) + 1
+    out += b"xref\n0 %d\n" % top
+    out += b"0000000000 65535 f \n"
+    for num in range(1, top):
+        out += b"%010d 00000 n \n" % offsets.get(num, 0)
+    out += (b"trailer\n<< /Size %d /Root 1 0 R /ID [<%s> <%s>] >>\nstartxref\n%d\n%%%%EOF\n"
+            % (top, b"B" * 32, b"B" * 32, xref_at))
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(bytes(out))
+
+
 def case_epub(out: Path) -> None:
     """A fixed-layout EPUB, and the same bytes wearing a .cbz suffix.
 
@@ -745,6 +902,17 @@ CASES: list[tuple[str, Callable[[Path], None], bool]] = [
     ("avif",          case_avif,           False),
 ]
 
+# Opt-in, and for a different reason than case_huge. These are not hostile inputs; they are
+# *size* cases, large enough that generating them in every CI run and every --check would cost
+# more than the coverage is worth. case_huge is opt-in because of disk; these are opt-in because
+# of wall-clock, and because the JPEG one needs an encoder CI does not necessarily have. The
+# 600-page PDF is pure Python and cheap, but it is kept behind the same flag so that
+# "generate the corpus" means one predictable set of files rather than two depending on flags.
+BENCH_CASES: list[tuple[str, Callable[[Path], None]]] = [
+    ("bench_cbz",  case_bench_cbz),
+    ("bench_pdf",  case_bench_pdf),
+]
+
 EXPECTED = Path(__file__).with_name("corpus-expected-sha256.json")
 
 # Produced by the reproducible cases above; pinned in corpus-expected-sha256.json.
@@ -768,7 +936,7 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def generate(out: Path, include_huge: bool) -> dict[str, str]:
+def generate(out: Path, include_huge: bool, include_bench: bool = False) -> dict[str, str]:
     out.mkdir(parents=True, exist_ok=True)
     for name, fn, _ in CASES:
         print("  build %s" % name, flush=True)
@@ -778,6 +946,13 @@ def generate(out: Path, include_huge: bool) -> dict[str, str]:
         case_huge(out)
     else:
         skip("17_huge_2gb.cbz", "opt-in; pass --include-huge (writes ~2.1 GiB)")
+    if include_bench:
+        for name, fn in BENCH_CASES:
+            print("  build %s" % name, flush=True)
+            fn(out)
+    else:
+        skip("30_bench_300page_6mp.cbz", "opt-in; pass --include-bench (decode M11 latency corpus)")
+        skip("31_bench_600page.pdf", "opt-in; pass --include-bench (decode M11 memory corpus)")
 
     digests = {p.name: sha256(p) for p in sorted(out.iterdir()) if p.is_file()}
     (out / "corpus-manifest.json").write_text(
@@ -795,6 +970,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="output directory (default: build/corpus)")
     ap.add_argument("--include-huge", action="store_true",
                     help="also emit the ~2.1 GiB CBZ (needs ~2.3 GiB free)")
+    ap.add_argument("--include-bench", action="store_true",
+                    help="also emit the decode M11 size corpus: a 300-page 6 MP JPEG CBZ "
+                         "and a 600-page PDF (not hostile-input cases, size cases)")
     ap.add_argument("--check", action="store_true",
                     help="verify the reproducible cases against corpus-expected-sha256.json")
     ap.add_argument("--update-expected", action="store_true",
@@ -803,7 +981,7 @@ def main(argv: list[str] | None = None) -> int:
 
     out: Path = args.out
     print("Absolutex hostile corpus -> %s" % out.resolve())
-    digests = generate(out, args.include_huge)
+    digests = generate(out, args.include_huge, args.include_bench)
 
     if args.update_expected:
         pinned = {k: digests[k] for k in REPRODUCIBLE_FILES if k in digests}
