@@ -14,6 +14,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -92,11 +93,16 @@ class PrefetchEngineTest {
         budgetBytes: Long = 1_000_000,
         pageBytes: Long = 100_000,
         decodeDispatcher: CoroutineDispatcher = Dispatchers.Unconfined,
+        batch: (suspend (List<Int>) -> Map<Int, ByteArray?>?)? = null,
+        onStagedClaim: (Int, ByteArray?) -> Unit = { _, _ -> },
     ): Harness {
         val decode = FakeDecode()
         val budget = java.util.concurrent.atomic.AtomicLong(budgetBytes)
         val tile = java.util.concurrent.atomic.AtomicLong(0)
         val evicted = mutableListOf<Int>()
+        // Held so the decode lambda can claim from the engine it is a member of: the two are
+        // mutually referential, and a lateinit would hide the ordering this actually has.
+        var engineRef: PrefetchEngine? = null
         val engine = PrefetchEngine(
             scope = this,
             decodeDispatcher = decodeDispatcher,
@@ -104,8 +110,17 @@ class PrefetchEngineTest {
             tileBytes = { tile.get() },
             pageBytesEstimate = { pageBytes },
             onDecoded = { _, est, _ -> est },
-            decode = { decode.decode(it) },
+            prefetchWindow = batch,
+            decode = { page ->
+                // Stands in for the host's claim in ReaderViewModel.pageImage: the engine
+                // stages bytes, and whoever decodes has to take them. Without this the
+                // staging path would look exercised in a test and never actually feed a
+                // decode, which is the "built but never called" defect one level down.
+                onStagedClaim(page, engineRef?.takeStagedBytes(page))
+                decode.decode(page)
+            },
         )
+        engineRef = engine
         engine.onEvicted = { page, _ -> evicted += page }
         return Harness(this, decode, engine, budget, tile, evicted)
     }
@@ -116,6 +131,139 @@ class PrefetchEngineTest {
         h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 3)
         advanceUntilIdle()
         assertEquals(listOf(11, 12, 13), h.decode.started)
+    }
+
+    @Test
+    fun `a contiguous window is fetched in ONE batch call, not one per page`() = runTest {
+        // The defect class this exists to catch: a batch reader that is built, wired and
+        // correct, and never called. The window must reach the host's batch supplier as a
+        // SINGLE request for the whole run, because one request is the entire saving.
+        val asked = mutableListOf<List<Int>>()
+        val h = harness(
+            batch = { pages ->
+                asked += pages
+                pages.associateWith { byteArrayOf(1, 2, 3) }
+            },
+        )
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 3)
+        advanceUntilIdle()
+        assertEquals(listOf(listOf(11, 12, 13)), asked)
+    }
+
+    @Test
+    fun `a decoded page consumes the bytes staged for it`() = runTest {
+        // Without the claim the staging map would fill and never drain: the batch read would
+        // happen, and the decode would then read the same page again from the archive. That
+        // is strictly worse than not batching at all.
+        val claimed = mutableMapOf<Int, ByteArray?>()
+        val h = harness(
+            batch = { pages -> pages.associateWith { byteArrayOf(7, 7) } },
+            onStagedClaim = { page, bytes -> claimed[page] = bytes },
+        )
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 3)
+        advanceUntilIdle()
+        assertEquals(listOf(11, 12, 13), claimed.keys.toList())
+        assertTrue(claimed.values.all { it != null && it.size == 2 })
+        assertEquals(0, h.engine.stagedPageCount)
+    }
+
+    @Test
+    fun `staged bytes are claimed once, so a re-decode reads for itself`() = runTest {
+        val h = harness(batch = { pages -> pages.associateWith { byteArrayOf(7) } })
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 3)
+        advanceUntilIdle()
+        assertEquals(0, h.engine.stagedPageCount)
+        // The map was drained by the decodes, so a second claim finds nothing.
+        assertNull(h.engine.takeStagedBytes(11))
+    }
+
+    @Test
+    fun `a source with no batch reader decodes exactly as before`() = runTest {
+        // The regression guard for the whole optimisation: a null batch supplier must be
+        // invisible. Same pages, same order, no staging.
+        val h = harness(batch = null)
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 3)
+        advanceUntilIdle()
+        assertEquals(listOf(11, 12, 13), h.decode.started)
+        assertEquals(0, h.engine.stagedPageCount)
+    }
+
+    @Test
+    fun `a batch that returns fewer pages than asked stages nothing`() = runTest {
+        // A short map means a page was unreadable. Staging a partial window would leave the
+        // decodes for the missing pages reading individually anyway, while claiming the
+        // window was batched -- so the honest answer is to stage nothing at all.
+        val h = harness(batch = { pages -> pages.dropLast(1).associateWith { byteArrayOf(1) } })
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 3)
+        advanceUntilIdle()
+        assertEquals(0, h.engine.stagedPageCount)
+        assertEquals(listOf(11, 12, 13), h.decode.started)
+    }
+
+    @Test
+    fun `a batch that throws stages nothing and does not fail the pages`() = runTest {
+        val h = harness(batch = { throw java.io.IOException("archive went away") })
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 3)
+        advanceUntilIdle()
+        assertEquals(listOf(11, 12, 13), h.decode.started)
+        assertEquals(0, h.engine.stagedPageCount)
+    }
+
+    @Test
+    fun `a spread window is batched, and DOUBLE starts after the spread it lands on`() = runTest {
+        // Settling on 4 shows the spread 4-5, so the window starts at 6 -- the cursor advances
+        // by the step, not by one. Worth pinning rather than assuming: if DOUBLE ever returned
+        // a true stride-2 window the contiguity check would correctly refuse to batch it, and
+        // this is the test that would notice the change first.
+        val asked = mutableListOf<List<Int>>()
+        val h = harness(batch = { pages -> asked += pages; pages.associateWith { byteArrayOf(1) } })
+        h.engine.onSettled(4, 40, PageLayout.DOUBLE, depth = 4)
+        advanceUntilIdle()
+        assertEquals(listOf(listOf(6, 7, 8, 9)), asked)
+    }
+
+    @Test
+    fun `both spread parities plan the same window`() = runTest {
+        // Settling on 5 also shows the spread 6-7 first, so its window is [6,7,8,9] too.
+        // Both parities are pinned because the two look like they ought to differ -- the
+        // cursor starts at page+2 either way -- and that coincidence is worth a test rather
+        // than an assumption. If DOUBLE ever changed to start after the reader's own half,
+        // this is where it would show.
+        val asked = mutableListOf<List<Int>>()
+        val h = harness(batch = { pages -> asked += pages; pages.associateWith { byteArrayOf(1) } })
+        h.engine.onSettled(5, 40, PageLayout.DOUBLE, depth = 4)
+        advanceUntilIdle()
+        assertEquals(listOf(listOf(6, 7, 8, 9)), asked)
+    }
+
+    @Test
+    fun `a window already covered by the settled page stages nothing`() = runTest {
+        // Settling on the last page of a book leaves an empty window, so there is nothing to
+        // batch and nothing to ask for. The staging map must stay empty rather than
+        // requesting a zero-length run.
+        val asked = mutableListOf<List<Int>>()
+        val h = harness(batch = { pages -> asked += pages; pages.associateWith { byteArrayOf(1) } })
+        h.engine.onSettled(5, 6, PageLayout.SINGLE, depth = 3)
+        advanceUntilIdle()
+        assertEquals(emptyList<List<Int>>(), asked)
+        assertEquals(0, h.engine.stagedPageCount)
+    }
+
+    @Test
+    fun `dropAll clears staged bytes so a new book cannot claim them`() = runTest {
+        // A decode that claims a staged page AFTER a book switch would decode the OLD book's
+        // page and bill the NEW book for it -- the same mistake the generation guard prevents
+        // for landings, in a field the guard does not cover.
+        val h = harness(
+            batch = { pages -> pages.associateWith { byteArrayOf(3) } },
+            onStagedClaim = { _, _ -> },
+        )
+        h.decode.autoComplete = false          // park every decode so staging outlives them
+        h.engine.onSettled(10, 200, PageLayout.SINGLE, depth = 3)
+        advanceUntilIdle()
+        h.engine.dropAll()
+        assertEquals(0, h.engine.stagedPageCount)
+        assertNull(h.engine.takeStagedBytes(11))
     }
 
     @Test

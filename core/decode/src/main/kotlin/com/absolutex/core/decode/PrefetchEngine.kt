@@ -50,12 +50,36 @@ class PrefetchEngine(
     private val pageBytesEstimate: (page: Int) -> Long,
     /** Actual bytes a decoded page holds, once it lands. */
     private val onDecoded: (page: Int, estimated: Long, image: PageImage) -> Long,
+    /**
+     * Optional: fetch a CONTIGUOUS run of pages' bytes in one archive walk, before any of
+     * them decode. Null means the host has no batch reader — a folder, a remote source, a
+     * test — and every page then decodes on its own exactly as before.
+     *
+     * This is a prefetch of *bytes*, not of decoded pages: the pages still decode in
+     * parallel on [decodeDispatcher] afterwards. It exists because a per-ordinal archive read
+     * re-walks every entry header from zero, so a window of N pages read individually costs N
+     * walks — 61.2 ms against 45.8 ms for a 10-page window at page 151 of the 300-page 6 MP
+     * corpus (tools/bench-decode.sh).
+     *
+     * Must return a map parallel to the requested pages, or null if it could not serve the
+     * run. The engine treats null as "no prefetch" and falls back, so a source that cannot
+     * batch is never a broken one.
+     */
+    private val prefetchWindow: (suspend (pages: List<Int>) -> Map<Int, ByteArray?>?)? = null,
     /** Decode one page, classifying the outcome at the boundary that sees the cause. */
     internal var decode: suspend (page: Int) -> DecodeOutcome,
 ) {
 
     private val inFlight = ConcurrentHashMap<Int, PrefetchEntry>()
     private val resident = LinkedHashMap<Int, Long>()
+
+    /**
+     * Compressed bytes fetched by one archive walk and waiting for their decode to claim
+     * them. Bounded by construction: [stageBytes] writes only the current window's pages and
+     * only when every requested page came back, and [takeStagedBytes] removes on claim, so
+     * nothing here outlives the decode that wanted it.
+     */
+    private val stagedBytes = mutableMapOf<Int, ByteArray>()
 
     @Volatile
     private var settled = -1
@@ -142,12 +166,68 @@ class PrefetchEngine(
     private fun planWindow(page: Int, pageCount: Int, layout: PageLayout, depth: Int) {
         if (batchStopped) return
         val window = PrefetchPlanner.window(page, pageCount, layout, direction, depth)
-        for (target in window) {
+        val targets = window.filter { !inFlight.containsKey(it) && !resident.containsKey(it) }
+        if (targets.isEmpty()) return
+        // Bytes first, then plan: the whole point is that one archive walk serves several
+        // pages, and that has to happen BEFORE the individual decodes are planned. Doing it
+        // after would leave the reads exactly as N walks.
+        scope.launch(decodeDispatcher) { stageBytes(targets) }
+        for (target in targets) {
             if (batchStopped) return
-            if (inFlight.containsKey(target) || resident.containsKey(target)) continue
             planOne(target, page)
         }
     }
+
+    /**
+     * Reads a contiguous run of the window in one archive walk, for [decode] to find.
+     *
+     * Best-effort throughout, and never a failure: a null return, a short map, or a source
+     * with no batch reader all leave [decode] reading the page itself, which is the
+     * pre-existing behaviour. The optimisation must not be able to fail a page.
+     */
+    private suspend fun stageBytes(targets: List<Int>) {
+        val batch = prefetchWindow ?: return
+        val first = targets.first()
+        // Only a genuinely consecutive run is worth one walk. PrefetchPlanner returns a
+        // window that walks off one end of the book, so the tail is not contiguous.
+        val contiguous = targets.withIndex().all { (i, target) -> target == first + i }
+        if (!contiguous) return
+        val staged = runCatching { batch(targets) }.getOrNull() ?: return
+        if (staged.size != targets.size) return
+        // Bounded: only the pages this window asked for, and only the ones still wanted.
+        // A page evicted between planning and staging must not be staged into.
+        synchronized(stagedBytes) {
+            targets.forEach { stagedBytes.remove(it) }
+            staged.forEach { (page, bytes) -> if (bytes != null) stagedBytes[page] = bytes }
+        }
+    }
+
+    /**
+     * Bytes staged by [stageBytes] for [page], or null.
+     *
+     * Consumed once: the first decode takes the bytes and drops them, so a page cannot be
+     * held by the staging map after the image that owns it exists. That is what keeps this
+     * from becoming a second unbounded retention path alongside the resident set — the
+     * compressed bytes here are the same ones the resident set would hold, and holding both
+     * for the same page is exactly the duplication the budget exists to prevent.
+     *
+     * Public because the HOST owns the decode and must be the one to claim: the engine
+     * never sees a page's bytes, only its decoded image, so it cannot claim on the host's
+     * behalf. Null is the ordinary answer for a page outside the window.
+     */
+    fun takeStagedBytes(page: Int): ByteArray? = synchronized(stagedBytes) {
+        stagedBytes.remove(page)
+    }
+
+    /**
+     * Pages staged but not yet claimed.
+     *
+     * Public for the same reason [takeStagedBytes] is: the host is the claimant, so an
+     * assertion that nothing leaked has to be able to ask. A test that could only observe
+     * "did the batch get called" would pass even with a staging map that never drained,
+     * which is precisely the leak this number exists to rule out.
+     */
+    val stagedPageCount: Int get() = synchronized(stagedBytes) { stagedBytes.size }
 
     /** Plans a single target: makes room, checks budget, launches. */
     private fun planOne(target: Int, page: Int) {
@@ -249,6 +329,11 @@ class PrefetchEngine(
         inFlight.values.forEach { it.job.cancel() }
         inFlight.clear()
         synchronized(resident) { resident.clear() }
+        // Staged bytes belong to the book being dropped. A decode that claims one of them
+        // after a book switch would decode the OLD book's page and bill the NEW book for
+        // it -- the same mistake the generation guard exists to prevent, in a field the
+        // guard does not cover.
+        synchronized(stagedBytes) { stagedBytes.clear() }
     }
 
 }

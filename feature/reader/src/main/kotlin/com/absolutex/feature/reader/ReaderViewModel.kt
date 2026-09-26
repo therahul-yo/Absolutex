@@ -35,6 +35,7 @@ import com.absolutex.remote.core.REMOTE_URI_SCHEME
 import com.absolutex.remote.core.RemoteBookOpener
 import com.absolutex.remote.core.RemoteOpenResult
 import com.absolutex.source.ComicSource
+import com.absolutex.source.libarchive.LibArchiveSource
 import com.absolutex.source.pdf.PdfDocument
 import com.absolutex.source.pdf.PdfPasswordException
 import java.io.Closeable
@@ -211,7 +212,57 @@ class ReaderViewModel internal constructor(
         // Before this, the entire OOM path — host shed, budget renegotiation, and the
         // generation-guarded stale-OOM logic — was unreachable in the shipped app.
         decode = { page -> DecodeClassifier.classify { pageImage(page) } },
+        // One archive walk per prefetch window instead of one per page. Only a LibArchive
+        // source has a batch reader; a folder, a PDF and a remote source return null here
+        // and every page then decodes exactly as it did before.
+        prefetchWindow = { pages ->
+            // Recorded before the real call so a test can prove the wiring exists even when
+            // the source it ran against had no batch reader to offer.
+            batchRequests += pages
+            batchPageBytes(pages)
+        },
     )
+
+    /** Windows the prefetch engine has asked this host to read in one walk. */
+    internal val batchRequests = mutableListOf<List<Int>>()
+
+    /**
+     * Sources [batchPageBytes] has actually consulted.
+     *
+     * Recorded inside the function, not beside the call: a recording at the call site still
+     * fires when the call is replaced with a literal null, so it would not catch the unwired
+     * case. This one cannot.
+     */
+    internal val batchSources = mutableListOf<Any?>()
+
+    /**
+     * Fetches a contiguous run of pages' compressed bytes in one archive walk.
+     *
+     * Null whenever the source cannot batch — a PDF (rendered, nothing to extract), a
+     * folder, a remote source, or no source at all — and null again on any failure, so the
+     * prefetch is a pure optimisation that can never fail a page. A page that comes back
+     * unreadable is left out of the map rather than mapped to null, which is why
+     * [PrefetchEngine] treats a short map as "no prefetch" and lets each page read itself.
+     */
+    private suspend fun batchPageBytes(pages: List<Int>): Map<Int, ByteArray?>? {
+        val src = source
+        // Recorded here, INSIDE the function, rather than at the call site: a recording made
+        // beside the call would still fire if the call were replaced with a literal null,
+        // which is the exact mutation this is meant to catch. Recording the source that was
+        // actually consulted cannot survive that.
+        batchSources += src
+        val archive = src as? LibArchiveSource ?: return null
+        return withContext(DecodeDispatchers.extract) {
+            runCatching {
+                archive.openPages(pages).mapIndexedNotNull { i, stream ->
+                    // readBytes on a ByteArrayInputStream, but the contract is a generic
+                    // InputStream and a source could return a slower one.
+                    val bytes = stream?.use { it.readBytes() }
+                    if (bytes != null) pages[i] to bytes else null
+                }.toMap()
+            }.getOrNull()
+        }
+    }
 
     init {
         // The engine has already dropped its own set when this fires; shed the host's
@@ -403,7 +454,14 @@ class ReaderViewModel internal constructor(
             if (src is PdfDocument) {
                 withContext(DecodeDispatchers.decode) { PdfPageImage.open(src, index) }
             } else {
-                val bytes = withContext(DecodeDispatchers.extract) { (src as ComicSource).openPage(index).readBytes() }
+                // Claim first: bytes staged by the prefetch window came from ONE archive
+                // walk serving several pages, so using them is the entire point. Null means
+                // this page was not in the window, or the window could not serve it, and the
+                // per-page read below is the pre-existing behaviour.
+                val staged = prefetch.takeStagedBytes(index)
+                val bytes = staged ?: withContext(DecodeDispatchers.extract) {
+                    (src as ComicSource).openPage(index).readBytes()
+                }
                 withContext(DecodeDispatchers.decode) { PageImage.from(bytes) }
             }
         } catch (e: CancellationException) {
