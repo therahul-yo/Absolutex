@@ -60,6 +60,14 @@
     <string name="reader_text_pages">Read page by page</string>
     <string name="reader_text_prev_chapter">Previous chapter</string>
     <string name="reader_text_next_chapter">Next chapter</string>
+    <string name="reader_text_find">Contents and search</string>
+    <string name="reader_text_search_hint">Search in book</string>
+    <string name="reader_text_search_clear">Clear search</string>
+    <string name="reader_text_search_progress">%1$d found · %2$d of %3$d chapters searched</string>
+    <string name="reader_text_search_done">%1$d found</string>
+    <string name="reader_text_search_none">No matches in this book</string>
+    <string name="reader_text_search_capped">Showing the first %1$d matches</string>
+    <string name="reader_text_search_chapter">Chapter %1$d</string>
     <string name="reader_favourite">Add to favourites</string>
     <string name="reader_unfavourite">Remove from favourites</string>
     <string name="reader_guide_back">Previous page</string>
