@@ -3,14 +3,14 @@
   "apk": "app-release-unsigned.apk",
   "categories": {
     "assets": {
-      "compressed": 58018,
+      "compressed": 58361,
       "entries": 20,
-      "uncompressed": 146872
+      "uncompressed": 147215
     },
     "dex": {
-      "compressed": 3623712,
+      "compressed": 3792316,
       "entries": 1,
-      "uncompressed": 3623712
+      "uncompressed": 3792316
     },
     "manifest": {
       "compressed": 2904,
@@ -28,9 +28,9 @@
       "uncompressed": 59519
     },
     "resources": {
-      "compressed": 260810,
+      "compressed": 279169,
       "entries": 14,
-      "uncompressed": 263920
+      "uncompressed": 282428
     },
     "signing": {
       "compressed": 35642,
@@ -38,5 +38,5 @@
       "uncompressed": 97414
     }
   },
-  "total_bytes": 10873942
+  "total_bytes": 11072526
 }
