@@ -5,7 +5,7 @@
 **[Download the latest APK](https://github.com/therahul-yo/Absolutex/releases/latest)** · [Website](https://absolutex.vercel.app/)
 
 <p align="center">
-  <img src="docs/screenshots/library.jpg" width="200" alt="The library: pixel-block title, a Continue reading strip and a grid of comic covers, with a floating section bar">
+  <img src="docs/screenshots/library.jpg" width="200" alt="The library: pixel-block title, the Continue reading wheel with the current book centred, and a grid of comic covers under a floating section bar">
   <img src="docs/screenshots/reader.jpg" width="200" alt="A comic page open in the reader, edge to edge on true black">
   <img src="docs/screenshots/reader-controls.jpg" width="200" alt="The reader's controls: page thumbnails, a seek slider and a bookmark">
 </p>
