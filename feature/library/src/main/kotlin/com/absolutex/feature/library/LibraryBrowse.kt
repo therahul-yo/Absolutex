@@ -89,7 +89,13 @@ internal fun LibraryPane(
     } else {
         emptyList()
     }
-    val padding = PaddingValues(horizontal = Space.Edge, vertical = Space.Gap)
+    val padding = PaddingValues(
+        start = Space.Edge,
+        end = Space.Edge,
+        top = Space.Gap,
+        // Clear of the floating section bar, where there is one, so the last row scrolls into view.
+        bottom = Space.Gap + LocalFloatingBarClearance.current,
+    )
     if (state.layout == BrowseLayout.GRID) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(state.grid.columnsFor(landscape)),

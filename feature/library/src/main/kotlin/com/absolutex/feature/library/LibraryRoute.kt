@@ -42,6 +42,11 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
+import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -133,7 +138,12 @@ internal fun LibraryScreen(
 ) {
     val haptics = rememberHaptics()
     // §7: one declaration adapts to bottom bar, rail or drawer across phone, tablet and foldable.
+    // Where it would be a bottom bar (a phone), the floating capsule stands in for it instead.
+    val suite = NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(currentWindowAdaptiveInfo())
+    val floating = suite == NavigationSuiteType.NavigationBar
+    Box(modifier) {
     NavigationSuiteScaffold(
+        layoutType = if (floating) NavigationSuiteType.None else suite,
         navigationSuiteItems = {
             HomeSection.entries.forEach { section ->
                 val selected = section == state.section
@@ -149,9 +159,14 @@ internal fun LibraryScreen(
                 )
             }
         },
-        modifier = modifier,
     ) {
-        LibraryBody(state, actions, onOpenBook, onAddLocation, onOpenSettings)
+        CompositionLocalProvider(LocalFloatingBarClearance provides if (floating) FloatingBarClearance else 0.dp) {
+            LibraryBody(state, actions, onOpenBook, onAddLocation, onOpenSettings)
+        }
+    }
+    if (floating) {
+        FloatingNavBar(state.section, actions.onSectionChange, Modifier.align(Alignment.BottomCenter))
+    }
     }
 }
 
@@ -209,7 +224,12 @@ private fun LibraryTopBar(section: HomeSection, onOpenSettings: () -> Unit) {
         title = {
             // The section name is the title; it cross-fades rather than jumping.
             Crossfade(section, animationSpec = Motion.enter(), label = "title") { shown ->
-                Text(shown.label(), style = MaterialTheme.typography.headlineMedium)
+                // A gap before the settings button: the longest title fills the width otherwise.
+                AsciiTitle(
+                    shown.label(),
+                    fallback = MaterialTheme.typography.headlineMedium,
+                    modifier = Modifier.padding(end = Space.Row),
+                )
             }
         },
         actions = {
