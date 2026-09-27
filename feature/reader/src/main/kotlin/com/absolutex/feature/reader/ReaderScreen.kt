@@ -686,7 +686,7 @@ private fun PageSlotContent(
             upscaler = upscaler,
             // Border crop trims a scan's empty margins. A document's margins are designed, and
             // its thin marginal labels read as blank on the crop thumbnail: cropping cut them.
-            cropEnabled = !vm.ui.value.isPdf,
+            cropEnabled = !vm.isPdf.collectAsStateWithLifecycle().value,
             onDoubleTapInWindow = strip?.onDoubleTap,
             onTapInWindow = strip?.onTap,
             maxBaseWidth = strip?.maxBaseWidth,
