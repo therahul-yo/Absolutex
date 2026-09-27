@@ -37,6 +37,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.platform.LocalContext
 import com.absolutex.core.decode.DecodeDispatchers
 import com.absolutex.core.decode.PageImage
@@ -192,8 +194,23 @@ fun PageCanvas(
      * (ReaderScreen) decides whether to animate off it, gated on RenderingPrefs.autoBackground.
      */
     onBackgroundColour: (Color) -> Unit = {},
+    /**
+     * In a continuous strip the strip zooms, not the page: a double-tap is handed to it, in
+     * window coordinates, instead of zooming this page alone. Null in the pager.
+     */
+    onDoubleTapInWindow: ((Offset) -> Unit)? = null,
+    /** Likewise a single tap, so the strip judges tap zones against the screen. */
+    onTapInWindow: ((Offset) -> Unit)? = null,
+    /**
+     * Caps the base layer's width, in pixels. A zoomed strip lays pages out wider than the
+     * screen, and without this each would decode a base the size of the zoomed page; capped,
+     * the base stays near screen size and tiles supply the detail.
+     */
+    maxBaseWidth: Int? = null,
 ) {
     var scale by remember(pageIndex) { mutableFloatStateOf(1f) }
+    // Not state: read only when a double-tap is handed on, and written on every placement.
+    val placed = remember { arrayOfNulls<LayoutCoordinates>(1) }
     var offsetX by remember(pageIndex) { mutableFloatStateOf(0f) }
     var offsetY by remember(pageIndex) { mutableFloatStateOf(0f) }
     // The running double-tap zoom, cancelled the moment a finger lands so a pinch never fights it.
@@ -309,7 +326,8 @@ fun PageCanvas(
         val capped = min(fitScale, 1f)
         val longest = max(page.width, page.height) * capped
         val cap = MAX_BASE_EDGE * max(vw, vh)
-        val k = capped * if (longest > cap) cap / longest else 1f
+        val fit = capped * if (longest > cap) cap / longest else 1f
+        val k = maxBaseWidth?.let { min(fit, it.toFloat() / page.width) } ?: fit
         return max(1, (page.width * k).toInt()) to max(1, (page.height * k).toInt())
     }
 
@@ -525,6 +543,13 @@ fun PageCanvas(
         modifier = modifier
             .fillMaxSize()
             .onSizeChanged { viewport = it.width to it.height }
+            .then(
+                if (onDoubleTapInWindow != null || onTapInWindow != null) {
+                    Modifier.onGloballyPositioned { placed[0] = it }
+                } else {
+                    Modifier
+                },
+            )
             .pointerInput(pageIndex, fitMode, pagerVertical) {
                 // Hand-rolled instead of detectTransformGestures, which consumes EVERY drag
                 // once past touch slop — that swallowed the horizontal swipe and the pager
@@ -606,7 +631,11 @@ fun PageCanvas(
             // otherwise leave taps turning pages the old way while swipes already go the new way.
             .pointerInput(pageIndex, fitMode, pagerVertical, rightToLeft, spreadSide) {
                 detectTapGestures(
-                    onDoubleTap = { at ->
+                    onDoubleTap = double@{ at ->
+                        onDoubleTapInWindow?.let { handOn ->
+                            placed[0]?.let { handOn(it.localToWindow(at)) }
+                            return@double
+                        }
                         // Double-tap toggles between fit and a useful reading zoom, animated and
                         // about the point tapped, so what was under the finger stays under it. It
                         // jumped in one frame before, which read as a glitch rather than a zoom.
@@ -635,7 +664,13 @@ fun PageCanvas(
                             reportLock(scale, size.width, size.height)
                         }
                     },
-                    onTap = { at ->
+                    onTap = tap@{ at ->
+                        // In a strip the zones are the screen's, not this page's: a page can be
+                        // shorter than the screen, or, zoomed, far wider than it.
+                        onTapInWindow?.let { handOn ->
+                            placed[0]?.let { handOn(it.localToWindow(at)) }
+                            return@tap
+                        }
                         // Mirrored for RTL, so "the column that turns forward" stays under the same
                         // thumb whichever way the book reads.
                         onTapZone(spreadSide.zoneAt(at.x, at.y, size.width, size.height, rightToLeft))

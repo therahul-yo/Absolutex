@@ -147,6 +147,10 @@ class ReaderViewModel internal constructor(
     private val _ui = MutableStateFlow(ReaderUiState())
     val ui: StateFlow<ReaderUiState> = _ui.asStateFlow()
 
+    /** Whether the open book is a PDF, on its own so a page recomposes only when that changes. */
+    val isPdf: StateFlow<Boolean> = _ui.map { it.isPdf }.distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, _ui.value.isPdf)
+
     // Pages whose bytes failed to decode. The UI shows a generic string for these —
     // never the raw entry name — while detail goes to logcat.
     /** The open book's contents, empty when it has none (§5.2). */

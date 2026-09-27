@@ -80,6 +80,8 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.absolutex.model.TapGrid
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
@@ -377,9 +379,16 @@ private fun Strip(
     ReportDrawnWhen { firstPageDrawn }
     val toc by vm.toc.collectAsStateWithLifecycle()
     val aspects = remember(bookId) { mutableStateMapOf<Int, Float>() }
+    val zoom = remember(listState) { StripZoomState(listState) }
+    val stripPage = rememberStripPage(zoom, scope) { x, y, w, h -> tap(TapGrid.zoneAt(x, y, w, h, rtl)) }
 
     Box(Modifier.fillMaxSize().then(keys)) {
-        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+        Box(
+            Modifier.fillMaxSize().clipToBounds()
+                .onGloballyPositioned { stripPage.placed[0] = it }
+                .stripZoomGestures(zoom),
+        ) {
+        LazyColumn(state = listState, modifier = Modifier.stripZoomLayout(zoom).fillMaxSize()) {
             items(pageCount) { index ->
                 val aspect = aspects[index]
                 val size = aspect?.let { Modifier.fillMaxWidth().aspectRatio(it) } ?: Modifier.fillParentMaxSize()
@@ -396,9 +405,11 @@ private fun Strip(
                             if (a != null) aspects[index] = a
                         },
                         onBackgroundColour = { pageBackgrounds[index] = it },
+                        strip = stripPage,
                     )
                 }
             }
+        }
         }
         ReaderChrome(
             visible = chrome, page = listState.firstVisibleItemIndex, pageCount = pageCount,
@@ -574,6 +585,8 @@ private fun PageSlot(
     onCropDecided: ((CropRect?) -> Unit)? = null,
     /** Fires once per load with this page's sampled edge colour (§4, §5.2, milestone 5). */
     onBackgroundColour: (Color) -> Unit = {},
+    /** Set in a continuous strip, which zooms as a whole: see [StripPage]. */
+    strip: StripPage? = null,
 ) {
     var image by remember(index) { mutableStateOf<PageImage?>(null) }
     var attempts by remember(index) { mutableIntStateOf(0) }
@@ -598,7 +611,7 @@ private fun PageSlot(
         onPagerLockChanged = onPagerLockChanged, onEdgeSwipe = onEdgeSwipe, onTapZone = onTapZone,
         spreadSide = spreadSide, onBaseReady = onBaseReady, zoomSteps = zoomSteps,
         onCropDecided = onCropDecided, onBackgroundColour = onBackgroundColour,
-        onInvalidate = { vm.invalidatePage(index); attempts++ }, dark = prefs.darkPages,
+        onInvalidate = { vm.invalidatePage(index); attempts++ }, dark = prefs.darkPages, strip = strip,
     )
 }
 
@@ -628,6 +641,7 @@ private fun PageSlotContent(
     onBackgroundColour: (Color) -> Unit,
     onInvalidate: () -> Unit,
     dark: Boolean,
+    strip: StripPage? = null,
 ) {
     // Draw-observed colour state for §4. The colour is NEVER read in composition: one
     // lifecycle-aware collector writes it into draw-observed state, so a slider drag
@@ -670,6 +684,12 @@ private fun PageSlotContent(
             onBackgroundColour = onBackgroundColour,
             colour = colourState,
             upscaler = upscaler,
+            // Border crop trims a scan's empty margins. A document's margins are designed, and
+            // its thin marginal labels read as blank on the crop thumbnail: cropping cut them.
+            cropEnabled = !vm.isPdf.collectAsStateWithLifecycle().value,
+            onDoubleTapInWindow = strip?.onDoubleTap,
+            onTapInWindow = strip?.onTap,
+            maxBaseWidth = strip?.maxBaseWidth,
         )
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
