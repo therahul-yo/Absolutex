@@ -38,6 +38,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -487,6 +488,71 @@ class ReaderViewModelTest {
             withTimeout(10_000) { shedFired.await(); true }
         }
         assertTrue("the host shed must fire when a page throws OOM", fired)
+    }
+
+    @Test fun `a settle asks the host for the whole window in ONE batch`() = test {
+        // The "built but never called" defect, at the ViewModel level. The engine-level test
+        // proves the ENGINE batches; this proves the shipped ReaderViewModel hands it a
+        // supplier that reaches the archive. Unwire either and this goes red.
+        //
+        // 20 pages, because a one-page book plans no window at all and a settle past the end
+        // is out of range -- a vacuous pass is the failure mode here, not a red one.
+        //
+        // The source is a FakeComicSource, not a LibArchiveSource, so batchPageBytes returns
+        // null and the pages decode individually exactly as before. What is proven is that
+        // the ViewModel's OWN wiring reaches the batch supplier with the whole window as ONE
+        // request, not that this particular fake could serve it.
+        val opener = object : BookOpener {
+            override suspend fun open(uri: Uri, password: String?): Pair<Closeable, String> {
+                val src = object : ComicSource {
+                    override val pages = (0 until 20).map { Page(it, "p$it.jpg") }
+                    override fun openPage(index: Int): InputStream =
+                        ByteArrayInputStream(ByteArray(0))
+                    override fun close() = Unit
+                }
+                return src to uri.toString()
+            }
+        }
+        val vm = vm(opener)
+        vm.open(uri("batch-book"))
+        advanceUntilIdle()
+        assertEquals("book must open", 20, vm.ui.value.pageCount)
+        vm.batchRequests.clear()
+
+        vm.onPageChanged(1)
+        advanceUntilIdle()
+
+        assertEquals(
+            "the ViewModel must be asked once for the whole window, got ${vm.batchRequests}",
+            1,
+            vm.batchRequests.size,
+        )
+        val asked = vm.batchRequests.first()
+        // Consecutive and ahead of the settled page: the shape a single archive walk serves.
+        assertEquals(asked.indices.map { asked.first() + it }, asked)
+        assertTrue("window must be ahead of the settled page, got $asked", asked.all { it > 1 })
+        // The batch path must have CONSULTED the live source, not been short-circuited to
+        // null. A recording beside the call site would still pass with the call removed, so
+        // the assertion is on the source that was actually asked -- that is what makes this
+        // test catch an unwired batchPageBytes rather than merely count requests.
+        assertTrue(
+            "the batch path must consult the open source, saw ${vm.batchSources}",
+            vm.batchSources.any { it != null },
+        )
+    }
+
+    @Test fun `a source with no batch reader leaves the pages to decode individually`() = test {
+        // The other half of the contract: a non-archive source must be completely unaffected.
+        // batchPageBytes returns null, nothing is staged, and no page is lost.
+        val vm = vm(FakeBookOpener())
+        vm.open(uri("plain-book"))
+        advanceUntilIdle()
+        assertEquals("book must open", 1, vm.ui.value.pageCount)
+
+        vm.onPageChanged(0)
+        advanceUntilIdle()
+        assertEquals("nothing may be staged when the source cannot batch", 0, vm.prefetch.stagedPageCount)
+        assertNull("no staged bytes for a non-batchable page", vm.prefetch.takeStagedBytes(0))
     }
 
     @Test fun `a book switch resets the running-max estimate`() = test {

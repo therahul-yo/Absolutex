@@ -4,6 +4,7 @@ import com.absolutex.model.PageLayout
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
@@ -50,12 +51,50 @@ class PrefetchEngine(
     private val pageBytesEstimate: (page: Int) -> Long,
     /** Actual bytes a decoded page holds, once it lands. */
     private val onDecoded: (page: Int, estimated: Long, image: PageImage) -> Long,
+    /**
+     * Optional: fetch a CONTIGUOUS run of pages' bytes in one archive walk, before any of
+     * them decode. Null means the host has no batch reader — a folder, a remote source, a
+     * test — and every page then decodes on its own exactly as before.
+     *
+     * This is a prefetch of *bytes*, not of decoded pages: the pages still decode in
+     * parallel on [decodeDispatcher] afterwards. It exists because a per-ordinal archive read
+     * re-walks every entry header from zero, so a window of N pages read individually costs N
+     * walks — 61.2 ms against 45.8 ms for a 10-page window at page 151 of the 300-page 6 MP
+     * corpus (tools/bench-decode.sh).
+     *
+     * Must return a map parallel to the requested pages, or null if it could not serve the
+     * run. The engine treats null as "no prefetch" and falls back, so a source that cannot
+     * batch is never a broken one.
+     */
+    private val prefetchWindow: (suspend (pages: List<Int>) -> Map<Int, ByteArray?>?)? = null,
     /** Decode one page, classifying the outcome at the boundary that sees the cause. */
     internal var decode: suspend (page: Int) -> DecodeOutcome,
 ) {
 
     private val inFlight = ConcurrentHashMap<Int, PrefetchEntry>()
     private val resident = LinkedHashMap<Int, Long>()
+
+    /**
+     * Compressed bytes fetched by one archive walk and waiting for their decode to claim
+     * them. Its own class because boundedness, consume-once and book-scoping are invariants
+     * with real failure modes, and they read better as one small unit than as four more
+     * functions in an already-full class.
+     */
+    private val staged = StagedBytes()
+
+    /**
+     * The budget invariant, factored out so the engine keeps only the landing and planning
+     * that need its own state. Shares this class's [resident] map and monitor.
+     *
+     * `onEvicted` is a constructor parameter rather than a property, so it is readable here
+     * without declaring a field that would then need initialising before this one.
+     */
+    private val eviction = EvictionPolicy(
+        resident = resident,
+        tileBytes = { tileBytes() },
+        budgetBytes = { budgetBytes() },
+        onEvicted = { page, bytes -> onEvicted(page, bytes) },
+    )
 
     @Volatile
     private var settled = -1
@@ -91,6 +130,41 @@ class PrefetchEngine(
      */
     @Volatile
     private var generation = 0
+
+    /**
+     * The window currently being staged, or null.
+     *
+     * One per window, not one per book: a new window supersedes the old, because both would
+     * stage into the same map and the newer walk is the one whose pages are being decoded.
+     * Decodes join [WindowStage.ready] rather than reading the map directly, so a decode
+     * cannot lose the race against the walk that is meant to feed it.
+     */
+    @Volatile
+    private var stage: WindowStage? = null
+
+    /**
+     * One window's batch read.
+     *
+     * [ready] completes when the walk finishes, whether it produced bytes or not, so a
+     * decode waiting on it always wakes: a failed stage is a fallback to a single read, not
+     * a hang. Completing on failure is the whole reason a caller can write
+     * `stage?.ready?.await(); takeStagedBytes(page)` without a timeout.
+     *
+     * [generation] is the book's generation when the walk was launched. A stage whose
+     * generation has moved writes nothing — without that, a book-A walk still in flight
+     * lands after [dropAll] and stages A's bytes under page numbers book B also has, and B
+     * then decodes and shows A's page. This is the same guard [launchDecode] applies to a
+     * landing, extended to the staging path that precedes it.
+     *
+     * [targets] is the window this stage serves, and it is what [takeStagedBytes] consults
+     * to decide whether a page should wait at all. Only a page the walk can actually feed
+     * has a reason to block on it.
+     */
+    private class WindowStage(
+        val generation: Int,
+        val targets: List<Int>,
+        val ready: CompletableDeferred<Unit>,
+    )
 
     /** A settle: update direction, cancel behind-work, restore the budget, plan ahead. */
     fun onSettled(page: Int, pageCount: Int, layout: PageLayout, depth: Int) {
@@ -142,22 +216,110 @@ class PrefetchEngine(
     private fun planWindow(page: Int, pageCount: Int, layout: PageLayout, depth: Int) {
         if (batchStopped) return
         val window = PrefetchPlanner.window(page, pageCount, layout, direction, depth)
-        for (target in window) {
+        val targets = window.filter { !inFlight.containsKey(it) && !resident.containsKey(it) }
+        if (targets.isEmpty()) return
+        // Bytes first, then plan: the whole point is that one archive walk serves several
+        // pages, and that has to happen BEFORE the individual decodes are planned. Doing it
+        // after would leave the reads exactly as N walks.
+        //
+        // The stage is published BEFORE the launch, so a decode cannot observe a window
+        // whose decodes are already running but whose stage is not yet visible. The job is
+        // retained so dropAll can cancel it; before this it was launched untracked, and a
+        // walk still in flight at a book switch landed into the next book's page numbers.
+        val thisStage = WindowStage(generation, targets, CompletableDeferred())
+        stage = thisStage
+        stageJob = scope.launch(decodeDispatcher) {
+            try {
+                stageBytes(targets, thisStage.generation)
+            } finally {
+                // Always release the decodes waiting on this stage, including when the walk
+                // was cancelled or threw: a decode parked on `ready` must wake and fall back
+                // to a single read, never hang.
+                thisStage.ready.complete(Unit)
+            }
+        }
+        for (target in targets) {
             if (batchStopped) return
-            if (inFlight.containsKey(target) || resident.containsKey(target)) continue
             planOne(target, page)
         }
     }
 
-    /** Plans a single target: makes room, checks budget, launches. */
+    /** The in-flight window stage, or null when no window has been planned. */
+    @Volatile
+    private var stageJob: Job? = null
+
+    /**
+     * Reads a contiguous run of the window in one archive walk, for the decodes to claim.
+     *
+     * Best-effort throughout, and never a failure: a null supplier, a non-contiguous window,
+     * a short map, or a source that cannot batch all leave every page decoding individually,
+     * which is the pre-existing behaviour. The optimisation must not be able to fail a page.
+     *
+     * [launchedGeneration] is captured by the caller, not read here: a walk that spans a book
+     * switch must be judged against the book it was launched for, not the one current when
+     * it finishes.
+     */
+    private suspend fun stageBytes(targets: List<Int>, launchedGeneration: Int) {
+        val batch = prefetchWindow ?: return
+        val first = targets.first()
+        // Only a genuinely consecutive run is worth one walk. A spread layout plans both
+        // halves of each spread, so its window is consecutive; a future stride-2 window
+        // would not be, and this is where that would be refused.
+        if (targets.withIndex().any { (i, target) -> target != first + i }) return
+        val bytes = runCatching { batch(targets) }.getOrNull()
+        // The generation is handed to StagedBytes, which compares and writes under ONE
+        // lock. Doing it here as a separate `if` was check-then-act: a dropAll landing
+        // between the check and the put would pass the check and then write the old book's
+        // bytes into the new book's map moments after emptying it. StagedBytes owns the
+        // generation so the two cannot interleave.
+        staged.put(targets, bytes, launchedGeneration)
+    }
+
+    /**
+     * Bytes staged for [page] by its window's single archive walk, or null.
+     *
+     * Suspending, and joining the window's stage first, because the stage and the decodes
+     * start together: a decode that ran before the walk returned would find nothing staged
+     * and read its page individually, costing N walks *plus* the batch walk and leaving its
+     * bytes unclaimed forever. Joining makes the saving guaranteed rather than timing-
+     * dependent. A stage that produced nothing simply yields null, and the host's existing
+     * single-read path takes over.
+     *
+     * Public because the HOST owns the decode and must be the one to claim: the engine never
+     * sees a page's bytes, only its decoded image, so it cannot claim on the host's behalf.
+     */
+    suspend fun takeStagedBytes(page: Int): ByteArray? {
+        // Wait ONLY for a page this window is actually reading. The on-screen page, a seek
+        // target and a thumbnail tap all come through here, and they are usually OUTSIDE the
+        // prefetch window: the walk cannot produce their bytes, so waiting on it would put a
+        // background 10-page read in front of a user-visible page load for nothing. Those
+        // return immediately and read their own page, as before.
+        stage?.takeIf { page in it.targets }?.ready?.await()
+        return staged.take(page)
+    }
+
+    /**
+     * Pages staged but not yet claimed.
+     *
+     * Public for the same reason [takeStagedBytes] is: the host is the claimant, so an
+     * assertion that nothing leaked has to be able to ask. A test that could only observe
+     * "did the batch get called" would pass even with a map that never drained, which is
+     * precisely the leak this number rules out.
+     */
+    val stagedPageCount: Int get() = staged.size
+
+    /**
+     * Plans a single target: makes room, checks budget, launches.
+     *
+     * The eviction half is delegated because the same rule serves here and in [reconcile]:
+     * evict farthest from the reader first, never the page in hand or the one about to be
+     * decoded, and stop when a round frees nothing. Duplicating that loop is how the two
+     * would drift apart.
+     */
     private fun planOne(target: Int, page: Int) {
         // Make room farthest-first, never dropping the settled page or the page about to
         // be decoded; if the budget still says no, skip the page until the next settle.
-        while (tileBytes() + residentBytes + pageBytesEstimate(target) > budgetBytes()) {
-            val order = evictCandidates(page, protect = target)
-            if (order.isEmpty() || evictOne(order) <= 0) break
-        }
-        if (tileBytes() + residentBytes + pageBytesEstimate(target) > budgetBytes()) return
+        if (!eviction.makeRoom(page, protect = target, direction, pageBytesEstimate(target))) return
         launchDecode(target)
     }
 
@@ -213,42 +375,27 @@ class PrefetchEngine(
     }
 
     /** Restores the budget invariant: evict farthest-first until tile + resident fits. */
-    private fun reconcile(protect: Int) {
-        var over = tileBytes() + residentBytes - budgetBytes()
-        var canEvict = true
-        while (over > 0 && canEvict) {
-            val order = evictCandidates(settled, protect)
-            val freed = if (order.isEmpty()) -1 else evictOne(order)
-            if (freed <= 0) canEvict = false else over -= freed
-        }
-    }
-
-    /** Eviction candidates, farthest from [page] first, never the protected pages. */
-    private fun evictCandidates(page: Int, protect: Int): List<Int> =
-        PrefetchPlanner.evictOrder(
-            synchronized(resident) {
-                resident.keys.filter { it != settled && it != protect }
-            }.toSet(),
-            page,
-            direction,
-        )
-
-    /** Drops the first candidate and reports it through [onEvicted]; returns bytes freed. */
-    private fun evictOne(order: List<Int>): Long {
-        val victim = order.firstOrNull() ?: return 0
-        val bytes = synchronized(resident) { resident.remove(victim) } ?: return 0
-        onEvicted(victim, bytes)
-        return bytes
-    }
+    private fun reconcile(protect: Int) =
+        eviction.reconcile(settled, protect, direction)
 
     /** Drops every prefetched page and cancels every in-flight decode. For book close/trim. */
     fun dropAll() {
         // Invalidate every in-flight decode: a non-cancellable one can outlive this call,
         // and its landing must not write into the next book's resident set.
         generation++
+        // Cancel the in-flight window read. Clearing `staged` alone is not enough: the walk
+        // is an independent coroutine that can still be inside a blocking native extract, and
+        // it would land afterwards under the NEW book's page numbers. The generation check in
+        // stageBytes is the second line of defence for the walk that ignores cancellation.
+        stageJob?.cancel()
+        stageJob = null
+        stage = null
         inFlight.values.forEach { it.job.cancel() }
         inFlight.clear()
         synchronized(resident) { resident.clear() }
+        // Staged bytes belong to the book being dropped, and the generation bump is part of
+        // the same lock as a staging write -- see StagedBytes.put.
+        staged.clear(generation)
     }
 
 }

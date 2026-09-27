@@ -53,6 +53,46 @@ class LibArchiveSource private constructor(
         return ByteArrayInputStream(bytes)
     }
 
+    /**
+     * A contiguous run of pages in one archive walk, for the prefetch window.
+     *
+     * [openPage] is right for a single page — a page turn, a bookmark, a scan — and stays the
+     * path for those. This is for the one caller that always wants a consecutive run, because
+     * each `openPage` re-walks every entry header from zero: on the 300-page 6 MP corpus,
+     * extracting a 10-page window from page 151 costs 61.2 ms as 10 calls and 45.8 ms as one
+     * (tools/bench-decode.sh). The saving is paid on every window the reader opens.
+     *
+     * Returns a list parallel to [indexes], each element an open stream or null for the page
+     * the archive could not give -- the same per-page verdict [openPage] reaches, so a torn
+     * page in a 300-page book costs one page rather than the window. Callers must therefore
+     * check each element rather than treating the list as all-or-nothing.
+     *
+     * @throws IndexOutOfBoundsException if any index is out of range, before reading anything:
+     *   a partially applied window would be worse than none.
+     * @throws IOException if the archive cannot be read at all.
+     */
+    fun openPages(indexes: List<Int>): List<InputStream?> {
+        if (indexes.isEmpty()) return emptyList()
+        // planWindow checks bounds BEFORE any read, and only a genuine run becomes a window.
+        // A scattered set is served one page at a time, which is what it would have cost
+        // anyway — routing it through the window path would save nothing and would be
+        // misleading to read.
+        val run = planWindow(indexes, ordinals) as? WindowPlan.Run
+            ?: return indexes.map { openPage(it) }
+        val bytes = traced("absx.entryExtract") {
+            passphrase.useBytes { password ->
+                openFd().use { pfd ->
+                    LibArchive.nativeExtractWindow(
+                        pfd.fd, run.fromOrdinal, run.count, password,
+                    )
+                }
+            }
+        } ?: throw IOException("unreadable archive")
+        // Checked, not indexed: a short result would silently shift every page after the gap.
+        requireWindowSize(bytes.size, indexes.size)
+        return bytes.map { it?.let(::ByteArrayInputStream) }
+    }
+
     /** Owns no descriptor; clear the session password and reject subsequent reads. */
     override fun close() = passphrase.close()
 
