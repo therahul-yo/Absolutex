@@ -209,7 +209,12 @@ private fun LibraryTopBar(section: HomeSection, onOpenSettings: () -> Unit) {
         title = {
             // The section name is the title; it cross-fades rather than jumping.
             Crossfade(section, animationSpec = Motion.enter(), label = "title") { shown ->
-                Text(shown.label(), style = MaterialTheme.typography.headlineMedium)
+                // A gap before the settings button: the longest title fills the width otherwise.
+                AsciiTitle(
+                    shown.label(),
+                    fallback = MaterialTheme.typography.headlineMedium,
+                    modifier = Modifier.padding(end = Space.Row),
+                )
             }
         },
         actions = {
