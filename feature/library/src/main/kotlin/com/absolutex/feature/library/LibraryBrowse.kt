@@ -59,6 +59,8 @@ internal data class RowContext(
     val selectionActive: Boolean,
     val onOpen: (LibraryBookUi) -> Unit,
     val onToggleSelection: (String) -> Unit,
+    /** Grid columns in use: past a few, a card is too narrow for words and shows its cover alone. */
+    val columns: Int = 2,
 )
 
 /**
@@ -185,24 +187,9 @@ internal fun CoverCard(book: LibraryBookUi, isSelected: Boolean, context: RowCon
                 SelectedMark(isSelected)
             }
             book.progressFraction?.let { ReadingProgress(it, Modifier.padding(horizontal = Space.Gap)) }
-            Column(
-                Modifier.padding(horizontal = Space.Row, vertical = Space.Gap),
-                verticalArrangement = Arrangement.spacedBy(Space.Tight),
-            ) {
-                Text(
-                    book.displayName,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                // A comic card says how far in you are; a document, how big it is.
-                Text(
-                    (if (book.isBook) null else book.progressLabel()) ?: book.sizeLabel(),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                FormatAndDate(book, Modifier.padding(top = Space.Tight))
-            }
+            // A wall of covers past a few columns: a card that narrow wrapped its title a letter
+            // to a line and stood its format pill on end. The cover (and its progress) is the card.
+            if (context.columns < COVERS_ONLY_FROM) CardFooter(book, compact = context.columns >= COMPACT_FROM)
         }
     }
 }

@@ -1,10 +1,15 @@
 package com.absolutex.feature.library
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.CircleShape
 import kotlin.math.abs
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.distinctUntilChanged
-import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.LaunchedEffect
@@ -44,7 +49,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,13 +77,23 @@ internal fun ContinueReadingStrip(
     // Everything taken off: no header over an empty strip.
     if (shown.isEmpty()) return
     Column(modifier.padding(bottom = Space.Row)) {
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(stringResource(R.string.library_continue_reading), style = MaterialTheme.typography.titleMedium)
-            TextButton(onClick = onSeeAll) { Text(stringResource(R.string.library_see_all)) }
+        // One line on one baseline, flush with the grid's edges: a quiet label and a plain link.
+        // The TextButton's own padding pushed "See all" in from the edge and off the label's line.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                stringResource(R.string.library_continue_reading).uppercase(),
+                style = MaterialTheme.typography.labelLarge.copy(letterSpacing = 1.2.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                stringResource(R.string.library_see_all),
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable(role = Role.Button, onClick = onSeeAll)
+                    .padding(vertical = Space.Gap, horizontal = Space.Tight),
+            )
         }
         ContinueCarousel(shown, context, onHide = { hiddenVm.hide(it) })
     }
@@ -162,7 +176,11 @@ internal const val CONTINUE_LIMIT = 12
  */
 @Composable
 private fun ContinueCarousel(books: List<LibraryBookUi>, context: RowContext, onHide: (String) -> Unit) {
-    val list = rememberLazyListState()
+    // A wheel has no ends: the covers repeat both ways and the strip opens in the middle of the
+    // run, so there is a cover to either side from the first frame. One book cannot turn.
+    val loops = books.size > 1
+    val count = if (loops) books.size * LOOP_TURNS else books.size
+    val list = rememberLazyListState(initialFirstVisibleItemIndex = if (loops) books.size * (LOOP_TURNS / 2) else 0)
     val haptics = rememberHaptics()
     val spacing = CarouselSpacing
     LaunchedEffect(list) {
@@ -186,7 +204,8 @@ private fun ContinueCarousel(books: List<LibraryBookUi>, context: RowContext, on
             contentPadding = PaddingValues(horizontal = side),
             modifier = Modifier.padding(vertical = CarouselLift),
         ) {
-            items(books, key = { "continue:${it.path}" }) { book ->
+            items(count, key = { i -> "continue:$i:${books[i % books.size].path}" }) { i ->
+                val book = books[i % books.size]
                 ContinueCard(
                     book,
                     onOpen = { context.onOpen(book) },
@@ -195,7 +214,7 @@ private fun ContinueCarousel(books: List<LibraryBookUi>, context: RowContext, on
                         .width(ContinueWidth)
                         .animateItem()
                         .graphicsLayer {
-                            val d = list.offsetFromCentre(book.path, spacing.toPx())
+                            val d = list.offsetFromCentre(i, spacing.toPx())
                             val away = abs(d).coerceAtMost(MAX_AWAY)
                             val shrink = 1f - SHRINK * away
                             scaleX = shrink
@@ -203,11 +222,15 @@ private fun ContinueCarousel(books: List<LibraryBookUi>, context: RowContext, on
                             rotationY = -TURN_DEGREES * d.coerceIn(-MAX_AWAY, MAX_AWAY)
                             translationY = ARC.toPx() * away * away
                             translationX = -PULL.toPx() * d.coerceIn(-MAX_AWAY, MAX_AWAY)
-                            alpha = 1f - FADE * away
-                            // Fade each draw, not an offscreen copy of the card: the default
-                            // composited every side card to a buffer on every frame of a spin.
-                            compositingStrategy = CompositingStrategy.ModulateAlpha
                             cameraDistance = CAMERA * density
+                        }
+                        // Side covers dim under a black veil drawn over them. Not alpha: fading
+                        // the card either composited it offscreen on every frame of a spin, or
+                        // (per draw) let the placeholder under the cover show through it.
+                        .drawWithContent {
+                            drawContent()
+                            val away = abs(list.offsetFromCentre(i, spacing.toPx())).coerceAtMost(MAX_AWAY)
+                            if (away > 0f) drawRect(Color.Black.copy(alpha = FADE * away))
                         },
                 )
             }
@@ -222,15 +245,18 @@ private fun LazyListState.centredIndex(): Int {
     return info.visibleItemsInfo.minByOrNull { abs(it.offset + it.size / 2 - centre) }?.index ?: -1
 }
 
-/** How many card-widths [key]'s centre is from the viewport's: 0 centred, negative to the left. */
-private fun LazyListState.offsetFromCentre(key: Any, spacing: Float): Float {
+/** How many card-widths item [index]'s centre is from the viewport's: 0 centred, negative left. */
+private fun LazyListState.offsetFromCentre(index: Int, spacing: Float): Float {
     val info = layoutInfo
-    val item = info.visibleItemsInfo.firstOrNull { it.key == "continue:$key" } ?: return 0f
+    val item = info.visibleItemsInfo.firstOrNull { it.index == index } ?: return 0f
     val centre = (info.viewportStartOffset + info.viewportEndOffset) / 2f
     return (item.offset + item.size / 2f - centre) / (item.size + spacing)
 }
 
 private val CarouselSpacing = 4.dp
+
+/** Times the covers repeat: enough that no fling reaches an end. */
+private const val LOOP_TURNS = 400
 
 /** Headroom for the arc: side covers drop, and must not be clipped by the row. */
 private val CarouselLift = 6.dp

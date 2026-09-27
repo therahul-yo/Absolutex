@@ -287,6 +287,7 @@ private fun LibraryContent(
         selectionActive = state.selectionActive,
         onOpen = { book -> onOpenBook(book.path) },
         onToggleSelection = actions.onToggleSelection,
+        columns = state.grid.columnsFor(landscape),
     )
     // Material fade-through between tabs: the old tab fades out fast, the new one fades in just
     // after, and each renders its own state — the outgoing grid never flashes the new tab's books.
