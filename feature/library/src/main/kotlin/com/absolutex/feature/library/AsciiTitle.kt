@@ -75,7 +75,7 @@ internal fun asciiBanner(text: String): List<String>? {
 private const val FULL = '█'
 private const val GLYPH_ROWS = 7
 /** The largest a pixel of the banner is drawn. */
-private val MAX_CELL = 7.dp
+private val MAX_CELL = 3.5.dp
 
 /** A lit pixel fills this much of its cell, so the blocks read as blocks with a hairline gap. */
 private const val BLOCK_FILL = 0.88f
