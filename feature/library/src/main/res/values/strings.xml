@@ -105,6 +105,7 @@
     <!-- Badge on a comic that has not been opened. -->
     <string name="library_badge_new">New</string>
     <string name="library_continue_reading">Continue reading</string>
+    <string name="library_continue_remove">Remove from Continue reading</string>
     <string name="library_see_all">See all</string>
     <!-- Under a series stack: how many issues, and how many of them are finished. -->
     <plurals name="library_series_count">

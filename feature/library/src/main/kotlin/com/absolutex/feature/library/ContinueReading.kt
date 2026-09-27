@@ -1,10 +1,39 @@
 package com.absolutex.feature.library
 
 import androidx.compose.foundation.layout.Arrangement
+import kotlin.math.abs
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.distinctUntilChanged
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.gestures.snapping.SnapPosition
+import com.absolutex.core.ui.rememberHaptics
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.material3.Icon
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.Role
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -37,7 +66,12 @@ internal fun ContinueReadingStrip(
     context: RowContext,
     onSeeAll: () -> Unit,
     modifier: Modifier = Modifier,
+    hiddenVm: ContinueHiddenViewModel = hiltViewModel(),
 ) {
+    val hidden by hiddenVm.hidden.collectAsStateWithLifecycle()
+    val shown = books.filter { isShown(it, hidden) }
+    // Everything taken off: no header over an empty strip.
+    if (shown.isEmpty()) return
     Column(modifier.padding(bottom = Space.Row)) {
         Row(
             Modifier.fillMaxWidth(),
@@ -47,20 +81,7 @@ internal fun ContinueReadingStrip(
             Text(stringResource(R.string.library_continue_reading), style = MaterialTheme.typography.titleMedium)
             TextButton(onClick = onSeeAll) { Text(stringResource(R.string.library_see_all)) }
         }
-        LazyRow(
-            modifier = Modifier.layout { measurable, constraints ->
-                val edge = Space.Edge.roundToPx()
-                val wide = constraints.copy(maxWidth = constraints.maxWidth + edge * 2)
-                val placeable = measurable.measure(wide)
-                layout(constraints.maxWidth, placeable.height) { placeable.place(-edge, 0) }
-            },
-            horizontalArrangement = Arrangement.spacedBy(Space.Row),
-            contentPadding = PaddingValues(horizontal = Space.Edge),
-        ) {
-            items(books, key = { "continue:${it.path}" }) { book ->
-                ContinueCard(book, onOpen = { context.onOpen(book) }, Modifier.width(ContinueWidth))
-            }
-        }
+        ContinueCarousel(shown, context, onHide = { hiddenVm.hide(it) })
     }
 }
 
@@ -70,10 +91,24 @@ internal fun ContinueReadingStrip(
  * and its surface squared the cover off against the card's edge. Here the cover is the card.
  */
 @Composable
-private fun ContinueCard(book: LibraryBookUi, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+private fun ContinueCard(book: LibraryBookUi, onOpen: () -> Unit, onHide: () -> Unit, modifier: Modifier = Modifier) {
+    var menu by remember { mutableStateOf(false) }
+    val haptics = rememberHaptics()
+    val hideLabel = stringResource(R.string.library_continue_remove)
+    Box(modifier) {
     Column(
         // Not clipped: the cover rounds its own corners, and a clip here cut into the last line.
-        modifier.clickable(role = Role.Button, onClick = onOpen),
+        Modifier
+            .combinedClickable(
+                role = Role.Button,
+                onClick = onOpen,
+                onLongClick = {
+                    haptics.confirm()
+                    menu = true
+                },
+            )
+            // Long-press is not a gesture TalkBack offers; the same action, reachable without it.
+            .semantics { customActions = listOf(CustomAccessibilityAction(hideLabel) { onHide(); true }) },
         verticalArrangement = Arrangement.spacedBy(Space.Tight),
     ) {
         BookCover(book, Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
@@ -100,7 +135,111 @@ private fun ContinueCard(book: LibraryBookUi, onOpen: () -> Unit, modifier: Modi
             )
         }
     }
+    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+        DropdownMenuItem(
+            text = { Text(hideLabel) },
+            leadingIcon = { Icon(Icons.Outlined.VisibilityOff, contentDescription = null) },
+            onClick = {
+                menu = false
+                onHide()
+            },
+        )
+    }
+    }
 }
 
 private val ContinueWidth = 132.dp
 internal const val CONTINUE_LIMIT = 12
+
+/**
+ * The strip as a wheel: the centred cover full size and facing the reader, its neighbours
+ * shrinking, turning away and dropping along an arc as they leave the middle. A fling glides and
+ * always settles with one cover centred, and each cover that reaches the middle clicks, so the
+ * strip spins like a fidget toy rather than scrolling like the grid below it.
+ *
+ * Every transform is read in the layer block from the list's own layout, so scrolling moves
+ * layers only: nothing recomposes while it spins.
+ */
+@Composable
+private fun ContinueCarousel(books: List<LibraryBookUi>, context: RowContext, onHide: (String) -> Unit) {
+    val list = rememberLazyListState()
+    val haptics = rememberHaptics()
+    val spacing = CarouselSpacing
+    LaunchedEffect(list) {
+        snapshotFlow { list.centredIndex() }.drop(1).distinctUntilChanged().collect { haptics.select() }
+    }
+    BoxWithConstraints(
+        // Edge to edge: the grid around the strip is inset by Space.Edge, and a wheel clipped short
+        // of the screen's edge reads as a box, not a wheel.
+        Modifier.layout { measurable, constraints ->
+            val edge = Space.Edge.roundToPx()
+            val placeable = measurable.measure(constraints.copy(maxWidth = constraints.maxWidth + edge * 2))
+            layout(constraints.maxWidth, placeable.height) { placeable.place(-edge, 0) }
+        },
+    ) {
+        // Room either side for the first and last cover to sit in the middle.
+        val side = ((maxWidth - ContinueWidth) / 2).coerceAtLeast(0.dp)
+        LazyRow(
+            state = list,
+            flingBehavior = rememberSnapFlingBehavior(list, SnapPosition.Center),
+            horizontalArrangement = Arrangement.spacedBy(spacing),
+            contentPadding = PaddingValues(horizontal = side),
+            modifier = Modifier.padding(vertical = CarouselLift),
+        ) {
+            items(books, key = { "continue:${it.path}" }) { book ->
+                ContinueCard(
+                    book,
+                    onOpen = { context.onOpen(book) },
+                    onHide = { onHide(book.path) },
+                    modifier = Modifier
+                        .width(ContinueWidth)
+                        .animateItem()
+                        .graphicsLayer {
+                            val d = list.offsetFromCentre(book.path, spacing.toPx())
+                            val away = abs(d).coerceAtMost(MAX_AWAY)
+                            val shrink = 1f - SHRINK * away
+                            scaleX = shrink
+                            scaleY = shrink
+                            rotationY = -TURN_DEGREES * d.coerceIn(-MAX_AWAY, MAX_AWAY)
+                            translationY = ARC.toPx() * away * away
+                            translationX = -PULL.toPx() * d.coerceIn(-MAX_AWAY, MAX_AWAY)
+                            alpha = 1f - FADE * away
+                            // Fade each draw, not an offscreen copy of the card: the default
+                            // composited every side card to a buffer on every frame of a spin.
+                            compositingStrategy = CompositingStrategy.ModulateAlpha
+                            cameraDistance = CAMERA * density
+                        },
+                )
+            }
+        }
+    }
+}
+
+/** The index of the item whose centre is nearest the viewport's, or -1 with nothing laid out. */
+private fun LazyListState.centredIndex(): Int {
+    val info = layoutInfo
+    val centre = (info.viewportStartOffset + info.viewportEndOffset) / 2
+    return info.visibleItemsInfo.minByOrNull { abs(it.offset + it.size / 2 - centre) }?.index ?: -1
+}
+
+/** How many card-widths [key]'s centre is from the viewport's: 0 centred, negative to the left. */
+private fun LazyListState.offsetFromCentre(key: Any, spacing: Float): Float {
+    val info = layoutInfo
+    val item = info.visibleItemsInfo.firstOrNull { it.key == "continue:$key" } ?: return 0f
+    val centre = (info.viewportStartOffset + info.viewportEndOffset) / 2f
+    return (item.offset + item.size / 2f - centre) / (item.size + spacing)
+}
+
+private val CarouselSpacing = 4.dp
+
+/** Headroom for the arc: side covers drop, and must not be clipped by the row. */
+private val CarouselLift = 6.dp
+private val ARC = 10.dp
+private val PULL = 14.dp
+
+/** Beyond this many card-widths from the middle, a cover stops changing. */
+private const val MAX_AWAY = 1.6f
+private const val SHRINK = 0.16f
+private const val FADE = 0.3f
+private const val TURN_DEGREES = 24f
+private const val CAMERA = 14f
