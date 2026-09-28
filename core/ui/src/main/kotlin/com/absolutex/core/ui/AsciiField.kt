@@ -15,6 +15,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -72,7 +73,9 @@ fun AsciiField(
             }
         }
     }
-    Canvas(modifier) {
+    // Its own layer: the field's drawing is recorded once per tick and replayed while anything
+    // over it moves. Sharing the parent's layer, every frame of a page swipe redrew every glyph.
+    Canvas(modifier.graphicsLayer()) {
         val cellW = paint.measureText("M")
         val metrics = paint.fontMetrics
         val cellH = metrics.descent - metrics.ascent

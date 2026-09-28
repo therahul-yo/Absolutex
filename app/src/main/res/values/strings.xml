@@ -23,6 +23,9 @@
     <string name="onboarding_flow_ltr">Left to right</string>
     <string name="onboarding_flow_rtl">Manga</string>
     <string name="onboarding_flow_vertical">Vertical</string>
+    <string name="onboarding_flow_ltr_hint">Pages turn to the left, like most comics.</string>
+    <string name="onboarding_flow_rtl_hint">Right to left, the way manga is printed.</string>
+    <string name="onboarding_flow_vertical_hint">One long scroll, for webtoons.</string>
     <string name="onboarding_true_black">True black</string>
     <string name="onboarding_true_black_body">Pure black backgrounds. On an OLED screen the pixels switch off.</string>
     <string name="onboarding_choices_title">A few choices</string>

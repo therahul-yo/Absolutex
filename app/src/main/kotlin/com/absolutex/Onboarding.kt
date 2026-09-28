@@ -6,6 +6,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,9 +33,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -112,20 +114,22 @@ internal fun Onboarding(onAddFolder: (Uri) -> Unit, vm: OnboardingViewModel = hi
 /** A page: a heading, a line or two of why, and whatever the page lets you choose. */
 @Composable
 private fun OnboardingPage(title: String, body: String, content: @Composable () -> Unit = {}) {
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
+    // Top-aligned at one height on every page, so titles line up as the pages slide. Centred,
+    // each page's title sat at a different height and jumped on every swipe.
+    Column(Modifier.fillMaxSize().padding(top = PageTop)) {
         Text(title, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
         Spacer(Modifier.height(Gap))
         Text(body, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(Edge))
+        Spacer(Modifier.height(Section))
         content()
     }
 }
 
 @Composable
 private fun WelcomePage() {
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
+    Column(Modifier.fillMaxSize().padding(top = PageTop)) {
         AsciiTitle(stringResource(R.string.app_name), fallback = MaterialTheme.typography.displaySmall)
-        Spacer(Modifier.height(Edge))
+        Spacer(Modifier.height(Section))
         Text(stringResource(R.string.onboarding_tagline), style = MaterialTheme.typography.displaySmall)
         Spacer(Modifier.height(Gap))
         Text(
@@ -168,27 +172,49 @@ private fun ReadingPage(vm: OnboardingViewModel) {
     val reader by vm.reader.collectAsStateWithLifecycle()
     val app by vm.app.collectAsStateWithLifecycle()
     val flows = listOf(
-        ReadingFlow.LTR to R.string.onboarding_flow_ltr,
-        ReadingFlow.RTL to R.string.onboarding_flow_rtl,
-        ReadingFlow.VERTICAL to R.string.onboarding_flow_vertical,
+        Triple(ReadingFlow.LTR, R.string.onboarding_flow_ltr, R.string.onboarding_flow_ltr_hint),
+        Triple(ReadingFlow.RTL, R.string.onboarding_flow_rtl, R.string.onboarding_flow_rtl_hint),
+        Triple(ReadingFlow.VERTICAL, R.string.onboarding_flow_vertical, R.string.onboarding_flow_vertical_hint),
     )
     OnboardingPage(
         stringResource(R.string.onboarding_reading_title),
         stringResource(R.string.onboarding_reading_body),
     ) {
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            flows.forEachIndexed { i, (flow, label) ->
-                SegmentedButton(
-                    selected = reader.readingFlow == flow,
-                    onClick = { vm.setReadingFlow(flow) },
-                    shape = SegmentedButtonDefaults.itemShape(i, flows.size),
-                ) { Text(stringResource(label)) }
+        Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(Tight)) {
+            flows.forEach { (flow, title, hint) ->
+                FlowOption(stringResource(title), stringResource(hint), reader.readingFlow == flow) {
+                    vm.setReadingFlow(flow)
+                }
             }
         }
-        Spacer(Modifier.height(Edge))
+        Spacer(Modifier.height(Section))
         ChoiceRow(
             R.string.onboarding_true_black, R.string.onboarding_true_black_body, app.trueBlack, vm::setTrueBlack,
         )
+    }
+}
+
+/** One reading direction as a full-width card: the chosen one filled light, the others outlined. */
+@Composable
+private fun FlowOption(title: String, hint: String, selected: Boolean, onClick: () -> Unit) {
+    val colours = MaterialTheme.colorScheme
+    val fill by animateColorAsState(
+        if (selected) colours.onSurface else Color.Transparent,
+        Motion.enter(),
+        label = "fill",
+    )
+    val ink = if (selected) colours.surface else colours.onSurface
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.large)
+            .background(fill)
+            .border(1.dp, if (selected) Color.Transparent else colours.outlineVariant, MaterialTheme.shapes.large)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .padding(horizontal = Card, vertical = Gap),
+    ) {
+        Text(title, style = MaterialTheme.typography.titleMedium, color = ink)
+        Text(hint, style = MaterialTheme.typography.bodyMedium, color = ink.copy(alpha = HINT_ALPHA))
     }
 }
 
@@ -202,7 +228,7 @@ private fun ChoicesPage(vm: OnboardingViewModel) {
         ChoiceRow(
             R.string.onboarding_covers, R.string.onboarding_covers_body, app.documentCovers, vm::setDocumentCovers,
         )
-        Spacer(Modifier.height(Gap))
+        Spacer(Modifier.height(Section))
         ChoiceRow(
             R.string.onboarding_image_folders,
             R.string.onboarding_image_folders_body,
@@ -214,16 +240,21 @@ private fun ChoicesPage(vm: OnboardingViewModel) {
 
 @Composable
 private fun ChoiceRow(title: Int, body: Int, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f).padding(end = Gap)) {
+    Row(
+        Modifier.fillMaxWidth().toggleable(checked, role = Role.Switch, onValueChange = onChange),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f).padding(end = Card)) {
             Text(stringResource(title), style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(Hair))
             Text(
                 stringResource(body),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Switch(checked = checked, onCheckedChange = onChange)
+        // The row toggles; the switch only shows the state, so TalkBack hears one control.
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 
@@ -251,12 +282,20 @@ private fun PageDots(pager: PagerState, modifier: Modifier = Modifier) {
 private const val PAGES = 4
 private val Edge = 24.dp
 private val Gap = 12.dp
+private val Tight = 10.dp
+private val Hair = 2.dp
+private val Card = 18.dp
+private val Section = 28.dp
+
+/** Where every page's content starts, so titles line up from page to page. */
+private val PageTop = 96.dp
+private const val HINT_ALPHA = 0.7f
 private val DotSize = 8.dp
 private val DotWide = 24.dp
 private val DotGap = 8.dp
 private val ScrimStops = arrayOf(
-    0f to Color.Black.copy(alpha = 0.2f),
-    0.3f to Color.Black.copy(alpha = 0.75f),
-    0.7f to Color.Black.copy(alpha = 0.75f),
-    1f to Color.Black.copy(alpha = 0.2f),
+    0f to Color.Black.copy(alpha = 0.1f),
+    0.25f to Color.Black.copy(alpha = 0.55f),
+    0.75f to Color.Black.copy(alpha = 0.55f),
+    1f to Color.Black.copy(alpha = 0.1f),
 )
