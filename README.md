@@ -4,6 +4,17 @@
 
 **[Download the latest APK](https://github.com/therahul-yo/Absolutex/releases/latest)** · [Website](https://absolutex.vercel.app/)
 
+<p align="center">
+  <img src="docs/screenshots/library.jpg" width="200" alt="The library: pixel-block title, the Continue reading wheel with the current book centred, and a grid of comic covers under a floating section bar">
+  <img src="docs/screenshots/reader.jpg" width="200" alt="A full-page splash of Batman under the bat-signal, edge to edge on true black">
+  <img src="docs/screenshots/reader-controls.jpg" width="200" alt="The reader's controls: page thumbnails, a seek slider and a bookmark">
+</p>
+<p align="center">
+  <img src="docs/screenshots/zoom.jpg" width="200" alt="The same page zoomed in on Batman, the linework still sharp">
+  <img src="docs/screenshots/epub-contents.jpg" width="200" alt="A 2,734-chapter web novel with its contents list and in-book search open">
+  <img src="docs/screenshots/settings.jpg" width="200" alt="Settings: night mode, true black, and the library's folders">
+</p>
+
 Open your comics, manga, PDFs and EPUBs straight from your phone or a network share, and read
 them on a true-black, distraction-free screen that keeps up with a 120 Hz display. Pages are
 rendered in tiles on the GPU, so zooming into a 6-megapixel scan stays sharp and smooth.
