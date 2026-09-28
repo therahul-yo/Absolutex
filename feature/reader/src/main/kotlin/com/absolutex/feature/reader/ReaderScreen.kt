@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -388,7 +389,8 @@ private fun Strip(
                 .onGloballyPositioned { stripPage.placed[0] = it }
                 .stripZoomGestures(zoom),
         ) {
-        LazyColumn(state = listState, modifier = Modifier.stripZoomLayout(zoom).fillMaxSize()) {
+        // Shorter than the screen (a one-page PDF), it sits in the middle; a longer strip is unchanged.
+        LazyColumn(Modifier.stripZoomLayout(zoom).fillMaxSize(), listState, verticalArrangement = Arrangement.Center) {
             items(pageCount) { index ->
                 val aspect = aspects[index]
                 val size = aspect?.let { Modifier.fillMaxWidth().aspectRatio(it) } ?: Modifier.fillParentMaxSize()
