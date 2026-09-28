@@ -1,4 +1,4 @@
-package com.absolutex.feature.library
+package com.absolutex.core.ui
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

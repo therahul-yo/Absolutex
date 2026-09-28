@@ -131,6 +131,8 @@ data class AppPrefs(
      * library at display time, so flipping it re-labels without a rescan.
      */
     val useOriginalFilename: Boolean = false,
+    /** The first-launch setup has been seen (finished or skipped): it is shown once, never again. */
+    val onboarded: Boolean = false,
 ) {
     companion object {
         const val DEFAULT_CACHE_MIB: Int = 512

@@ -58,6 +58,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.absolutex.core.scan.SortKey
+import com.absolutex.core.ui.AsciiTitle
 
 /**
  * The library screen.
