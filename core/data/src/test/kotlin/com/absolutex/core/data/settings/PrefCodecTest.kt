@@ -213,6 +213,7 @@ class PrefCodecTest {
                 PrefCodec.KEY_GENERIC_ARCHIVES,
                 PrefCodec.KEY_IMAGE_FOLDERS,
                 PrefCodec.KEY_DOCUMENT_COVERS,
+                PrefCodec.KEY_ONBOARDED,
                 LibraryPrefKeys.USE_ORIGINAL_FILENAME,
                 PrefCodec.KEY_READING_FLOW,
                 PrefCodec.KEY_FIT_MODE,
@@ -359,6 +360,7 @@ class PrefCodecTest {
         assertEquals("open_generic_archives", PrefCodec.KEY_GENERIC_ARCHIVES)
         assertEquals("open_image_folders", PrefCodec.KEY_IMAGE_FOLDERS)
         assertEquals("document_covers", PrefCodec.KEY_DOCUMENT_COVERS)
+        assertEquals("onboarded", PrefCodec.KEY_ONBOARDED)
         // Lane keys live in their own codec file, but they are on disk just the same.
         assertEquals("use_original_filename", LibraryPrefKeys.USE_ORIGINAL_FILENAME)
         assertEquals("reading_flow", PrefCodec.KEY_READING_FLOW)

@@ -2,6 +2,7 @@ package com.absolutex
 
 import com.absolutex.feature.settings.SettingsScreen
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.Crossfade
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Box
@@ -105,7 +106,12 @@ class MainActivity : ComponentActivity() {
             }
             AbsolutexTheme(darkTheme = dark, dynamicColor = app.dynamicColour, trueBlack = app.trueBlack) {
                 CompositionLocalProvider(LocalBookCovers provides BookCoverSource(covers::cover)) {
-                    Root(directUri = direct)
+                    // The first-launch setup, once. Not for a book opened from another app: that
+                    // launch is about the book, and the setup waits for the next ordinary start.
+                    val setup = !app.onboarded && direct == null
+                    Crossfade(setup, animationSpec = Motion.enter(), label = "setup") { setup ->
+                        if (setup) Onboarding(onAddFolder = shell::addLocation) else Root(directUri = direct)
+                    }
                 }
             }
         }

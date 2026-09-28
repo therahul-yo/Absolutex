@@ -1,4 +1,4 @@
-package com.absolutex.feature.library
+package com.absolutex.core.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.MaterialTheme
@@ -30,7 +30,7 @@ import androidx.compose.ui.unit.dp
  * [fallback] rather than drawing a gap.
  */
 @Composable
-internal fun AsciiTitle(text: String, fallback: TextStyle, modifier: Modifier = Modifier) {
+fun AsciiTitle(text: String, fallback: TextStyle, modifier: Modifier = Modifier) {
     val rows = remember(text) { asciiBanner(text) }
     val described = modifier.clearAndSetSemantics {
         contentDescription = text
@@ -64,7 +64,7 @@ internal fun AsciiTitle(text: String, fallback: TextStyle, modifier: Modifier = 
 }
 
 /** The banner's rows, or null when [text] holds a letter the font does not draw. */
-internal fun asciiBanner(text: String): List<String>? {
+fun asciiBanner(text: String): List<String>? {
     val glyphs = text.uppercase().map { c -> if (c == ' ') SPACE else GLYPHS[c] ?: return null }
     return (0 until GLYPH_ROWS).map { row ->
         glyphs.joinToString(" ") { glyph -> glyph[row].map { if (it == '1') FULL else ' ' }.joinToString("") }

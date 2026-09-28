@@ -6,4 +6,29 @@
     <string name="end_next_is">Next: %1$s</string>
     <string name="end_next">Next</string>
     <string name="end_library">Library</string>
+    <string name="onboarding_skip">Skip</string>
+    <string name="onboarding_next">Next</string>
+    <string name="onboarding_start">Start reading</string>
+    <string name="onboarding_tagline">Every panel,\npin-sharp.</string>
+    <string name="onboarding_welcome_body">A fast, minimal reader for comics, manga, PDFs and EPUBs. True black, and pages drawn on the GPU.</string>
+    <string name="onboarding_folders_title">Where are your comics?</string>
+    <string name="onboarding_folders_body">Pick a folder. Absolutex reads everything inside it and keeps up as you add more. Add as many as you like.</string>
+    <string name="onboarding_add_folder">Add a folder</string>
+    <plurals name="onboarding_folders_added">
+        <item quantity="one">%1$d folder added</item>
+        <item quantity="other">%1$d folders added</item>
+    </plurals>
+    <string name="onboarding_reading_title">How do you read?</string>
+    <string name="onboarding_reading_body">The direction pages turn. Each book can still read its own way.</string>
+    <string name="onboarding_flow_ltr">Left to right</string>
+    <string name="onboarding_flow_rtl">Manga</string>
+    <string name="onboarding_flow_vertical">Vertical</string>
+    <string name="onboarding_true_black">True black</string>
+    <string name="onboarding_true_black_body">Pure black backgrounds. On an OLED screen the pixels switch off.</string>
+    <string name="onboarding_choices_title">A few choices</string>
+    <string name="onboarding_choices_body">All of this lives in Settings too, so nothing here is final.</string>
+    <string name="onboarding_covers">Show document covers</string>
+    <string name="onboarding_covers_body">A PDF\'s first page as its cover. Off keeps private documents off your shelf.</string>
+    <string name="onboarding_image_folders">Folders of images as books</string>
+    <string name="onboarding_image_folders_body">For comics kept as loose image files. Off keeps photo folders out.</string>
 </resources>
