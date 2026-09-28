@@ -131,8 +131,8 @@ private fun paintField(canvas: NativeCanvas, paint: Paint, width: Int, height: I
 
 /** Sparse on purpose: most of the field is blank, so it reads as texture behind words. */
 private const val RAMP = "   ..··::-=+*"
-private const val FIELD_GREY = 0xFF3A3A3A
-private const val FIELD_SP = 11
+private const val FIELD_GREY = 0xFF6E6E6E
+private const val FIELD_SP = 13
 
 /** Painted at this fraction of the screen's resolution: texture, not text anyone reads. */
 private const val SCALE = 2

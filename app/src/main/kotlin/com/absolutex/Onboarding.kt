@@ -294,8 +294,8 @@ private val DotSize = 8.dp
 private val DotWide = 24.dp
 private val DotGap = 8.dp
 private val ScrimStops = arrayOf(
-    0f to Color.Black.copy(alpha = 0.1f),
-    0.25f to Color.Black.copy(alpha = 0.55f),
-    0.75f to Color.Black.copy(alpha = 0.55f),
-    1f to Color.Black.copy(alpha = 0.1f),
+    0f to Color.Transparent,
+    0.3f to Color.Black.copy(alpha = 0.35f),
+    0.7f to Color.Black.copy(alpha = 0.35f),
+    1f to Color.Transparent,
 )
