@@ -1,42 +1,51 @@
 package com.absolutex.core.ui
 
+import android.graphics.Bitmap
 import android.graphics.Paint
+import android.graphics.PorterDuff
 import android.graphics.Typeface
 import android.provider.Settings
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.sin
+import android.graphics.Canvas as NativeCanvas
 
 /**
  * A field of halftone characters drifting in slow waves — the landing page's background, in the
  * app.
  *
- * Drawn with the platform's own text call, one glyph per grid cell from a single monospace
- * [Paint]: a few thousand cheap draws. (Compose's laid-out text draws per glyph cost several
- * times that, and a page swiped over the field stuttered.) The grid is fixed, so columns cannot
- * slip whichever font a glyph comes from.
+ * Painted off the main thread, at half resolution, into one of two bitmaps that swap when a new
+ * one is ready; the main thread only ever draws the finished image. Painting the few thousand
+ * glyphs on the main thread eleven times a second took a fifth of the frames of a page swiped
+ * over it on the reference phone. The glyphs come from one monospace [Paint] on a fixed grid, so
+ * columns cannot slip.
  *
- * About eleven frames a second, and not at all while [paused] (say, while a pager slides over
- * it) or when the system's animations are off.
+ * Holds still while [paused] (say, while a pager slides over it) or when the system's animations
+ * are off.
  */
 @Composable
 fun AsciiField(
@@ -45,11 +54,12 @@ fun AsciiField(
     paused: Boolean = false,
 ) {
     val density = LocalDensity.current
-    val paint = remember(color, density) {
+    val tint = remember(color) { ColorFilter.tint(color) }
+    val paint = remember(density) {
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = Typeface.MONOSPACE
-            textSize = with(density) { FIELD_SP.sp.toPx() }
-            this.color = color.toArgb()
+            textSize = with(density) { FIELD_SP.sp.toPx() } / SCALE
+            this.color = android.graphics.Color.BLACK
         }
     }
     val context = LocalContext.current
@@ -57,50 +67,63 @@ fun AsciiField(
         Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     }
     val hold by rememberUpdatedState(paused)
-    var time by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(still) {
-        if (still) return@LaunchedEffect
-        var last = 0L
+    var size by remember { mutableStateOf(IntSize.Zero) }
+    var shown by remember { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(size, paint, still) {
+        val w = size.width / SCALE
+        val h = size.height / SCALE
+        if (w <= 0 || h <= 0) return@LaunchedEffect
+        // Two buffers: one on screen, one being painted. Never a new bitmap per frame.
+        // Alpha only, tinted when drawn: a quarter of the bytes to hand the GPU on each new frame.
+        val buffers = Array(2) { Bitmap.createBitmap(w, h, Bitmap.Config.ALPHA_8) }
+        var next = 0
         var clock = 0f
         while (true) {
-            withFrameNanos { now ->
-                if (now - last > FRAME_NANOS) {
-                    // Paused time does not pass, so the field resumes where it stopped.
-                    if (!hold && last != 0L) clock += (now - last) / NANOS_PER_SECOND
-                    last = now
-                    if (!hold) time = clock
-                }
-            }
+            val back = buffers[next]
+            val t = clock
+            withContext(Dispatchers.Default) { paintField(NativeCanvas(back), paint, w, h, t) }
+            shown = back.asImageBitmap()
+            next = 1 - next
+            if (still) return@LaunchedEffect
+            delay(TICK_MS)
+            if (!hold) clock += TICK_MS / MS_PER_SECOND
+            while (hold) delay(TICK_MS)
         }
     }
-    // Its own layer: the field's drawing is recorded once per tick and replayed while anything
-    // over it moves. Sharing the parent's layer, every frame of a page swipe redrew every glyph.
-    Canvas(modifier.graphicsLayer()) {
-        val cellW = paint.measureText("M")
-        val metrics = paint.fontMetrics
-        val cellH = metrics.descent - metrics.ascent
-        if (cellW <= 0f || cellH <= 0f) return@Canvas
-        val cols = ceil(size.width / cellW).toInt()
-        val rows = ceil(size.height / cellH).toInt()
-        val t = time
-        drawIntoCanvas { canvas ->
-            val native = canvas.nativeCanvas
-            val glyph = CharArray(1)
-            for (y in 0 until rows) {
-                val v = y.toFloat() / rows
-                val baseline = y * cellH - metrics.ascent
-                for (x in 0 until cols) {
-                    val u = x.toFloat() / cols
-                    val a = sin(u * WAVE_U + t * SPEED_A) * cos(v * WAVE_V - t * SPEED_B)
-                    val b = sin((u * SKEW + v) * WAVE_D - t * SPEED_C)
-                    val lit = BASE + SPAN_A * a + SPAN_B * b
-                    val index = floor(lit * RAMP.length).toInt().coerceIn(0, RAMP.length - 1)
-                    val c = RAMP[index]
-                    if (c != ' ') {
-                        glyph[0] = c
-                        native.drawText(glyph, 0, 1, x * cellW, baseline, paint)
-                    }
-                }
+    Canvas(modifier.onSizeChanged { size = it }) {
+        val image = shown ?: return@Canvas
+        drawImage(
+            image,
+            dstOffset = IntOffset.Zero,
+            dstSize = IntSize(this.size.width.toInt(), this.size.height.toInt()),
+            filterQuality = FilterQuality.Low,
+            colorFilter = tint,
+        )
+    }
+}
+
+/** The field at time [t], every visible glyph on its grid cell. */
+private fun paintField(canvas: NativeCanvas, paint: Paint, width: Int, height: Int, t: Float) {
+    canvas.drawColor(0, PorterDuff.Mode.CLEAR)
+    val cellW = paint.measureText("M")
+    val metrics = paint.fontMetrics
+    val cellH = metrics.descent - metrics.ascent
+    if (cellW <= 0f || cellH <= 0f) return
+    val cols = ceil(width / cellW).toInt()
+    val rows = ceil(height / cellH).toInt()
+    val glyph = CharArray(1)
+    for (y in 0 until rows) {
+        val v = y.toFloat() / rows
+        val baseline = y * cellH - metrics.ascent
+        for (x in 0 until cols) {
+            val u = x.toFloat() / cols
+            val a = sin(u * WAVE_U + t * SPEED_A) * cos(v * WAVE_V - t * SPEED_B)
+            val b = sin((u * SKEW + v) * WAVE_D - t * SPEED_C)
+            val lit = BASE + SPAN_A * a + SPAN_B * b
+            val c = RAMP[floor(lit * RAMP.length).toInt().coerceIn(0, RAMP.length - 1)]
+            if (c != ' ') {
+                glyph[0] = c
+                canvas.drawText(glyph, 0, 1, x * cellW, baseline, paint)
             }
         }
     }
@@ -110,8 +133,11 @@ fun AsciiField(
 private const val RAMP = "   ..··::-=+*"
 private const val FIELD_GREY = 0xFF3A3A3A
 private const val FIELD_SP = 11
-private const val FRAME_NANOS = 90_000_000L
-private const val NANOS_PER_SECOND = 1_000_000_000f
+
+/** Painted at this fraction of the screen's resolution: texture, not text anyone reads. */
+private const val SCALE = 2
+private const val TICK_MS = 90L
+private const val MS_PER_SECOND = 1000f
 private const val WAVE_U = 7f
 private const val WAVE_V = 9f
 private const val WAVE_D = 5f
