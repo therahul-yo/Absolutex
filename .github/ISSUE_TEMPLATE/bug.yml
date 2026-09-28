@@ -1,0 +1,65 @@
+name: Something isn't working
+description: The app crashed, froze, showed something wrong, or did not do what it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. If the problem is one particular file that
+        will not open, use **A file won't open** instead.
+
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: In the app under Settings → About, or in the name of the APK you installed.
+      placeholder: "0.1.2 (Absolutex-0.1.2.apk)"
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Phone model and Android version
+      description: Settings → About phone on most phones.
+      placeholder: "OnePlus 11R, Android 16"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw. If the app closed on its own, say so.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to make it happen
+      description: The shortest path from opening the app to the problem.
+      placeholder: |
+        1. Open the library
+        2. Open a CBZ from a phone folder
+        3. Pinch to zoom on page 3
+        4. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or screen recording
+      description: |
+        Drag images or a short video here. Crop out anything private, and avoid showing
+        whole pages of copyrighted comics; a corner of the page is enough to show the problem.
+    validations:
+      required: false

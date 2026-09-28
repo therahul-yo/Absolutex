@@ -1,0 +1,73 @@
+name: A file won't open
+description: A comic, PDF or EPUB shows an error, a blank page, or never opens.
+labels: ["file-support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never attach the file itself.** Comics and books are usually copyrighted, and your
+        documents may be private. Describe the file instead: the details below are almost always
+        enough to reproduce the problem with a file of our own.
+
+  - type: dropdown
+    id: format
+    attributes:
+      label: Format
+      description: From the file's extension.
+      options:
+        - CBZ
+        - CBR
+        - CB7
+        - PDF
+        - EPUB
+        - Other (say which below)
+    validations:
+      required: true
+
+  - type: input
+    id: size
+    attributes:
+      label: File size
+      placeholder: "85 MB"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: location
+    attributes:
+      label: Where the file is stored
+      options:
+        - A folder on the phone
+        - An SMB share
+        - An FTP or FTPS server
+    validations:
+      required: true
+
+  - type: textarea
+    id: shown
+    attributes:
+      label: What the app shows
+      description: |
+        The error message word for word, a blank or black page, a spinner that never ends, or
+        the app closing. A screenshot of the message is welcome; crop out any page content.
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Anything else about the file
+      description: |
+        For example: other readers open it fine, it is password-protected, it was made by a
+        particular tool or scanner, it holds very large or unusual images (WebP, AVIF, JPEG XL),
+        or the format is not in the list above.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: no-file
+    attributes:
+      label: Before you submit
+      options:
+        - label: I have not attached the file, or any copyrighted or private content from it.
+          required: true
