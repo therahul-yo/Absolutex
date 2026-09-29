@@ -20,7 +20,6 @@ import com.absolutex.feature.reader.BookCovers
 import com.absolutex.feature.library.LocalBookCovers
 import com.absolutex.feature.library.BookCoverSource
 import androidx.compose.runtime.CompositionLocalProvider
-import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
@@ -212,17 +211,9 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
         if (folder != null) vm.addLocation(folder)
     }
 
-    // A single file, from the library's "Open file" button. It opens through the same sheet a
-    // library row does, and a file whose grant holds is also remembered for resume and recorded in
-    // the library so it shows up in Recent. Cancelling the picker returns null and does nothing.
+    // A single file, from the library's "Open file" button. Cancelling returns null and does nothing.
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { picked ->
-        if (picked != null) {
-            if (keepGrant(context, picked)) {
-                vm.rememberBook(picked.toString())
-                vm.recordPickedFile(picked)
-            }
-            openOverLibrary(picked)
-        }
+        if (picked != null) openPickedFile(context, vm, picked, openOverLibrary)
     }
 
     AxisNavHost(nav, if (directUri != null) readerRoute(directUri) else LIBRARY_ROUTE) {
@@ -316,25 +307,6 @@ private fun sharedAxisIn(forward: Boolean): EnterTransition =
 private fun sharedAxisOut(forward: Boolean): ExitTransition =
     slideOutHorizontally(Motion.exit()) { w -> (if (forward) -w else w) / Motion.SHARED_AXIS_FRACTION } +
         fadeOut(Motion.exit())
-
-/**
- * Takes a persistable grant on a picked document and reports whether it actually held.
- *
- * OpenDocument offers a persistable grant, but not every provider honours it — take() then throws
- * SecurityException. Attempt, then VERIFY against persistedUriPermissions: only a verified Uri
- * survives process death, and only a verified Uri is remembered for §5.2 resume.
- */
-private fun keepGrant(context: android.content.Context, picked: Uri): Boolean {
-    runCatching {
-        context.contentResolver.takePersistableUriPermission(picked, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }.onFailure {
-        // The class only: a SecurityException's message names the Uri.
-        android.util.Log.w("Shell", "persistable grant refused: ${it.javaClass.name}")
-    }
-    val persisted = context.contentResolver.persistedUriPermissions.any { it.uri == picked }
-    if (!persisted) android.util.Log.w("Shell", "grant not persisted; opening for this session only")
-    return persisted
-}
 
 /** What the library asks the shell to do: the two pickers, and re-reading the saved folders. */
 private class LibraryHooks(
