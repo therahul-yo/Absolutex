@@ -7,6 +7,7 @@ import com.absolutex.core.scan.LibraryWatcher
 import android.util.Log
 import com.absolutex.core.scan.SortKey
 import com.absolutex.core.data.LibraryRepository
+import com.absolutex.core.data.ScanStatus
 import com.absolutex.core.data.runCatchingCancellable
 import com.absolutex.core.data.settings.AppPrefsSource
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -55,6 +57,9 @@ internal class LibraryViewModel @Inject constructor(
     private val repository: LibraryRepository,
     private val prefs: AppPrefsSource,
     private val watcherFactory: @JvmSuppressWildcards (File) -> Flow<LibraryChange> = defaultWatcherFactory(),
+    // Last, with a default, so callers that never care about scans (every test but one) stay as
+    // they were. Hilt ignores the default and injects the app's one ScanStatus.
+    private val scanStatus: ScanStatus = ScanStatus(),
 ) : ViewModel() {
 
     private val _ui = MutableStateFlow(LibraryUiState.Initial.copy(capabilities = feed.capabilities))
@@ -112,22 +117,34 @@ internal class LibraryViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
-            feed.observeBooks()
+            combine(
+                feed.observeBooks(),
+                prefs.appPrefs.map { it.locations }.distinctUntilChanged(),
+                scanStatus.state,
+            ) { books, locations, scan -> LibrarySnapshot(books, locations, scan) }
                 .catch { _ui.update { it.copy(loading = false, error = LibraryNotice.LoadFailed) } }
-                .collect { books ->
-                    everything = books
+                .collect { snapshot ->
+                    // Only a new book list re-sorts the library: a scan starting or finishing
+                    // re-emits the same list, and must not cost a sort of 5,000 books.
+                    val booksChanged = snapshot.books !== everything
+                    everything = snapshot.books
                     _ui.update { state ->
-                        // hasLocations is re-derived from every emission. It used to be read once,
-                        // so a first-run user who added a folder kept seeing "No folders yet" on
-                        // every empty section for the rest of the session.
+                        // Re-derived from every emission. The folder answer comes from the saved
+                        // locations, not the books: a folder that holds nothing is still a folder.
                         val next = state.copy(
                             loading = false,
-                            hasLocations = books.isNotEmpty(),
+                            hasLocations = snapshot.hasLocations,
+                            scanning = snapshot.scanning,
+                            scanFailed = snapshot.scanFailed,
                             error = null,
                         )
                         // A scan landing mid-search must not yank the user's results out from
                         // under them; the next keystroke (or clearing the box) picks them up.
-                        if (state.query.isBlank()) next.copy(allBooks = books).recomputed() else next
+                        if (booksChanged && state.query.isBlank()) {
+                            next.copy(allBooks = snapshot.books).recomputed()
+                        } else {
+                            next
+                        }
                     }
                 }
         }

@@ -6,11 +6,8 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material.icons.outlined.CreateNewFolder
-import androidx.compose.foundation.layout.width
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.AutoStories
@@ -20,9 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -92,9 +87,10 @@ internal fun LibraryErrorState(notice: LibraryNotice, modifier: Modifier = Modif
 /**
  * What the screen shows instead of a list.
  *
- * §5.1 is explicit that a fresh install must say what to do next, so the no-locations case is the
- * only one with an action: everything else is a statement of fact, and offering a button that
- * does not address the problem is worse than offering none.
+ * §5.1 is explicit that a fresh install must say what to do next. Each state offers what would
+ * actually change it: no folder, add one or open a file; nothing found or unreadable, rescan or add
+ * another. A statement of fact (a section with nothing in it, a search with no match, a scan still
+ * running) offers nothing, because a button that does not address the problem is worse than none.
  */
 @Composable
 internal fun LibraryEmptyState(
@@ -102,6 +98,8 @@ internal fun LibraryEmptyState(
     section: HomeSection,
     query: String,
     onAddLocation: () -> Unit,
+    onOpenFile: () -> Unit,
+    onRescan: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (reason == LibraryEmptyReason.NONE) return
@@ -110,12 +108,16 @@ internal fun LibraryEmptyState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(Space.Row, Alignment.CenterVertically),
     ) {
-        Icon(
-            section.icon(selected = false),
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(EmptyIconSize),
-        )
+        if (reason == LibraryEmptyReason.SCANNING) {
+            CircularProgressIndicator()
+        } else {
+            Icon(
+                section.icon(selected = false),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(EmptyIconSize),
+            )
+        }
         Text(
             emptyTitle(reason),
             style = MaterialTheme.typography.headlineSmall,
@@ -127,23 +129,15 @@ internal fun LibraryEmptyState(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
-        if (reason == LibraryEmptyReason.NO_LOCATIONS) {
-            Button(
-                onClick = onAddLocation,
-                contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
-                modifier = Modifier.heightIn(min = BigButtonHeight),
-            ) {
-                Icon(Icons.Outlined.CreateNewFolder, contentDescription = null)
-                Spacer(Modifier.width(ButtonDefaults.IconSpacing))
-                Text(stringResource(R.string.library_empty_no_locations_action))
-            }
-        }
+        EmptyActions(reason, onAddLocation, onOpenFile, onRescan)
     }
 }
 
 @Composable
 private fun emptyTitle(reason: LibraryEmptyReason): String = when (reason) {
     LibraryEmptyReason.NO_LOCATIONS -> stringResource(R.string.library_empty_no_locations_title)
+    LibraryEmptyReason.SCANNING -> stringResource(R.string.library_empty_scanning_title)
+    LibraryEmptyReason.SCAN_FAILED -> stringResource(R.string.library_empty_scan_failed_title)
     LibraryEmptyReason.LIBRARY_EMPTY -> stringResource(R.string.library_empty_library_title)
     LibraryEmptyReason.NO_SEARCH_MATCHES -> stringResource(R.string.library_empty_search_title)
     LibraryEmptyReason.SECTION_EMPTY, LibraryEmptyReason.NONE ->
@@ -154,6 +148,8 @@ private fun emptyTitle(reason: LibraryEmptyReason): String = when (reason) {
 private fun emptyBody(reason: LibraryEmptyReason, section: HomeSection, query: String): String =
     when (reason) {
         LibraryEmptyReason.NO_LOCATIONS -> stringResource(R.string.library_empty_no_locations_body)
+        LibraryEmptyReason.SCANNING -> stringResource(R.string.library_empty_scanning_body)
+        LibraryEmptyReason.SCAN_FAILED -> stringResource(R.string.library_empty_scan_failed_body)
         LibraryEmptyReason.LIBRARY_EMPTY -> stringResource(R.string.library_empty_library_body)
         LibraryEmptyReason.NO_SEARCH_MATCHES -> stringResource(R.string.library_empty_search_body, query)
         LibraryEmptyReason.SECTION_EMPTY, LibraryEmptyReason.NONE -> sectionEmptyBody(section)
@@ -184,4 +180,3 @@ internal fun HomeSection.icon(selected: Boolean): ImageVector = when (this) {
 }
 
 private val EmptyIconSize = 64.dp
-private val BigButtonHeight = 56.dp

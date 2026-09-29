@@ -2,6 +2,7 @@
 <resources>
     <string name="library_title">Library</string>
     <string name="library_open_settings">Settings</string>
+    <string name="library_open_file">Open file</string>
 
     <string name="library_section_comics">Comics</string>
     <string name="library_section_documents">Documents</string>
@@ -28,10 +29,16 @@
     <string name="library_grid_columns">%1$d columns</string>
 
     <string name="library_empty_no_locations_title">No folders yet</string>
-    <string name="library_empty_no_locations_body">Add a folder that holds your comics and Absolutex will index everything inside it.</string>
+    <string name="library_empty_no_locations_body">Add a folder of comics, or open a single file.</string>
     <string name="library_empty_no_locations_action">Add a folder</string>
-    <string name="library_empty_library_title">Nothing found</string>
-    <string name="library_empty_library_body">Your folders are set up, but no comics turned up in them yet.</string>
+    <string name="library_empty_open_file_action">Open a file</string>
+    <string name="library_empty_rescan_action">Rescan</string>
+    <string name="library_empty_library_title">No books found</string>
+    <string name="library_empty_library_body">No books found in your folders. Supported: CBZ, CBR, CB7, CBT, PDF, EPUB.</string>
+    <string name="library_empty_scanning_title">Scanning your folders</string>
+    <string name="library_empty_scanning_body">Books appear here as they are found.</string>
+    <string name="library_empty_scan_failed_title">Couldn\'t read this folder</string>
+    <string name="library_empty_scan_failed_body">It may have moved, or Absolutex may have lost access. Rescan, or add it again.</string>
     <string name="library_empty_search_title">No matches</string>
     <string name="library_empty_search_body">Nothing in your library matches “%1$s”.</string>
     <string name="library_empty_section_title">Nothing here yet</string>

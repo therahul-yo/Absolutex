@@ -10,7 +10,23 @@ import com.absolutex.source.NaturalOrder
  * shelf happens to be empty" need completely different words, and a fresh install hits the first
  * one — §5.1 says it has to tell the user what to do next rather than showing a blank page.
  */
-internal enum class LibraryEmptyReason { NONE, NO_LOCATIONS, LIBRARY_EMPTY, NO_SEARCH_MATCHES, SECTION_EMPTY }
+internal enum class LibraryEmptyReason {
+    NONE,
+
+    /** No folder has been added: the only state where "add a folder" is the whole answer. */
+    NO_LOCATIONS,
+
+    /** Folders are saved and a scan is running, so "nothing yet" would be premature. */
+    SCANNING,
+
+    /** Folders are saved and the last scan could not read one of them. */
+    SCAN_FAILED,
+
+    /** Folders are saved, the scan finished, and it found no books. */
+    LIBRARY_EMPTY,
+    NO_SEARCH_MATCHES,
+    SECTION_EMPTY,
+}
 
 /**
  * Everything the library screens render from.
@@ -31,7 +47,7 @@ internal data class LibraryUiState(
     val grid: GridSpec,
     val section: HomeSection,
     val selected: Set<String>,
-    /** False on a fresh install: no storage location has been added yet. */
+    /** False until a folder has been added, judged from the saved locations and not from the books. */
     val hasLocations: Boolean,
     val capabilities: LibraryCapabilities,
     val error: LibraryNotice?,
@@ -46,6 +62,10 @@ internal data class LibraryUiState(
      * is a full sort per long-press.
      */
     val visibleBooks: List<LibraryBookUi>,
+    /** A folder scan is running. */
+    val scanning: Boolean = false,
+    /** The last scan of a saved folder could not read it (or something inside it). */
+    val scanFailed: Boolean = false,
 ) {
 
     val selectionActive: Boolean get() = selected.isNotEmpty()
@@ -59,8 +79,11 @@ internal data class LibraryUiState(
             visibleBooks.isNotEmpty() -> LibraryEmptyReason.NONE
             !hasLocations -> LibraryEmptyReason.NO_LOCATIONS
             query.isNotBlank() -> LibraryEmptyReason.NO_SEARCH_MATCHES
-            allBooks.isEmpty() -> LibraryEmptyReason.LIBRARY_EMPTY
-            else -> LibraryEmptyReason.SECTION_EMPTY
+            allBooks.isNotEmpty() -> LibraryEmptyReason.SECTION_EMPTY
+            // Nothing in the library at all, and only now does it matter why.
+            scanning -> LibraryEmptyReason.SCANNING
+            scanFailed -> LibraryEmptyReason.SCAN_FAILED
+            else -> LibraryEmptyReason.LIBRARY_EMPTY
         }
 
     companion object {

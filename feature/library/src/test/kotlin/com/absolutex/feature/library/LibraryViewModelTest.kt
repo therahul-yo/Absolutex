@@ -10,6 +10,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.absolutex.core.data.AbsolutexDatabase
 import com.absolutex.core.data.LibraryBook
 import com.absolutex.core.data.LibraryRepository
+import com.absolutex.core.data.ScanStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -35,6 +36,9 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.util.concurrent.Executor
+
+/** A saved SAF folder: only its presence in the settings matters here, never its contents. */
+private const val FOLDER = "content://tree/comics"
 
 private fun realFeed(db: AbsolutexDatabase): RealFeed = RealFeed(LibraryRepository(db.libraryDao()))
 
@@ -111,22 +115,82 @@ class LibraryViewModelTest {
     /** Shares the rule's scheduler, so advancing time in the test drives the ViewModel's scope. */
     private fun test(body: suspend TestScope.() -> Unit) = runTest(main.dispatcher) { body() }
 
-    private fun vmOver(db: AbsolutexDatabase, prefs: AppPrefsSource = fixedPrefs()) = LibraryViewModel(
+    private fun vmOver(
+        db: AbsolutexDatabase,
+        prefs: AppPrefsSource = fixedPrefs(),
+        scanStatus: ScanStatus = ScanStatus(),
+    ) = LibraryViewModel(
         feed = realFeed(db),
         repository = LibraryRepository(db.libraryDao()),
         prefs = prefs,
+        scanStatus = scanStatus,
     )
 
+    private fun prefsWithFolder() = fixedPrefs(AppPrefs(locations = setOf(FOLDER)))
+
     @Test
-    fun `hasLocations follows the books, so adding a folder stops saying none exist`() = test {
+    fun `no saved folder says so, whatever the book list holds`() = test {
         val db = freshDb()
         val vm = vmOver(db)
         advanceUntilIdle()
-        assertFalse("no books at all is the fresh-install state", vm.ui.value.hasLocations)
+        assertFalse(vm.ui.value.hasLocations)
+        assertEquals(LibraryEmptyReason.NO_LOCATIONS, vm.ui.value.emptyReason)
+
+        // A book with no folder saved (a single opened file, say) does not invent a folder.
+        db.libraryDao().upsertAll(listOf(libraryBook("/comics/Batman 001.cbz")))
+        advanceUntilIdle()
+        assertFalse("hasLocations comes from the saved folders, not the books", vm.ui.value.hasLocations)
+    }
+
+    @Test
+    fun `a saved folder that yielded no books is an empty library, not a missing folder`() = test {
+        val vm = vmOver(freshDb(), prefsWithFolder())
+        advanceUntilIdle()
+        assertTrue(vm.ui.value.hasLocations)
+        assertEquals(LibraryEmptyReason.LIBRARY_EMPTY, vm.ui.value.emptyReason)
+    }
+
+    @Test
+    fun `a running scan shows as scanning and then settles`() = test {
+        val status = ScanStatus()
+        val vm = vmOver(freshDb(), prefsWithFolder(), status)
+        advanceUntilIdle()
+
+        status.started(listOf(FOLDER))
+        advanceUntilIdle()
+        assertEquals(LibraryEmptyReason.SCANNING, vm.ui.value.emptyReason)
+
+        status.finished(FOLDER, unreadable = false)
+        advanceUntilIdle()
+        assertEquals(LibraryEmptyReason.LIBRARY_EMPTY, vm.ui.value.emptyReason)
+    }
+
+    @Test
+    fun `an unreadable folder shows as a failure, and a rescan clears it`() = test {
+        val status = ScanStatus()
+        val vm = vmOver(freshDb(), prefsWithFolder(), status)
+        status.started(listOf(FOLDER))
+        status.finished(FOLDER, unreadable = true)
+        advanceUntilIdle()
+        assertEquals(LibraryEmptyReason.SCAN_FAILED, vm.ui.value.emptyReason)
+
+        status.started(listOf(FOLDER))
+        status.finished(FOLDER, unreadable = false)
+        advanceUntilIdle()
+        assertEquals(LibraryEmptyReason.LIBRARY_EMPTY, vm.ui.value.emptyReason)
+    }
+
+    @Test
+    fun `a book arriving while nothing else changes still reaches the screen`() = test {
+        val db = freshDb()
+        val vm = vmOver(db, prefsWithFolder())
+        advanceUntilIdle()
+        assertTrue(vm.ui.value.visibleBooks.isEmpty())
 
         db.libraryDao().upsertAll(listOf(libraryBook("/comics/Batman 001.cbz")))
         advanceUntilIdle()
-        assertTrue("a scan that lands must show up in the empty state", vm.ui.value.hasLocations)
+        assertEquals(1, vm.ui.value.visibleBooks.size)
+        assertEquals(LibraryEmptyReason.NONE, vm.ui.value.emptyReason)
     }
 
     @Test
