@@ -79,12 +79,6 @@ private const val DOUBLE_TAP_SCALE = 2.5f
 /** Long enough to read as a zoom, short enough never to feel like waiting. */
 private const val DOUBLE_TAP_MS = 250
 
-/**
- * The base layer's longest edge, as a multiple of the screen's. Full size on a 12000px page would
- * otherwise be a texture of hundreds of MB; tiles cover the detail the cap leaves out.
- */
-private const val MAX_BASE_EDGE = 1.25f
-
 /** Zoom quantisation for the tile-fetch trigger: quarter steps of scale. */
 private const val ZOOM_BUCKETS_PER_UNIT = 4
 
@@ -175,7 +169,7 @@ fun PageCanvas(
      * Smart border crop (§4, milestone 4): uniform scan margins are detected on a thumbnail
      * before the first paint and the page draws cropped. True by default; a plain param like
      * `upscaler` — toggles are rare settings edits, and toggling reloads the base layer anyway.
-     * TODO(lead): pass RenderingPrefs.cropEnabled here.
+     * The host passes `RenderingPrefs.cropEnabled` through `cropApplies` (CropPolicy.kt).
      */
     cropEnabled: Boolean = true,
     /**
@@ -313,23 +307,8 @@ fun PageCanvas(
         }
     }
 
-    /**
-     * Size the base layer decodes at: what the page is drawn at for [fitMode] at zoom 1, never above
-     * source resolution, capped by [MAX_BASE_EDGE]. Decoding at the viewport box instead left fit
-     * height and full size upscaled from a smaller bitmap and permanently soft, since tiles only
-     * start once the user zooms.
-     */
-    fun baseTarget(vw: Int, vh: Int): Pair<Int, Int> {
-        val cw = contentW()
-        val ch = contentH()
-        val fitScale = FitGeometry.baseScale(fitMode, vw, vh, cw, ch)
-        val capped = min(fitScale, 1f)
-        val longest = max(page.width, page.height) * capped
-        val cap = MAX_BASE_EDGE * max(vw, vh)
-        val fit = capped * if (longest > cap) cap / longest else 1f
-        val k = maxBaseWidth?.let { min(fit, it.toFloat() / page.width) } ?: fit
-        return max(1, (page.width * k).toInt()) to max(1, (page.height * k).toInt())
-    }
+    fun baseTarget(vw: Int, vh: Int): Pair<Int, Int> =
+        baseTargetSize(fitMode, vw, vh, page.width, page.height, contentW(), contentH(), maxBaseWidth)
 
     // Reading starts at the top of an overflowing page, on the edge its flow starts from. This runs
     // before the base layer lands (that effect decodes first), so the page never flashes centred.
@@ -412,8 +391,10 @@ fun PageCanvas(
     }
 
     // Base layer: decoded once at its drawn size, kept resident for the whole page. Gated on
-    // the crop decision, so the first paint is already cropped.
-    LaunchedEffect(pageIndex, viewport, fitMode, cropDecided) {
+    // the crop decision, so the first paint is already cropped. Keyed on the crop itself too: the
+    // decode size follows the fitted (cropped) size, and switching crop off decides nothing new
+    // (cropDecided stays true), so without it the base would stay sized for the old crop.
+    LaunchedEffect(pageIndex, viewport, fitMode, cropDecided, crop) {
         if (!cropDecided) return@LaunchedEffect
         val (vw, vh) = viewport
         if (vw <= 0 || vh <= 0) return@LaunchedEffect

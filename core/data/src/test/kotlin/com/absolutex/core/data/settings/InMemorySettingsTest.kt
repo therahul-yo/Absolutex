@@ -146,4 +146,16 @@ class InMemorySettingsTest {
         val reopened = InMemorySettings(bag)
         assertTrue(reopened.renderingPrefs.first().autoBackground)
     }
+
+    @Test
+    fun `a crop update persists and leaves auto background alone`() = runTest {
+        val bag = MapPrefBag()
+        val settings = InMemorySettings(bag)
+        assertTrue(settings.renderingPrefs.first().cropEnabled)
+        settings.updateRendering { it.copy(cropEnabled = false) }
+        assertFalse(settings.renderingPrefs.first().cropEnabled)
+        assertEquals(RenderingPrefs().autoBackground, settings.renderingPrefs.first().autoBackground)
+        // A fresh instance over the same bag is what a process restart looks like.
+        assertFalse(InMemorySettings(bag).renderingPrefs.first().cropEnabled)
+    }
 }

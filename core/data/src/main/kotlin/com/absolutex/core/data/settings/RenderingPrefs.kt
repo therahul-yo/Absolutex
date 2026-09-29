@@ -26,4 +26,11 @@ data class RenderingPrefs(
      * with white margins would otherwise light the whole screen white. On is a settings choice.
      */
     val autoBackground: Boolean = false,
+    /**
+     * Smart border crop (milestone 4): uniform scan margins are trimmed before a page first paints.
+     * On by default so existing installs read exactly as before; this is the way out for a page
+     * that crops wrongly. It is a preference, not the whole policy: the reader still leaves PDFs
+     * uncropped (see `cropApplies` in the reader module).
+     */
+    val cropEnabled: Boolean = true,
 )
