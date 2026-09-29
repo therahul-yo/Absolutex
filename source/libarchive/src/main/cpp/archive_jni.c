@@ -121,6 +121,23 @@ static void password_error(JNIEnv *env, struct archive *a) {
     }
 }
 
+/* 7-Zip AES has no decryptor in libarchive (only the format walker knows the codec), so a
+   passphrase can never help with a 7z: offering the prompt would only end in "unsupported"
+   after the user typed one. Whether the archive is a 7z is known once a header has been read. */
+static int is_7zip(struct archive *a) {
+    return (archive_format(a) & ARCHIVE_FORMAT_BASE_MASK) == ARCHIVE_FORMAT_7ZIP;
+}
+
+/* The exception for an entry that is encrypted and cannot be read as things stand. Throws
+   nothing else, and must not be called with an exception already pending. */
+static void throw_encrypted(JNIEnv *env, int unsupported) {
+    if (unsupported) {
+        throw_named(env, UNSUPPORTED_ENCRYPTION, "Archive encryption is not supported by this build");
+    } else {
+        throw_named(env, PASSWORD_REQUIRED, "Archive password required");
+    }
+}
+
 static struct archive *open_fd(JNIEnv *env, int fd, int *dup_out, const char *passphrase) {
     int dfd = private_fd(fd);
     if (dfd < 0) return NULL;
@@ -251,8 +268,8 @@ list_impl(JNIEnv *env, jclass clazz, jint fd, jbooleanArray complete,
     while (header_ok(r = archive_read_next_header(a, &entry))) {
         if (archive_entry_is_encrypted(entry) > 0) {
             found_encrypted = JNI_TRUE;
-            if (passphrase == NULL) {
-                throw_named(env, PASSWORD_REQUIRED, "Archive password required");
+            if (passphrase == NULL || is_7zip(a)) {
+                throw_encrypted(env, is_7zip(a));
                 break;
             }
             /* Single password probe deferred to Kotlin: nativeList only tracks the flag.
@@ -461,8 +478,8 @@ extract_impl(JNIEnv *env, jclass clazz,
     while (header_ok(r = archive_read_next_header(a, &entry))) {
         if (!is_ordinal_entry(entry)) continue;
         if (++seen != ordinal) continue;
-        if (archive_entry_is_encrypted(entry) > 0 && passphrase == NULL) {
-            throw_named(env, PASSWORD_REQUIRED, "Archive password required");
+        if (archive_entry_is_encrypted(entry) > 0 && (passphrase == NULL || is_7zip(a))) {
+            throw_encrypted(env, is_7zip(a));
         } else {
             result = read_entry(env, a, entry);
         }
@@ -563,6 +580,7 @@ extract_window_impl(JNIEnv *env, jclass clazz,
     jint produced = 0;
     int r;
     int need_password = 0;
+    int encrypted_unsupported = 0;
     /* Stop as soon as the run is filled: walking past the last wanted entry would make a
        window at the end of a book pay for headers nobody asked for. */
     while (produced < count && header_ok(r = archive_read_next_header(a, &entry))) {
@@ -570,12 +588,14 @@ extract_window_impl(JNIEnv *env, jclass clazz,
         if (++seen < fromOrdinal) continue;
         if (seen >= fromOrdinal + count) break;
 
-        if (archive_entry_is_encrypted(entry) > 0 && passphrase == NULL) {
+        if (archive_entry_is_encrypted(entry) > 0 && (passphrase == NULL || is_7zip(a))) {
             /* No exception-throwing call may run from here until the archive is closed: JNI
                forbids most calls while an exception is pending, and -Xcheck:jni reports it on
                a device run exactly as it does on the host. So the flag is latched, the walk
-               stops, and the throw happens after close_archive. */
+               stops, and the throw happens after close_archive. The format is read now, while
+               the archive is still open. */
             need_password = 1;
+            encrypted_unsupported = is_7zip(a);
             break;
         }
         jbyteArray bytes = read_entry(env, a, entry);
@@ -612,7 +632,7 @@ extract_window_impl(JNIEnv *env, jclass clazz,
     if (need_password && !(*env)->ExceptionCheck(env)) {
         /* No throw happened during the walk, so make the one the single-extract path would
            have made: same exception, same fixed message, same input. */
-        throw_named(env, PASSWORD_REQUIRED, "Archive password required");
+        throw_encrypted(env, encrypted_unsupported);
     }
     /* A pending exception means the caller gets an exception, not this array. Returning the
        partial run anyway would be a lie about how much of the window is trustworthy. */

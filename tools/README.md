@@ -293,13 +293,32 @@ No third-party comic, exploit or malformed payload is included.
 
 Capability limits: the Android build supports traditional ZIP/ZipCrypto decryption through
 libarchive, not WinZip AES (no crypto backend is added). Upstream libarchive 3.8.9 does not
-support encrypted RAR4/RAR5 or 7z decryption. Known unsupported diagnostics have their own
+support encrypted RAR4/RAR5 or 7z decryption. A 7z with encrypted content or an encrypted header therefore
+raises the unsupported-encryption error directly, with no password prompt (the prompt could
+not help). Known unsupported diagnostics have their own
 exception; CRC/data errors are not falsely labelled wrong passwords. The host's crypto
 capabilities may differ. Encrypted entries are validated at open, so this path costs a full
 payload read; ordinary archive listing/recovery behavior is unchanged. No cache or parallel
 extraction changes are included. Password bytes are held only by the live encrypted source,
 cleared at close/failed open, and copied briefly per native call. libarchive frees its own
 internal copies; secure erasure of all library/JVM memory cannot be guaranteed.
+
+## 7z (`.cb7`) regression
+
+Run `sh tools/test-archive-7z.sh` on macOS with JDK 21 and a libarchive built **with liblzma**
+(`brew install libarchive xz`; `ARCHIVE_PREFIX` overrides the prefix). To test the real native
+build instead, configure `source/libarchive/src/main/cpp/CMakeLists.txt` on the host (it fetches
+and builds xz and libarchive exactly as the Gradle build does), build, and run with
+`NATIVE_DIR=<build dir holding libabsolutex_archive.dylib>`.
+
+The four fixtures are checked in as base64 beside the ZipCrypto one
+(`source/libarchive/src/androidTest/assets/7z-*.cb7.b64`, made with 7-Zip 26.03 and pinned by
+SHA-256 in `tools/LibArchiveSevenZipTest.java`): LZMA2 non-solid, LZMA2 solid, and 7-Zip AES with a
+plain and with an encrypted header (`corpus-only` is a public, nonsecret test password). Under
+`-Xcheck:jni` it checks that both LZMA2 archives list, extract byte-exact pages singly and as a
+window, and that both encrypted ones raise `UnsupportedEncryptionException` — with and without a
+password, because libarchive has no 7-Zip AES decryptor and prompting for one would only end in the
+same message. Android instrumentation runs the same fixtures (`SevenZipSourceTest`).
 
 ## `make-corpus.py` — the hostile test corpus (spec §8)
 
@@ -332,7 +351,7 @@ irreproducible and the `--check` gate worthless.
 | `11_truncated.cbz` | Cut at 62 %. The central directory is gone; pages must be recovered by walking local headers. |
 | `12_giant_page.cbz` | One 12000×12000 page — 144 MP decoded — among three ordinary ones. |
 | `13_outline.pdf` | Three pages under a real `/Outlines` tree, one title in CJK. |
-| `14_solid.cb7` | Solid 7z: random access is impossible, page *N* costs pages 1…*N*. |
+| `14_solid.cb7` | Solid LZMA2 7z: random access is impossible, page *N* costs pages 1…*N* (see the limits below). |
 | `15_rar5.cbr` | RAR5. |
 | `16_avif.cbz` | AVIF pages — what a modern scanner actually emits. |
 | `17_huge_2gb.cbz` | ~2.25 GiB, with real pages on **both sides** of the 2³¹-byte offset. |
@@ -346,6 +365,7 @@ irreproducible and the `--check` gate worthless.
 | `25_comicinfo_oversized.cbz` | A sidecar past the 1 MiB parser cap — 1.5 MiB inflated from 5 KB, in an 8 KB file. |
 | `26_comicinfo_corrupt_entry.cbz` | A sidecar whose deflate stream is corrupt, so **extraction** fails rather than parsing. |
 | `27_comicinfo_two_sidecars.cbz` | A root sidecar and a nested one disagreeing; raw archive order decides which wins. |
+| `28_lzma2_nonsolid.cb7` | Plain LZMA2 7z, one folder per page — the everyday `.cb7`. Needs an external `7z` (unpinned). |
 
 Two of those deserve an explanation.
 
@@ -386,12 +406,12 @@ it deflates to almost nothing. That is on purpose: the stress this case applies 
 
 ### Cases that need an external tool
 
-Three cases cannot be produced from the stdlib. The script probes for each at run time and
+Four cases cannot be produced from the stdlib. The script probes for each at run time and
 **skips it with a printed reason** rather than failing:
 
 | Case | Needs | Licence | Vendored? |
 |---|---|---|---|
-| `14_solid.cb7` | `7zz` / `7z` / `7za` | LGPL-2.1 (p7zip) | No — install it if you want the case |
+| `14_solid.cb7`, `28_lzma2_nonsolid.cb7` | `7zz` / `7z` / `7za` | LGPL-2.1 (p7zip) | No — install it if you want the case |
 | `15_rar5.cbr` | `rar` | **Proprietary (RARLAB shareware)** | **No, and never** |
 | `16_avif.cbz` | `avifenc` | BSD-2 (libavif) | No — install it if you want the case |
 
@@ -422,6 +442,9 @@ timestamp, `create_system` and `external_attr` on every ZIP entry; and a pinned 
   without the UTF-8 flag, and mojibake there is a real field bug. `zipfile` always sets the
   UTF-8 flag for non-ASCII names, so producing one needs post-processing of the raw headers.
   `TODO`.
-- `14_solid.cb7` will not open yet: the native build sets `ENABLE_LZMA=OFF`
-  (`source/libarchive/src/main/cpp/CMakeLists.txt`, `TODO(phase6)`). The case exists so
-  phase 6 has something to open on day one.
+- **Solid 7z pages cost pages 1…*N*.** `14_solid.cb7` opens (the native build carries
+  liblzma), but it is ten tiny pages, so it proves correctness, not speed. On a 300-page solid
+  archive of 1 MB pages, a host measurement put page 299 at ~6.9 s, and ten consecutive
+  single-page reads near the end at ~68 s against 6.9 s for one 10-page window. A non-solid
+  archive is a flat ~23 ms per page. There is no corpus case for the large solid book because it
+  would be ~300 MB; see `docs/DEVELOPMENT.md` for what it means for the reader.

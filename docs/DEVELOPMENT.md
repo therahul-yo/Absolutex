@@ -149,8 +149,62 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties
 
 `:source:libarchive` builds libarchive from source via CMake `FetchContent`, pinned to a
 release tag **and** its SHA256. Nothing is vendored into the tree. The build is arm64-only,
-static, `-Os -fvisibility=hidden`; the resulting `.so` is about 350 KB with libarchive inside
-and only the two JNI entry points exported.
+static, `-Os -fvisibility=hidden`; the resulting `.so` has libarchive inside and only the JNI
+entry points exported.
+
+**Archive formats and native flags.** libarchive is configured with zlib and liblzma on and
+everything else off: no bzip2, zstd, lz4, OpenSSL, libxml2, expat, iconv, ACL or xattr, and none
+of its command-line tools. That gives ZIP (deflate, and ZipCrypto decryption), RAR4, RAR5, 7z with
+LZMA, LZMA2 and the BCJ/ARM64/Delta filters (what an ordinary `.cb7` uses), and TAR.
+7z with PPMd or Deflate also works because libarchive carries those itself; **7z with BZip2 or
+Zstandard does not**, since their libraries are off. Encrypted 7z (7-Zip AES) cannot be decrypted at
+all; see "Solid and encrypted 7z" below.
+
+**liblzma** comes from the xz release tarball, a second `FetchContent` pinned by URL and SHA256
+(xz 5.8.4), built as a static, **decoder-only** library: no encoders, no threaded decoder, no `xz`
+or `xzdec`, no scripts, translations, docs or tests. libarchive's own `find_package(LibLZMA)` is
+pointed at that target through `LIBLZMA_INCLUDE_DIR` / `LIBLZMA_LIBRARY`, with its three probe
+results pre-answered, because a probe cannot link against a library that does not exist yet at
+configure time. Never pin xz 5.6.0 or 5.6.1, which shipped the backdoor. To bump xz: take a
+release whose `.sig` verifies against Lasse Collin's key (fingerprint
+`3690 C240 CE51 B467 0D30 AD1C 38EE 757D 6918 4620`, from tukaani.org), copy the hash of the
+`.tar.gz` asset, and cross-check it against a second source (the GitHub asset digest, Homebrew's
+`xz` formula) before changing the pin.
+
+### Solid and encrypted 7z
+
+**Solid 7z is expensive to page through.** 7-Zip's default is one solid LZMA2 block, and a solid
+block can only be decoded from its start, so page *N* costs decoding pages 1…*N* on every read:
+`nativeExtract` is stateless and reopens the archive per call, and libarchive cannot skip an entry
+inside a solid block without decoding it. Measured on the host (Apple M4, release build) on a
+300-page solid archive of 1 MB pages that barely compress: page 0 in 32 ms, page 50 in 1.2 s,
+page 150 in 3.5 s, page 299 in 6.9 s; a 10-page window near the end also costs ~6.9 s, but the
+same ten pages read one call each cost ~68 s. A non-solid archive is flat, ~23 ms per page
+wherever the page is. A phone will be slower than that host. As the code reads, every page turn
+starts at least one walk from the start of the block (the prefetch window is one walk per turn,
+not per book), so reading forward through a big solid book repeats work quadratically, and a jump
+to the end waits for the whole block. Related: 7-Zip sorts a solid block's
+files by extension, so `ComicInfo.xml` lands **after** the pages, and reading the sidecar at open
+decodes the entire block before page 1 appears (the same ~7 s on the 300 MB host case). The per-entry
+128 MB and 20,000-entry caps in `archive_jni.c` still apply per entry, but nothing bounds the total
+decoded while *skipping* entries in a solid block, so a crafted solid 7z can keep one call busy for
+a long time. liblzma also allocates the LZMA dictionary size the archive declares (7-Zip's own
+`-mx=9` uses 64 MB; the format allows far more), with no limit set by libarchive's 7z reader,
+so a hostile archive can ask for a large allocation per concurrent decode; it is only touched as
+data is actually decoded.
+
+None of that is fixed here, because the fix is a redesign: a stateful sequential reader that keeps
+the decoder alive between page turns (a native handle with a lifetime tied to `LibArchiveSource`),
+and a lazily read `ComicInfo.xml`. Until then a solid `.cb7` of a few hundred large pages opens but
+is slow deep into the book; a non-solid one (7-Zip's `-ms=off`) is fast, and so is any `.cbz`.
+
+**Encrypted 7z** is reported as unsupported encryption, never as "no readable pages". With the
+header encrypted, libarchive fails at open with "encrypted, but currently not supported"; with only
+the content encrypted it lists the entries, flags them encrypted, and fails on the first read with
+the same text. `archive_jni.c` maps both to `UnsupportedEncryptionException`, and for a 7z it does
+so *instead of* `PasswordRequiredException`, because no password can help: the reader shows its
+"encryption Absolutex can't open" message rather than a password prompt that ends in the same
+place. `tools/test-archive-7z.sh` and `SevenZipSourceTest` cover both variants.
 
 `:source:pdf` is the one exception to "nothing is vendored, everything is built from source",
 and it is not by choice: PDFium ships no release tarball and no standalone CMake build, only a
@@ -171,6 +225,7 @@ No dependency is GPL or AGPL. No ads, no analytics, no crash reporting.
 | Component | Licence | Note |
 |---|---|---|
 | **libarchive 3.8.9** | New BSD | RAR4/RAR5 readers are clean-room |
+| **liblzma (xz 5.8.4)** | 0BSD | Public-domain-equivalent: no attribution required. Decoder-only, built from the pinned release tarball; see [NDK](#ndk) |
 | **PDFium 155.0.8044.0** | BSD-3-Clause | Bundled deps all permissive; see [`source/pdf/LICENSES.md`](../source/pdf/LICENSES.md) |
 | AGP, Gradle, Kotlin, Compose, Hilt, Room, DataStore | Apache-2.0 | |
 

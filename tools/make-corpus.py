@@ -21,7 +21,7 @@ machine and any CPython 3.9+:
 pure-Python cases. ``--check`` re-generates and compares against it, which is how
 CI notices that a "harmless" refactor quietly changed the corpus.
 
-Cases that need an external encoder or archiver (RAR5, solid 7z, AVIF) are
+Cases that need an external encoder or archiver (RAR5, 7z, AVIF) are
 detected at run time and **skipped with an explanation**. In particular RAR5
 needs RARLAB's ``rar``, which is proprietary -- we will not vendor it, and the
 corpus is expected to be incomplete on a machine that lacks it.
@@ -400,33 +400,51 @@ def case_pdf_outline(out: Path) -> None:
     build_pdf_with_outline(out / "13_outline.pdf")
 
 
-def case_solid_7z(out: Path) -> None:
-    """Solid 7z, which defeats random access: every page before N must be inflated to reach N.
+def build_7z(out: Path, name: str, options: list[str]) -> None:
+    """Ten PNG pages and a ComicInfo.xml packed by an external 7z, or a printed skip.
 
-    Note for whoever wires this up: the native build currently sets ENABLE_LZMA=OFF
-    (see source/libarchive/src/main/cpp/CMakeLists.txt, TODO(phase6)), so .cb7 will not
-    open yet. This case exists so phase 6 has something to open on day one.
+    Not pinned in corpus-expected-sha256.json: a 7z binary's LZMA2 output differs between
+    versions and thread counts, exactly as the RAR5 and AVIF encoders' do.
     """
     exe = which("7zz", "7z", "7za")
     if not exe:
-        skip("14_solid.cb7", "no 7z binary on PATH (install p7zip / 7-Zip; LGPL, fine to require)")
+        skip(name, "no 7z binary on PATH (install p7zip / 7-Zip; LGPL, fine to require)")
         return
     staging = out / ".tmp_7z"
     staging.mkdir(parents=True, exist_ok=True)
-    for name, blob in pages(10):
-        (staging / name).write_bytes(blob)
+    for page, blob in pages(10):
+        (staging / page).write_bytes(blob)
     (staging / "ComicInfo.xml").write_text(COMIC_INFO.format(count=10, manga="No"), "utf-8")
-    target = out / "14_solid.cb7"
+    # Absolute: 7z runs with cwd=staging, so a relative --out would drop the archive inside the
+    # staging directory, which is deleted below - and the case would vanish without a skip line.
+    target = (out / name).resolve()
     target.unlink(missing_ok=True)
-    # -ms=on forces one solid block; -mx=9 keeps it genuinely expensive to seek into.
-    proc = subprocess.run([exe, "a", "-t7z", "-ms=on", "-mx=9", "-bso0", "-bsp0",
-                           str(target), "."],
+    proc = subprocess.run([exe, "a", "-t7z", *options, "-bso0", "-bsp0", str(target), "."],
                           cwd=staging, capture_output=True)
     shutil.rmtree(staging)
     if proc.returncode != 0:
         target.unlink(missing_ok=True)
-        skip("14_solid.cb7", "7z exited %d: %s"
+        skip(name, "7z exited %d: %s"
              % (proc.returncode, proc.stderr.decode("utf-8", "replace").strip()[:160]))
+
+
+def case_solid_7z(out: Path) -> None:
+    """Solid 7z, which defeats random access: every page before N must be decoded to reach N.
+
+    LZMA2 (7-Zip's default), so this needs liblzma in the native build, which it now has: it
+    opens and yields ten pages. The cost model is unchanged: page N costs pages 1..N.
+    """
+    # -ms=on forces one solid block; -mx=9 keeps it genuinely expensive to seek into.
+    build_7z(out, "14_solid.cb7", ["-m0=lzma2", "-ms=on", "-mx=9"])
+
+
+def case_lzma2_7z(out: Path) -> None:
+    """Plain non-solid LZMA2 7z: the everyday .cb7, where each page is its own folder.
+
+    Random access is cheap here (libarchive steps over the packed streams of the entries it
+    skips), so this is the case that separates "LZMA works" from "solid is slow".
+    """
+    build_7z(out, "28_lzma2_nonsolid.cb7", ["-m0=lzma2", "-ms=off", "-mx=5"])
 
 
 def case_rar5(out: Path) -> None:
@@ -898,6 +916,7 @@ CASES: list[tuple[str, Callable[[Path], None], bool]] = [
     ("comicinfo_corrupt",      case_comicinfo_corrupt_entry, True),
     ("comicinfo_two_sidecars", case_comicinfo_two_sidecars,  True),
     ("solid_7z",      case_solid_7z,       False),
+    ("lzma2_7z",      case_lzma2_7z,       False),
     ("rar5",          case_rar5,           False),
     ("avif",          case_avif,           False),
 ]
