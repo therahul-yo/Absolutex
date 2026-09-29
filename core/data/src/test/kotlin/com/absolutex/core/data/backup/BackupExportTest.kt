@@ -1,5 +1,6 @@
 package com.absolutex.core.data.backup
 
+import androidx.room.withTransaction
 import com.absolutex.core.data.BookPrefs
 import com.absolutex.core.data.Bookmark
 import com.absolutex.core.data.PageView
@@ -7,6 +8,7 @@ import com.absolutex.core.data.ReadingProgress
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -27,6 +29,7 @@ class BackupExportTest : BackupFixture() {
         assertEquals((count - EXPORT_HISTORY).toLong(), export.omittedHistory)
         assertEquals(0L, export.skippedItems)
         assertEquals(count, db.pageViewDao().count())
+        assertEquals(RestoreResult.Complete(0), repository.restore(export.bytes.inputStream()))
     }
 
     @Test fun `odd identities are skipped and counted in every export category`() = runTest {
@@ -45,18 +48,60 @@ class BackupExportTest : BackupFixture() {
         assertEquals(0L, export.omittedHistory)
         assertFalse(export.bytes.toString(Charsets.UTF_8).contains("content://"))
         assertTrue(data.history.isEmpty() && data.bookmarks.isEmpty() && data.bookPrefs.isEmpty())
+        assertEquals(RestoreResult.Complete(0), repository.restore(export.bytes.inputStream()))
     }
 
-    @Test fun `long conforming identities exhaust byte budget without failing export`() = runTest {
-        repeat(MAX_BOOKS + 1) { index ->
-            val id = "x".repeat(1000) + "$index:1"
-            db.progressDao().upsert(ReadingProgress(id, 0, 1, 1))
-            db.bookmarkDao().add(Bookmark(id, 0, 1))
-            db.pageViewDao().record(listOf(PageView(bookKey = id, page = 0, atEpochMs = 1)))
+    @Test fun `eight thousand progress rows export completely and reimport strictly`() = runTest {
+        db.withTransaction {
+            repeat(8000) { index ->
+                db.progressDao().upsert(ReadingProgress("book-$index-with-a-realistic-display-name.cbz:1024", 0, 1, 1))
+            }
         }
         val export = repository.export("test")
-        assertTrue(export.skippedItems > 0)
+        val data = BackupCodec.read(export.bytes.inputStream())
+        assertEquals(8000, data.progress.size)
+        assertEquals(0L, export.skippedItems)
+        assertEquals(0L, export.omittedHistory)
+        assertEquals(RestoreResult.Complete(0), repository.restore(export.bytes.inputStream()))
+    }
+
+    @Test fun `actual over cap export drops oldest history before progress and reports exactly`() = runTest {
+        val id = "x".repeat(1000) + ":1"
+        db.withTransaction {
+            repeat(2000) { index -> db.progressDao().upsert(ReadingProgress("$index$id", 0, 1, 1)) }
+            db.bookmarkDao().add(Bookmark(id, 0, 1))
+            db.pageViewDao().record((1..EXPORT_HISTORY).map {
+                PageView(bookKey = id, page = 0, atEpochMs = it.toLong())
+            })
+        }
+        val full = BackupData("test", db.backupDao().progress(), db.pageViewDao().all(), db.backupDao().bookmarks())
+        assertThrows(BackupCapacityExceeded::class.java) { BackupWriter.write(full) }
+        val export = repository.export("test")
+        val data = BackupCodec.read(export.bytes.inputStream())
+        assertEquals(2000, data.progress.size)
+        assertEquals(1, data.bookmarks.size)
+        assertTrue(data.history.isNotEmpty() && data.history.size < EXPORT_HISTORY)
+        assertEquals((EXPORT_HISTORY - data.history.size).toLong(), export.omittedHistory)
+        assertEquals(0L, export.skippedItems)
+        assertEquals(EXPORT_HISTORY.toLong(), data.history.first().atEpochMs)
+        assertEquals((EXPORT_HISTORY - data.history.size + 1).toLong(), data.history.last().atEpochMs)
         assertTrue(export.bytes.size <= MAX_BACKUP_BYTES)
-        assertTrue(BackupCodec.read(export.bytes.inputStream()).bookIds.size <= MAX_BOOKS)
+        assertEquals(RestoreResult.Complete(0), repository.restore(export.bytes.inputStream()))
+        assertTrue(export.bytes.contentEquals(repository.export("test").bytes))
+    }
+
+    @Test fun `progress shrinks only after every other tier is empty`() = runTest {
+        val rows = (1..5000).map { ReadingProgress("x".repeat(1000) + "$it:1", 0, 1, it.toLong()) }
+        val id = rows.first().bookId
+        val original = BackupData("test", rows.sortedByDescending { it.updatedAt },
+            listOf(PageView(bookKey = id, page = 0, atEpochMs = 1)), listOf(Bookmark(id, 0, 1)),
+            listOf(BookPrefs(id)), setOf(id))
+        val (bytes, kept) = original.writeSizedExport()
+        assertTrue(kept.progress.size < rows.size)
+        assertTrue(kept.history.isEmpty() && kept.bookmarks.isEmpty())
+        assertTrue(kept.favourites.isEmpty() && kept.bookPrefs.isEmpty())
+        assertEquals(5000L, kept.progress.first().updatedAt)
+        assertEquals(kept.progress, BackupCodec.read(bytes.inputStream()).progress)
+        assertEquals(kept.progress.size, (repository.restore(bytes.inputStream()) as RestoreResult.Complete).progress)
     }
 }

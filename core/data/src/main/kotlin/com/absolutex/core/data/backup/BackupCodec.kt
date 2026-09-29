@@ -12,6 +12,8 @@ import java.math.BigDecimal
 internal object BackupCodec {
     fun read(input: InputStream, now: Long = System.currentTimeMillis()): BackupData = try {
         parse(input, now)
+    } catch (e: BackupCapacityExceeded) {
+        throw e
     } catch (e: FutureBackupVersion) {
         throw e
     } catch (_: Exception) {

@@ -288,17 +288,21 @@ Identity is the exact displayName + size string: rename, resize, case or Unicode
 changes prevent matching. Identities are opaque data, never opened as paths; URI fallbacks are skipped.
 
 Import validates the entire file before writes: strict UTF-8/JSON (optional initial BOM), 4 MiB,
-2,000 book identities, 10,000 history and bookmark entries each, 1,024 characters per string,
+10,000 book identities, 10,000 history and bookmark entries each, 1,024 characters per string,
 nesting depth 16 and 100,000 JSON values, including unknown fields. Numeric text is capped at
 64 characters and scale at ±128. Future schema versions are refused; unknown fields are ignored
 within those limits. Any progress/history/bookmark timestamp later than now + one day clamps to now.
 
-Export reads bounded batches, keeps at most the 5,000 newest history rows, and uses a conservative
-byte/book budget so volume never invalidates the backup. Older history and invalid/omitted items
-are counted in the result; source rows are not removed. Other categories read up to 2,000 rows
-per category. Non-conforming identities/positions/timestamps are skipped, never exported as SAF URIs.
-A provider failure during the truncating write can leave a partial file; the error asks the user
-to export again before using it.
+Export reads bounded batches (up to 10,000 per category and the newest 5,000 history rows).
+Rows are validated, then actual UTF-8 JSON bytes are measured against the writer's 4 MiB guard.
+If byte/value/identity caps are exceeded, at most 75 attempts halve the oldest remaining tier:
+history first, then bookmarks, favourites, per-book overrides and finally progress only after
+all other tiers are empty. Lists use descending timestamps and identity ties; favourites use
+last-read/added time for library rows and arrival time for pending entries, because the schema
+has no favourite-created timestamp. Overrides use last-read time. Older history and all other
+invalid/dropped items are counted exactly; source rows are not removed. Non-conforming identities,
+positions and timestamps are skipped, never exported as SAF URIs. A provider failure during the
+truncating write can leave a partial file; the error asks the user to export again before using it.
 
 Newer progress wins; newer last-read time replaces the WHOLE per-book preference row, so it can
 clear a local override. Ties preserve local records. History, bookmarks and favourites are unions:

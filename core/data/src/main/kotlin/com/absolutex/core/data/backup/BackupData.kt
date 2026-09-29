@@ -6,7 +6,8 @@ import com.absolutex.core.data.PageView
 import com.absolutex.core.data.ReadingProgress
 
 internal const val MAX_BACKUP_BYTES = 4 * 1024 * 1024
-internal const val MAX_BOOKS = 2000
+internal const val MAX_BOOKS = 10_000
+internal const val MAX_PENDING_FAVOURITES = 2000
 internal const val MAX_ENTRIES = 10_000
 internal const val MAX_TEXT = 1024
 internal const val SCHEMA_VERSION = 1
@@ -27,7 +28,7 @@ internal data class BackupData(
         history.map { it.bookKey } + bookmarks.map { it.bookId } + bookPrefs.map { it.bookId } + favourites
 }
 
-class InvalidBackup : IllegalArgumentException()
+open class InvalidBackup : IllegalArgumentException()
 
 class FutureBackupVersion : IllegalArgumentException()
 
@@ -47,3 +48,19 @@ sealed interface RestoreResult {
 internal data class ReadingChanges(
     val books: Set<String>, val progress: Int, val favourites: Int, val unmatched: Set<String>,
 )
+
+internal class BackupCapacityExceeded : InvalidBackup()
+
+internal fun BackupData.withinExportLimits(): Boolean =
+    bookIds.size <= MAX_BOOKS && progress.size <= MAX_BOOKS && bookPrefs.size <= MAX_BOOKS &&
+        history.size <= MAX_ENTRIES && bookmarks.size <= MAX_ENTRIES && favourites.size <= MAX_BOOKS &&
+        jsonValueCount() <= MAX_JSON_VALUES
+
+/** Exact value count for this fixed schema, including preference-set arrays. */
+private fun BackupData.jsonValueCount(): Int = ROOT_VALUES + progress.size * PROGRESS_VALUES +
+    (history.size + bookmarks.size + bookPrefs.size) * ROW_VALUES + favourites.size +
+    preferences.values.sumOf { if (it is Set<*>) 1 + it.size else 1 }
+
+private const val ROOT_VALUES = 9
+private const val PROGRESS_VALUES = 5
+private const val ROW_VALUES = 4

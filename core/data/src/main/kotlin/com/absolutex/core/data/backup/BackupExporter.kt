@@ -7,14 +7,13 @@ import com.absolutex.model.ReadingFlow
 
 /** Volume and odd legacy rows reduce the export, never prevent backing up the remaining data. */
 internal suspend fun AbsolutexDatabase.buildExport(
-    version: String, pending: Set<String>, preferences: Map<String, Any>,
+    version: String, pending: Map<String, Long>, preferences: Map<String, Any>,
 ): ExportResult {
     val dao = backupExportDao()
     val counts = dao.counts()
-    val budget = BackupExportBudget()
     var skipped = 0L
     fun include(id: String, valid: Boolean = true): Boolean {
-        val keep = valid && validBackupIdentity(id) && budget.include(id)
+        val keep = valid && validBackupIdentity(id)
         if (!keep) skipped++
         return keep
     }
@@ -24,23 +23,32 @@ internal suspend fun AbsolutexDatabase.buildExport(
     skipped += counts.progress - minOf(counts.progress, MAX_BOOKS.toLong())
     val prefs = dao.bookPrefs(MAX_BOOKS).filter { include(it.bookId) }.map(::knownBookPrefs)
     skipped += counts.prefs - minOf(counts.prefs, MAX_BOOKS.toLong())
-    val favourites = (dao.favourites(MAX_BOOKS).toSet() + pending).filter { include(it) }.toSet()
+    val ages = dao.favourites(MAX_BOOKS).associate { it.identity to it.time }.toMutableMap()
+    pending.forEach { (identity, time) ->
+        ages[identity] = maxOf(ages[identity] ?: time, time)
+    }
+    val favourites = ages.entries.sortedWith(
+        compareByDescending<Map.Entry<String, Long>> { it.value }.thenBy { it.key },
+    )
+        .map { it.key }.filter { include(it) }.toSet()
     skipped += counts.favourites - minOf(counts.favourites, MAX_BOOKS.toLong())
-    val bookmarks = dao.bookmarks(MAX_BOOKS).filter {
+    val bookmarks = dao.bookmarks(MAX_ENTRIES).filter {
         include(it.bookId, it.pageIndex >= 0 && it.createdAt >= 0)
     }
-    skipped += counts.bookmarks - minOf(counts.bookmarks, MAX_BOOKS.toLong())
+    skipped += counts.bookmarks - minOf(counts.bookmarks, MAX_ENTRIES.toLong())
     var invalidHistory = 0
     val history = dao.history(EXPORT_HISTORY).filter {
         if (!validBackupIdentity(it.bookKey) || it.page < 0 || it.atEpochMs < 0) {
             skipped++
             invalidHistory++
             false
-        } else budget.include(it.bookKey)
+        } else true
     }
-    val omitted = counts.history - history.size - invalidHistory
     val data = BackupData(version.take(MAX_TEXT), progress, history, bookmarks, prefs, favourites, preferences)
-    return ExportResult(BackupWriter.write(data), skipped, omitted)
+    val (bytes, kept) = data.writeSizedExport()
+    val dropped = progress.size - kept.progress.size + bookmarks.size - kept.bookmarks.size +
+        prefs.size - kept.bookPrefs.size + favourites.size - kept.favourites.size
+    return ExportResult(bytes, skipped + dropped, counts.history - kept.history.size - invalidHistory)
 }
 
 private fun knownBookPrefs(value: BookPrefs): BookPrefs = value.copy(

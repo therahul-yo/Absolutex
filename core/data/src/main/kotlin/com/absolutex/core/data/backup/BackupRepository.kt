@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import com.absolutex.core.data.AbsolutexDatabase
 import com.absolutex.core.data.settings.DataStoreSettings
 import com.absolutex.core.data.settings.backupPreferences
+import com.absolutex.core.data.settings.pendingFavouriteAges
 import com.absolutex.core.data.settings.pendingFavourites
 import com.absolutex.core.data.settings.restoreBackup
 import kotlinx.coroutines.NonCancellable
@@ -22,7 +23,7 @@ class BackupRepository @Inject constructor(
     /** Call on IO; prepare the entire bounded export before opening/truncating the selected document. */
     suspend fun export(appVersion: String): ExportResult = pending.mutex.withLock {
         val preferences = settings.backupPreferences()
-        val favourites = settings.pendingFavourites()
+        val favourites = settings.pendingFavouriteAges()
         db.withTransaction { db.buildExport(appVersion, favourites, preferences) }
     }
 

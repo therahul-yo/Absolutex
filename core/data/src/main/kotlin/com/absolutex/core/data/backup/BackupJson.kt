@@ -29,7 +29,8 @@ internal object BackupJson {
     }
 
     private fun readValue(reader: JsonReader, depth: Int, count: IntArray): Any? {
-        require(depth <= MAX_DEPTH && ++count[0] <= MAX_JSON_VALUES)
+        require(depth <= MAX_DEPTH)
+        if (++count[0] > MAX_JSON_VALUES) throw BackupCapacityExceeded()
         return when (reader.peek()) {
             JsonToken.BEGIN_OBJECT -> readObject(reader, depth, count)
             JsonToken.BEGIN_ARRAY -> {

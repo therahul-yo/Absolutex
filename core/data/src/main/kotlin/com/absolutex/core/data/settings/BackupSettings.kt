@@ -4,7 +4,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.absolutex.core.data.backup.BackupPreferences
-import com.absolutex.core.data.backup.MAX_BOOKS
+import com.absolutex.core.data.backup.MAX_PENDING_FAVOURITES
 import com.absolutex.core.data.backup.validBackupIdentity
 import kotlinx.coroutines.flow.first
 
@@ -38,7 +38,7 @@ internal suspend fun DataStoreSettings.restoreBackup(
         }
         val retained = pending.filter(::validBackupIdentity).sortedWith(
             compareByDescending<String> { if (it in oldPending) times[it] ?: 0L else now }.thenBy { it },
-        ).take(MAX_BOOKS).toSet()
+        ).take(MAX_PENDING_FAVOURITES).toSet()
         val current = prefs.toBag()
         val merged = MapPrefBag(current.snapshot() + values.filterKeys { it in before })
         PrefCodec.encodeApp(PrefCodec.decodeApp(merged), current)
@@ -61,4 +61,12 @@ internal suspend fun DataStoreSettings.clearPending(applied: Set<String>) {
             it.substringAfter('|') in applied
         }.toSet()
     }
+}
+
+internal suspend fun DataStoreSettings.pendingFavouriteAges(): Map<String, Long> {
+    val prefs = store.data.first()
+    val times = prefs[pendingTimesKey].orEmpty().associate {
+        it.substringAfter('|') to (it.substringBefore('|').toLongOrNull() ?: 0L)
+    }
+    return prefs[pendingKey].orEmpty().filter(::validBackupIdentity).associateWith { times[it] ?: 0L }
 }

@@ -60,7 +60,7 @@ class PendingFavouritesTest : BackupFixture() {
     @Test fun `matched favourites do not consume pending capacity or count unchanged rows`() = runTest {
         tmp.newFile("a.cbz").writeBytes(ByteArray(16))
         repo().scanLocation(tmp.root)
-        val old = (1..MAX_BOOKS).map { "old$it:1" }.toSet()
+        val old = (1..MAX_PENDING_FAVOURITES).map { "old$it:1" }.toSet()
         settings.restoreBackup(emptyMap(), old, 10)
         val data = BackupData("test", favourites = setOf("a.cbz:16"))
         val first = repository.restore(BackupWriter.write(data).inputStream(), 20)
@@ -70,12 +70,12 @@ class PendingFavouritesTest : BackupFixture() {
         val settingsOnly = BackupData("test", preferences = mapOf("true_black" to false))
         assertEquals(RestoreResult.Complete(0, settingsChanged = true),
             repository.restore(BackupWriter.write(settingsOnly).inputStream(), 30))
-        assertEquals(MAX_BOOKS, settings.pendingFavourites().size)
+        assertEquals(MAX_PENDING_FAVOURITES, settings.pendingFavourites().size)
     }
 
     @Test fun `full pending set drops oldest entries and keeps new unmatched favourites`() = runTest {
         settings.restoreBackup(emptyMap(), setOf("first:1"), 10)
-        val rest = (1 until MAX_BOOKS).map { "other$it:1" }.toSet()
+        val rest = (1 until MAX_PENDING_FAVOURITES).map { "other$it:1" }.toSet()
         settings.restoreBackup(emptyMap(), rest + "first:1", 20)
         val data = BackupData("test", favourites = setOf("latest:1"))
         assertEquals(RestoreResult.Complete(1, favourites = 1, pendingDropped = 1),

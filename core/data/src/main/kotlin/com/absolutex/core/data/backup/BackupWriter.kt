@@ -5,6 +5,7 @@ import org.json.JSONObject
 
 internal object BackupWriter {
     fun write(data: BackupData): ByteArray {
+        if (!data.withinExportLimits()) throw BackupCapacityExceeded()
         BackupCodec.validate(data)
         val root = JSONObject()
             .put("schemaVersion", SCHEMA_VERSION).put("appVersion", data.appVersion)
@@ -29,7 +30,7 @@ internal object BackupWriter {
         }
         root.put("preferences", prefs)
         val bytes = (root.toString(2) + "\n").toByteArray(Charsets.UTF_8)
-        require(bytes.size <= MAX_BACKUP_BYTES)
+        if (bytes.size > MAX_BACKUP_BYTES) throw BackupCapacityExceeded()
         // The exporter obeys exactly the same limits as the importer, before opening a destination.
         BackupCodec.read(bytes.inputStream())
         return bytes
