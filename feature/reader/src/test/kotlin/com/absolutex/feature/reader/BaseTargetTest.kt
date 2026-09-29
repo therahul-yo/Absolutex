@@ -75,11 +75,10 @@ class BaseTargetTest {
     @Test fun `a tile key carries no crop because tiles are whole-page pixels`() {
         // Tiles are cut from the full page in source space and intersected with the crop per draw,
         // so a tile decoded under one crop state is correct under the other, and one entry serves
-        // both. Destructuring pins the shape: a crop field added to TileKey would need a sixth
-        // component here, which stops this compiling and is the cue to revisit the draw path.
-        val tile = TileKey(pageIndex = 3, col = 1, row = 2, sampleSize = 1, bookId = "book")
-        val (page, col, row, sample, book) = tile
-        assertEquals(listOf<Any>(3, 1, 2, 1, "book"), listOf(page, col, row, sample, book))
+        // both. Pinning the fields means a crop field added to TileKey fails here, which is the
+        // cue to revisit the draw path rather than let the two states silently split.
+        val fields = TileKey::class.java.declaredFields.map { it.name }.toSet()
+        assertEquals(setOf("pageIndex", "col", "row", "sampleSize", "bookId"), fields)
     }
 
     @Test fun `a cap on width still yields a positive size`() {
