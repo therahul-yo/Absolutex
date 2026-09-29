@@ -8,3 +8,6 @@ Third-party components are listed with their licences in README.md
 Those notices are also shown in the app under Settings → About → Open-source
 licences, which is where the positive-attribution obligations of the IJG JPEG
 library and FreeType are met.
+
+The native archive reader statically links liblzma from XZ Utils 5.8.4 (decoder only, built from
+the release tarball at compile time), licensed 0BSD, which requires no attribution.
