@@ -31,7 +31,9 @@ open class BackupFixture {
         db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), AbsolutexDatabase::class.java)
             .allowMainThreadQueries().build()
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val realStore = PreferenceDataStoreFactory.create(scope = scope) { tmp.newFolder().resolve("settings.preferences_pb") }
+        val realStore = PreferenceDataStoreFactory.create(scope = scope) {
+            tmp.newFolder().resolve("settings.preferences_pb")
+        }
         store = object : DataStore<Preferences> by realStore {
             override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences {
                 if (failSettings) throw IOException("Injected write failure")

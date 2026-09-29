@@ -2,7 +2,11 @@ package com.absolutex.core.data.backup
 
 import com.absolutex.core.data.ReadingProgress
 import kotlinx.coroutines.test.runTest
-import org.junit.Assert.*
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -31,7 +35,8 @@ class BackupHostileInputTest : BackupFixture() {
             """{"schemaVersion":1,"appVersion":"test","preferences":{"true_black":"false"}}""",
             """{"schemaVersion":1,"schemaVersion":1,"appVersion":"test"}""",
             """{"schemaVersion":1,"appVersion":"test"}{}""",
-            """{"schemaVersion":1,"appVersion":"test","progress":[{"bookId":"a:1","pageIndex":1,"pageCount":1,"updatedAt":0}]}""",
+            """{"schemaVersion":1,"appVersion":"test","progress":[
+                {"bookId":"a:1","pageIndex":1,"pageCount":1,"updatedAt":0}]}""",
             """{"schemaVersion":1,"appVersion":"test","bookmarks":[{"bookId":"a:1","pageIndex":0.5,"createdAt":0}]}""",
         ).forEach { reject(it.toByteArray()) }
     }
@@ -43,12 +48,15 @@ class BackupHostileInputTest : BackupFixture() {
             }
         }
         assertEquals(RestoreResult.Complete(0), repository.restore(
-            """{"schemaVersion":1,"appVersion":"test","future":{"nested":[1,true]},"preferences":{"future":1}}""".byteInputStream()))
+            """{"schemaVersion":1,"appVersion":"test","future":{"nested":[1,true]},
+                "preferences":{"future":1}}""".byteInputStream()))
     }
 
     @Test fun `oversized deeply nested and invalid UTF8 input fails before writes`() = runTest {
         reject(ByteArray(MAX_BACKUP_BYTES + 1) { ' '.code.toByte() })
-        reject(("""{"schemaVersion":1,"appVersion":"test","future":""" + "[".repeat(30) + "0" + "]".repeat(30) + "}").toByteArray())
+        val nested = """{"schemaVersion":1,"appVersion":"test","future":""" +
+            "[".repeat(30) + "0" + "]".repeat(30) + "}"
+        reject(nested.toByteArray())
         reject(byteArrayOf(0xC3.toByte(), 0x28))
         reject("""{"schemaVersion":1,"appVersion":"${"a".repeat(MAX_TEXT + 1)}"}""".toByteArray())
     }

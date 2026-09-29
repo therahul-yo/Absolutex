@@ -6,7 +6,12 @@ import com.absolutex.core.data.PageView
 import com.absolutex.core.data.ReadingProgress
 import com.absolutex.core.data.settings.pendingFavourites
 import kotlinx.coroutines.test.runTest
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -31,7 +36,8 @@ class BackupMergeTest : BackupFixture() {
         assertEquals(2, db.pageViewDao().count())
         assertEquals(2, db.backupDao().bookmarks().size)
         assertEquals(200L, db.backupDao().bookmarks().first { it.pageIndex == 1 }.createdAt)
-        repository.restore(BackupWriter.write(older.copy(progress = listOf(ReadingProgress("a:1", 6, 10, 300)))).inputStream())
+        val newer = older.copy(progress = listOf(ReadingProgress("a:1", 6, 10, 300)))
+        repository.restore(BackupWriter.write(newer).inputStream())
         assertEquals(6, db.progressDao().get("a:1")?.pageIndex)
         assertEquals("RTL", db.bookPrefsDao().get("a:1")?.readingFlow)
     }
@@ -43,7 +49,9 @@ class BackupMergeTest : BackupFixture() {
     }
 
     @Test fun `room failure rolls back every reading row`() = runTest {
-        db.openHelper.writableDatabase.execSQL("CREATE TRIGGER fail_view BEFORE INSERT ON page_view BEGIN SELECT RAISE(ABORT, 'test'); END")
+        db.openHelper.writableDatabase.execSQL(
+            "CREATE TRIGGER fail_view BEFORE INSERT ON page_view BEGIN SELECT RAISE(ABORT, 'test'); END",
+        )
         val data = BackupData("test", listOf(ReadingProgress("a:1", 0, 1, 1)),
             listOf(PageView(bookKey = "a:1", page = 0, atEpochMs = 1)))
         assertThrows(Exception::class.java) {

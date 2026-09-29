@@ -11,7 +11,9 @@ private val pendingKey = stringSetPreferencesKey("backup_pending_favourites")
 
 internal suspend fun DataStoreSettings.backupPreferences(): Map<String, Any> {
     val bag = store.data.first().toBag()
-    return BackupPreferences.encode(PrefCodec.decodeApp(bag), PrefCodec.decodeReader(bag), PrefCodec.decodeRendering(bag))
+    return BackupPreferences.encode(
+        PrefCodec.decodeApp(bag), PrefCodec.decodeReader(bag), PrefCodec.decodeRendering(bag),
+    )
 }
 
 internal suspend fun DataStoreSettings.pendingFavourites(): Set<String> =

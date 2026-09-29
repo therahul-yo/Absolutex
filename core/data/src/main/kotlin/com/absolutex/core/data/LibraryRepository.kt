@@ -31,7 +31,7 @@ class LibraryRepository internal constructor(
 ) {
 
     /**
-     * The constructor Hilt uses. Only [dao] is a real dependency.
+     * The constructor Hilt uses. [pending] applies restored favourites after each scan batch.
      *
      * The scanner and clock used to be default arguments on the @Inject constructor itself.
      * Dagger cannot see Kotlin defaults, so it demanded bindings for LibraryScanner and
@@ -41,6 +41,9 @@ class LibraryRepository internal constructor(
      */
     @Inject constructor(dao: LibraryDao, pending: com.absolutex.core.data.backup.PendingFavourites) :
         this(dao, LibraryScanner(), System::currentTimeMillis, pending)
+
+    /** Preserve the existing DAO-only seam for callers with no persisted settings (including tests). */
+    constructor(dao: LibraryDao) : this(dao, LibraryScanner(), System::currentTimeMillis)
 
 
     fun observeLibrary(): Flow<List<LibraryBook>> = dao.observeAll()

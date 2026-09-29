@@ -227,6 +227,8 @@ when `detekt`, the unit tests of the touched modules, `tools/check-strings.py` a
 Settings → Backup exports/imports schema-v1 JSON through SAF (no permissions). The file includes
 book names: progress, page-view history, bookmarks, favourites, per-book overrides and
 app/reader/rendering preferences. It excludes server records, credentials and location grants.
+Text-EPUB within-chapter fraction, text scroll/page choice and tap-guide-seen are excluded;
+a restored text EPUB opens at its chapter start.
 Identity remains displayName + size: a renamed or resized book cannot match its old records.
 
 Import validates the entire file before writes: strict UTF-8/JSON, 8 MiB, 10,000 book identities,

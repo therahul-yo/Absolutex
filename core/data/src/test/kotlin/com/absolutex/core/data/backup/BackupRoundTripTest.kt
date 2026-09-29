@@ -10,7 +10,11 @@ import com.absolutex.core.data.settings.pendingFavourites
 import com.absolutex.core.data.settings.restoreBackup
 import com.absolutex.model.ReadingFlow
 import kotlinx.coroutines.test.runTest
-import org.junit.Assert.*
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -46,7 +50,10 @@ class BackupRoundTripTest : BackupFixture() {
         val text = repository.export("test").toString(Charsets.UTF_8)
         listOf("password", "secret-password", "server_record", "private-host", "content://", "library_locations")
             .forEach { assertFalse(text.contains(it)) }
-        repository.restore("""{"schemaVersion":1,"appVersion":"old","preferences":{"library_locations":["content://bad"],"password":"x"}}""".byteInputStream())
+        repository.restore(
+            """{"schemaVersion":1,"appVersion":"old","preferences":{
+                "library_locations":["content://bad"],"password":"x"}}""".byteInputStream(),
+        )
         assertEquals(setOf("content://secret/grant"), settings.currentAppPrefs().locations)
     }
 
@@ -55,13 +62,18 @@ class BackupRoundTripTest : BackupFixture() {
         repository.restore("""{"schemaVersion":1,"appVersion":"old"}""".byteInputStream())
         assertEquals(defaults, settings.currentReaderPrefs())
         settings.updateReader { it.copy(readingFlow = ReadingFlow.RTL) }
-        repository.restore("""{"schemaVersion":1,"appVersion":"old","preferences":{"true_black":false}}""".byteInputStream())
+        repository.restore(
+            """{"schemaVersion":1,"appVersion":"old","preferences":{"true_black":false}}""".byteInputStream(),
+        )
         assertEquals(ReadingFlow.RTL, settings.currentReaderPrefs().readingFlow)
         assertFalse(settings.currentAppPrefs().trueBlack)
     }
 
     @Test fun `preferences use codec fallback and bounds`() = runTest {
-        repository.restore("""{"schemaVersion":1,"appVersion":"test","preferences":{"night_mode":"FUTURE","cache_size_mib":-100,"page_turn_ms":9999,"colour_brightness":100}}""".byteInputStream())
+        repository.restore(
+            """{"schemaVersion":1,"appVersion":"test","preferences":{"night_mode":"FUTURE",
+                "cache_size_mib":-100,"page_turn_ms":9999,"colour_brightness":100}}""".byteInputStream(),
+        )
         assertEquals(64, settings.currentAppPrefs().cacheSizeMiB)
         assertEquals(600, settings.currentReaderPrefs().pageTurnMs)
         assertEquals(com.absolutex.core.data.settings.AppPrefs().nightMode, settings.currentAppPrefs().nightMode)

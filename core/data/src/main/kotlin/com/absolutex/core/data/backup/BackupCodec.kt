@@ -37,7 +37,9 @@ internal object BackupCodec {
             favourites = root.list("favourites", MAX_BOOKS).map { value ->
                 mapOf("bookId" to value).identity("bookId")
             }.toSet(),
-            preferences = BackupPreferences.validate(if ("preferences" in root) root["preferences"].objectValue() else emptyMap()),
+            preferences = BackupPreferences.validate(
+                if ("preferences" in root) root["preferences"].objectValue() else emptyMap(),
+            ),
         )
         validate(data)
         return data

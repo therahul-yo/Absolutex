@@ -39,7 +39,9 @@ class BackupRepository @Inject constructor(
             val oldPending = settings.pendingFavourites()
             validatePending(oldPending + data.favourites)
             withContext(NonCancellable) {
-                val unmatched = db.withTransaction { db.mergeBackup(data.copy(favourites = data.favourites + oldPending)) }
+                val unmatched = db.withTransaction {
+                    db.mergeBackup(data.copy(favourites = data.favourites + oldPending))
+                }
                 try {
                     settings.restoreBackup(data.preferences, unmatched)
                     RestoreResult.Complete(data.bookIds.size)

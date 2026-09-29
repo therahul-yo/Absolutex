@@ -20,7 +20,9 @@ internal suspend fun AbsolutexDatabase.mergeBackup(data: BackupData): Set<String
         if (row.bookId !in existingPrefs || newTime > oldTime) bookPrefsDao().upsert(row)
     }
     val bookmarks = dao.bookmarks().associateBy { it.bookId to it.pageIndex }
-    data.bookmarks.groupBy { it.bookId to it.pageIndex }.values.map { rows -> rows.maxBy { it.createdAt } }.forEach { row ->
+    val newestBookmarks = data.bookmarks.groupBy { it.bookId to it.pageIndex }.values
+        .map { rows -> rows.maxBy { it.createdAt } }
+    newestBookmarks.forEach { row ->
         if (row.createdAt > (bookmarks[row.bookId to row.pageIndex]?.createdAt ?: -1)) bookmarkDao().add(row)
     }
     val existingViews = history.map { Triple(it.bookKey, it.page, it.atEpochMs) }.toSet()

@@ -6,7 +6,9 @@ import com.absolutex.core.data.settings.restoreBackup
 import com.absolutex.core.scan.LibraryChange
 import com.absolutex.core.scan.LibraryScanner
 import kotlinx.coroutines.test.runTest
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
