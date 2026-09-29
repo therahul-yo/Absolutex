@@ -43,6 +43,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.absolutex.core.data.settings.NightMode
 import com.absolutex.core.ui.AbsolutexTheme
 import com.absolutex.feature.library.LibraryRoute
+import com.absolutex.feature.library.OpenFileTypes
 import com.absolutex.feature.remote.REMOTE_LIST_ROUTE
 import com.absolutex.feature.remote.remoteDestination
 import com.absolutex.feature.settings.SETTINGS_ROUTE
@@ -211,9 +212,15 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
         if (folder != null) vm.addLocation(folder)
     }
 
+    // A single file, from the library's "Open file" button. It opens through the same sheet a
+    // library row does, and a file whose grant holds is also remembered for resume and recorded in
+    // the library so it shows up in Recent. Cancelling the picker returns null and does nothing.
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { picked ->
         if (picked != null) {
-            if (keepGrant(context, picked)) vm.rememberBook(picked.toString())
+            if (keepGrant(context, picked)) {
+                vm.rememberBook(picked.toString())
+                vm.recordPickedFile(picked)
+            }
             openOverLibrary(picked)
         }
     }
@@ -235,7 +242,11 @@ private fun Root(directUri: Uri? = null, vm: ShellViewModel = hiltViewModel()) {
                 },
                 onCloseBook = { openBook = null },
                 onSettings = { settingsOpen = it },
-                onAddLocation = { folderPicker.launch(null) },
+                hooks = LibraryHooks(
+                    onAddLocation = { folderPicker.launch(null) },
+                    onOpenFile = { picker.launch(OpenFileTypes.MIME_TYPES) },
+                    onRescan = vm::rescanLocations,
+                ),
                 reader = { book ->
                     ReaderDestination(book, readerVm, vm, openOverLibrary) { settingsOpen = true }
                 },
@@ -316,11 +327,21 @@ private fun sharedAxisOut(forward: Boolean): ExitTransition =
 private fun keepGrant(context: android.content.Context, picked: Uri): Boolean {
     runCatching {
         context.contentResolver.takePersistableUriPermission(picked, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }.onFailure { android.util.Log.w("Shell", "persistable grant refused", it) }
+    }.onFailure {
+        // The class only: a SecurityException's message names the Uri.
+        android.util.Log.w("Shell", "persistable grant refused: ${it.javaClass.name}")
+    }
     val persisted = context.contentResolver.persistedUriPermissions.any { it.uri == picked }
     if (!persisted) android.util.Log.w("Shell", "grant not persisted; opening for this session only")
     return persisted
 }
+
+/** What the library asks the shell to do: the two pickers, and re-reading the saved folders. */
+private class LibraryHooks(
+    val onAddLocation: () -> Unit,
+    val onOpenFile: () -> Unit,
+    val onRescan: () -> Unit,
+)
 
 /**
  * The library with an open book and settings as sheets over it ([OverlaySheet]). Neither ever
@@ -334,7 +355,7 @@ private fun LibraryWithOverlays(
     onOpenBook: (Uri) -> Unit,
     onCloseBook: () -> Unit,
     onSettings: (Boolean) -> Unit,
-    onAddLocation: () -> Unit,
+    hooks: LibraryHooks,
     reader: @Composable (Uri) -> Unit,
     settings: @Composable () -> Unit,
 ) {
@@ -350,7 +371,9 @@ private fun LibraryWithOverlays(
             // A library row holds whatever the scan found it by: a document Uri from a SAF
             // location, or a device path from a filesystem one. The reader opens either.
             onOpenBook = { path -> onOpenBook(bookUri(path)) },
-            onAddLocation = onAddLocation,
+            onAddLocation = hooks.onAddLocation,
+            onOpenFile = hooks.onOpenFile,
+            onRescan = hooks.onRescan,
             onOpenSettings = { onSettings(true) },
             paused = bookCovers || settingsCovers,
         )

@@ -20,6 +20,7 @@ import com.absolutex.core.ui.Motion
 import com.absolutex.core.ui.A11y
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material.icons.outlined.FileOpen
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.foundation.layout.size
 import androidx.compose.animation.shrinkVertically
@@ -69,6 +70,9 @@ import com.absolutex.core.ui.AsciiTitle
  * @param onOpenBook handed the absolute path of the book to open.
  * @param onAddLocation invoked from the empty state a fresh install sees; the storage-location
  *   picker lives outside this module.
+ * @param onOpenFile launches the single-file picker, from the top bar and the first-run empty
+ *   state. What happens to the picked file is the host's: it opens it the way it opens any book.
+ * @param onRescan re-reads the saved folders, from the "no books found" and "couldn't read" states.
  * @param onOpenSettings the library's way in to the settings screen. Until this existed the only
  *   navigation to it was from the reader chrome, so a fresh install with an empty library could
  *   not reach settings at all — and therefore could not add a storage location from there, change
@@ -79,6 +83,8 @@ fun LibraryRoute(
     onOpenBook: (String) -> Unit,
     onAddLocation: () -> Unit,
     onOpenSettings: () -> Unit = {},
+    onOpenFile: () -> Unit = {},
+    onRescan: () -> Unit = {},
     modifier: Modifier = Modifier,
     paused: Boolean = false,
 ) {
@@ -97,6 +103,8 @@ fun LibraryRoute(
         onOpenBook = onOpenBook,
         onAddLocation = onAddLocation,
         onOpenSettings = onOpenSettings,
+        onOpenFile = onOpenFile,
+        onRescan = onRescan,
         modifier = modifier,
     )
 }
@@ -135,6 +143,8 @@ internal fun LibraryScreen(
     onOpenBook: (String) -> Unit,
     onAddLocation: () -> Unit,
     onOpenSettings: () -> Unit = {},
+    onOpenFile: () -> Unit = {},
+    onRescan: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()
@@ -162,7 +172,7 @@ internal fun LibraryScreen(
         },
     ) {
         CompositionLocalProvider(LocalFloatingBarClearance provides if (floating) FloatingBarClearance else 0.dp) {
-            LibraryBody(state, actions, onOpenBook, onAddLocation, onOpenSettings)
+            LibraryBody(state, actions, onOpenBook, onAddLocation, onOpenSettings, onOpenFile, onRescan)
         }
     }
     if (floating) {
@@ -179,6 +189,8 @@ private fun LibraryBody(
     onOpenBook: (String) -> Unit,
     onAddLocation: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenFile: () -> Unit,
+    onRescan: () -> Unit,
 ) {
     val snackbar = remember { SnackbarHostState() }
     // Resolved here and not inside the effect: the words are a string resource, and the effect's
@@ -202,7 +214,11 @@ private fun LibraryBody(
                     transitionSpec = { fadeIn(Motion.enter()) togetherWith fadeOut(Motion.exit()) },
                     label = "bar",
                 ) { selecting ->
-                    if (selecting) SelectionTopBar(state, actions) else LibraryTopBar(state.section, onOpenSettings)
+                    if (selecting) {
+                        SelectionTopBar(state, actions)
+                    } else {
+                        LibraryTopBar(state.section, onOpenSettings, onOpenFile)
+                    }
                 }
                 LibraryControls(state, actions)
             }
@@ -211,14 +227,14 @@ private fun LibraryBody(
         // Scaffold consumes the system bars for us; the app draws edge to edge (§7).
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
-            LibraryContent(state, actions, onOpenBook, onAddLocation)
+            LibraryContent(state, actions, onOpenBook, onAddLocation, onOpenFile, onRescan)
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun LibraryTopBar(section: HomeSection, onOpenSettings: () -> Unit) {
+private fun LibraryTopBar(section: HomeSection, onOpenSettings: () -> Unit, onOpenFile: () -> Unit) {
     TopAppBar(
         // The status-bar inset is the collapsing header's (CollapsingHeader), not the bar's.
         windowInsets = WindowInsets(0),
@@ -234,8 +250,17 @@ private fun LibraryTopBar(section: HomeSection, onOpenSettings: () -> Unit) {
             }
         },
         actions = {
-            // An icon-only control, so the description is the only thing a screen reader has to
-            // go on. Tonal and full-size so it reads as a button, not a stray glyph.
+            // Icon-only controls, so the description is the only thing a screen reader has to go
+            // on. Tonal and full-size so each reads as a button, not a stray glyph.
+            FilledTonalIconButton(
+                onClick = onOpenFile,
+                modifier = Modifier.padding(end = Space.Gap).size(A11y.MinTouchTarget),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.FileOpen,
+                    contentDescription = stringResource(R.string.library_open_file),
+                )
+            }
             FilledTonalIconButton(
                 onClick = onOpenSettings,
                 modifier = Modifier.padding(end = Space.Gap).size(A11y.MinTouchTarget),
@@ -269,6 +294,8 @@ private fun LibraryContent(
     actions: LibraryActions,
     onOpenBook: (String) -> Unit,
     onAddLocation: () -> Unit,
+    onOpenFile: () -> Unit,
+    onRescan: () -> Unit,
 ) {
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val error = state.error
@@ -279,7 +306,7 @@ private fun LibraryContent(
         return
     }
     if (state.emptyReason != LibraryEmptyReason.NONE) {
-        LibraryEmptyState(state.emptyReason, state.section, state.query, onAddLocation)
+        LibraryEmptyState(state.emptyReason, state.section, state.query, onAddLocation, onOpenFile, onRescan)
         return
     }
     // Built rather than remembered: it is three fields, and a remember keyed on only some of

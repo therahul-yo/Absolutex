@@ -8,6 +8,9 @@ import com.absolutex.core.data.ContentResolverTree
 import com.absolutex.core.data.LibraryBook
 import com.absolutex.core.data.LibraryRepository
 import com.absolutex.core.data.NextBook
+import com.absolutex.core.data.OpenedBooks
+import com.absolutex.core.data.ReadFailures
+import com.absolutex.core.data.ScanStatus
 import com.absolutex.core.data.runCatchingCancellable
 import com.absolutex.core.data.settings.SettingsWriter
 import com.absolutex.core.scan.TreeEntry
@@ -33,6 +36,9 @@ import javax.inject.Inject
 private const val TAG = "Shell"
 
 @HiltViewModel
+// Every one of these is a distinct collaborator this shell coordinates; bundling them would only
+// hide the list.
+@Suppress("LongParameterList")
 class ShellViewModel @Inject constructor(
     private val lastBookStore: LastBookStore,
     @ApplicationContext private val context: Context,
@@ -40,6 +46,8 @@ class ShellViewModel @Inject constructor(
     private val tree: ContentResolverTree,
     private val writer: SettingsWriter,
     private val readerPrefs: ReaderPrefsSource,
+    private val scanStatus: ScanStatus,
+    private val openedBooks: OpenedBooks,
     prefs: AppPrefsSource,
 ) : ViewModel() {
 
@@ -55,13 +63,21 @@ class ShellViewModel @Inject constructor(
                 context.contentResolver.takePersistableUriPermission(
                     treeUri, Intent.FLAG_GRANT_READ_URI_PERMISSION,
                 )
-            }.onFailure { Log.w(TAG, "persistable grant refused for a location", it) }
+            }.onFailure { Log.w(TAG, "persistable grant refused for a location: ${it.javaClass.name}") }
             if (context.contentResolver.persistedUriPermissions.none { it.uri == treeUri }) {
                 Log.w(TAG, "grant not persisted; not adding this location")
                 return@launch
             }
-            writer.updateApp { it.copy(locations = it.locations + treeUri.toString()) }
-            scan(treeUri)
+            val location = treeUri.toString()
+            // Announced before the location is saved: the library reads "a folder exists" from the
+            // saved list, and must never see that without also seeing the scan that is about to run.
+            scanStatus.started(listOf(location))
+            try {
+                writer.updateApp { it.copy(locations = it.locations + location) }
+                scan(treeUri)
+            } finally {
+                scanStatus.abandoned(listOf(location))
+            }
         }
     }
 
@@ -75,21 +91,45 @@ class ShellViewModel @Inject constructor(
             val held = context.contentResolver.persistedUriPermissions.map { it.uri.toString() }.toSet()
             val (live, dead) = stored.partition { it in held }
             if (dead.isNotEmpty()) writer.updateApp { it.copy(locations = it.locations - dead.toSet()) }
-            live.forEach { scan(Uri.parse(it)) }
+            // All announced up front, so the gap between one location's scan and the next never
+            // reads as "finished with nothing found".
+            scanStatus.started(live)
+            try {
+                live.forEach { scan(Uri.parse(it)) }
+            } finally {
+                scanStatus.abandoned(live)
+            }
         }
     }
 
     private suspend fun scan(treeUri: Uri) {
         val name = DocumentsContract.getTreeDocumentId(treeUri).substringAfterLast('/')
         val root = TreeEntry(uri = treeUri.toString(), name = name, isDirectory = true)
+        val failures = ReadFailures()
         // scanTree is a suspend collect, so a plain runCatching here would swallow a delivered
         // CancellationException: a cancelled scan would log "scan failed" and return normally,
         // leaving the caller's job completed instead of cancelled. runCatchingCancellable
         // rethrows cancellation before it can be captured (see its KDoc and test in :core:data).
-        val result = runCatchingCancellable { library.scanTree(root, tree) }
-            .onFailure { Log.w(TAG, "scan failed", it) }
-            .getOrNull() ?: return
-        Log.i(TAG, "scanned a location: ${result.found} books, ${result.removed} gone")
+        val result = runCatchingCancellable { library.scanTree(root, tree.reporting(failures)) }
+            // The class only: an exception's message can carry the folder's Uri.
+            .onFailure { Log.w(TAG, "scan failed: ${it.javaClass.name}") }
+            .getOrNull()
+        // A folder that could not be read is not an empty one, and the library says which.
+        scanStatus.finished(root.uri, unreadable = result == null || failures.any)
+        if (result != null) Log.i(TAG, "scanned a location: ${result.found} books, ${result.removed} gone")
+    }
+
+    /**
+     * Records a file the user picked on its own, so it shows up in the library and in Recent.
+     * Only a file whose grant survived a restart is recorded: a row for a file the app can no
+     * longer open after a restart would be a dead entry.
+     */
+    fun recordPickedFile(uri: Uri) {
+        viewModelScope.launch {
+            val info = withContext(Dispatchers.IO) { context.openableInfo(uri) } ?: return@launch
+            runCatchingCancellable { openedBooks.record(uri.toString(), info.name, info.sizeBytes) }
+                .onFailure { Log.w(TAG, "could not record an opened file: ${it.javaClass.name}") }
+        }
     }
 
     /**
