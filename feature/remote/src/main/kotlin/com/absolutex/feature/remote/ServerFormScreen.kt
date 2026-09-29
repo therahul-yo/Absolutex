@@ -218,10 +218,9 @@ private fun SyncFields(
 @Composable
 private fun KindPicker(kind: RemoteKind, enabled: Boolean, onKind: (RemoteKind) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        KindChip(RemoteKind.SMB, R.string.remote_kind_smb, kind, enabled, onKind)
-        KindChip(RemoteKind.FTP, R.string.remote_kind_ftp, kind, enabled, onKind)
-        KindChip(RemoteKind.KOMGA, R.string.remote_kind_komga, kind, enabled, onKind)
-        KindChip(RemoteKind.KAVITA, R.string.remote_kind_kavita, kind, enabled, onKind)
+        for (value in selectableKinds(kind)) {
+            KindChip(value, kindLabelRes(value), kind, enabled, onKind)
+        }
     }
 }
 

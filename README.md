@@ -75,6 +75,13 @@ Absolutex deliberately does not support low-end devices: no 16-bit colour paths,
 fallbacks, no single-threaded decode kept around for weak chips. The hardware floor is a feature —
 every compromise removed is a code path that cannot rot or drop a frame.
 
+## Updates
+
+Absolutex does not update itself and has no update check. To hear about new versions, add
+`https://github.com/therahul-yo/Absolutex` to [Obtainium](https://github.com/ImranR98/Obtainium),
+which watches the releases page and installs the new APK, or use **Watch → Custom → Releases** on
+this repository.
+
 ## Privacy
 
 No ads, no analytics, no crash reporting. Nothing leaves your phone unless you add a network share

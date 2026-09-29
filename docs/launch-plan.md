@@ -129,7 +129,7 @@ phones work but aren't what it's tuned for.
 <SHA-256 fingerprint>.
 
 **Known limitations in this beta**
-- No automatic updates yet: watch this repo, or add it to Obtainium.
+- No automatic updates: watch this repo, or add `https://github.com/therahul-yo/Absolutex` to Obtainium.
 - Komga/Kavita progress sync, cloud storage and offline copies are not available yet.
 - Tested on: OnePlus 11R, <phone>, <phone>.
 
