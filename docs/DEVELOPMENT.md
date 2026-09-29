@@ -224,10 +224,26 @@ when `detekt`, the unit tests of the touched modules, `tools/check-strings.py` a
 
 ### Reading-data backup
 
-Settings will offer a versioned JSON export/import through SAF. Imports validate before writes,
-then merge reading data in one Room transaction and preferences in one DataStore edit. No Room
-migration, credentials, server records or location grants are included. Book identity remains
-filename plus size: renaming a file prevents its old backup records from matching.
+Settings → Backup exports/imports schema-v1 JSON through SAF (no permissions). The file includes
+book names: progress, page-view history, bookmarks, favourites, per-book overrides and
+app/reader/rendering preferences. It excludes server records, credentials and location grants.
+Identity remains displayName + size: a renamed or resized book cannot match its old records.
+
+Import validates the entire file before writes: strict UTF-8/JSON, 8 MiB, 10,000 book identities,
+100,000 history and bookmark entries each, 1,024 characters per string, nesting depth 16 and
+800,000 JSON values. Future schema versions are refused; unknown fields are ignored within these
+limits. Numeric text/exponents are bounded too. Identities are opaque data, never opened as paths.
+Newer progress and per-book overrides win (ties keep existing); history, bookmarks and favourites
+are unions. Omitted preference keys preserve existing values; PrefCodec supplies defaults/bounds.
+
+Reading data merges in one Room transaction, then settings/pending favourites in one DataStore
+edit. There is no cross-store atomicity: a failed second phase reports the partial restore and
+asks for re-import, which is idempotent. Unmatched favourites wait in a bounded DataStore set
+until LibraryRepository scans a matching identity, then are applied and cleared. Re-add folders
+after reinstall; grants cannot be restored. Forgetting a folder still drops favourites on its
+library rows, a pre-existing limitation for a separate favourites-table migration. No migration
+is introduced here. SAF/provider failures, rotation and actual reader restoration need device
+checks; CI covers JVM data/merge/hostile-input tests.
 
 ### Never `dup()` a file descriptor to share it across threads
 

@@ -71,7 +71,7 @@ internal object BackupCodec {
 
     private fun Map<String, Any?>.identity(key: String): String = text(key).also {
         // Opaque identity, never a path to open. Colons/slashes in legitimate display names stay opaque.
-        require(it.isNotBlank() && it.none { char -> char.isISOControl() })
+        require(it.substringBeforeLast(':', "").isNotBlank() && it.none { char -> char.isISOControl() })
         require(it.substringAfterLast(':', "").toLongOrNull()?.let { size -> size >= 0 } == true)
     }
 

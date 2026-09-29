@@ -11,7 +11,6 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.InputStream
-import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -21,7 +20,7 @@ class BackupRepository @Inject constructor(
     private val settings: DataStoreSettings,
     private val pending: PendingFavourites,
 ) {
-    /** Call on IO; prepare the entire bounded export before creating/truncating a document. */
+    /** Call on IO; prepare the entire bounded export before opening/truncating the selected document. */
     suspend fun export(appVersion: String): ByteArray = pending.mutex.withLock {
         val preferences = settings.backupPreferences()
         val favourites = settings.pendingFavourites()
@@ -44,7 +43,7 @@ class BackupRepository @Inject constructor(
                 try {
                     settings.restoreBackup(data.preferences, unmatched)
                     RestoreResult.Complete(data.bookIds.size)
-                } catch (_: IOException) {
+                } catch (_: Exception) {
                     RestoreResult.ReadingDataOnly(data.bookIds.size)
                 }
             }

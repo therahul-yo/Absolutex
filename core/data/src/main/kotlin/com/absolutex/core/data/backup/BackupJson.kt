@@ -12,6 +12,8 @@ import java.nio.charset.CodingErrorAction
 internal object BackupJson {
     private const val MAX_DEPTH = 16
     private const val MAX_VALUES = 800_000
+    private const val MAX_NUMBER_TEXT = 64
+    private const val MAX_NUMBER_SCALE = 128
 
     fun read(input: InputStream): Map<String, Any?> {
         val bytes = input.readNBytes(MAX_BACKUP_BYTES + 1)
@@ -38,7 +40,11 @@ internal object BackupJson {
                 values
             }
             JsonToken.STRING -> reader.nextString().also { require(it.length <= MAX_TEXT) }
-            JsonToken.NUMBER -> BigDecimal(reader.nextString())
+            JsonToken.NUMBER -> {
+                val number = reader.nextString()
+                require(number.length <= MAX_NUMBER_TEXT)
+                BigDecimal(number).also { require(it.scale() in -MAX_NUMBER_SCALE..MAX_NUMBER_SCALE) }
+            }
             JsonToken.BOOLEAN -> reader.nextBoolean()
             JsonToken.NULL -> { reader.nextNull(); null }
             else -> error("Invalid JSON value")

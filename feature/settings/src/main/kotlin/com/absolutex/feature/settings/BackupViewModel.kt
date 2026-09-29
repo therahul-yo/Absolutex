@@ -6,7 +6,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.absolutex.core.data.backup.BackupRepository
 import com.absolutex.core.data.backup.FutureBackupVersion
-import com.absolutex.core.data.backup.RestoreResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -36,10 +35,7 @@ class BackupViewModel @Inject constructor(
 
     fun import(uri: Uri) = runOperation {
         val result = (context.contentResolver.openInputStream(uri) ?: throw IOException()).use { backup.restore(it) }
-        when (result) {
-            is RestoreResult.Complete -> BackupState(message = R.string.backup_restored, books = result.books)
-            is RestoreResult.ReadingDataOnly -> BackupState(message = R.string.backup_partial, books = result.books)
-        }
+        result.toBackupState()
     }
 
     private fun runOperation(action: suspend () -> BackupState) {

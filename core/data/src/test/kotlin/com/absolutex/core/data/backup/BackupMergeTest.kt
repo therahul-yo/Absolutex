@@ -36,6 +36,12 @@ class BackupMergeTest : BackupFixture() {
         assertEquals("RTL", db.bookPrefsDao().get("a:1")?.readingFlow)
     }
 
+    @Test fun `duplicate imported bookmarks choose newest independently of input order`() = runTest {
+        val data = BackupData("test", bookmarks = listOf(Bookmark("a:1", 2, 200), Bookmark("a:1", 2, 100)))
+        repeat(2) { repository.restore(BackupWriter.write(data).inputStream()) }
+        assertEquals(200L, db.backupDao().bookmarks().single().createdAt)
+    }
+
     @Test fun `room failure rolls back every reading row`() = runTest {
         db.openHelper.writableDatabase.execSQL("CREATE TRIGGER fail_view BEFORE INSERT ON page_view BEGIN SELECT RAISE(ABORT, 'test'); END")
         val data = BackupData("test", listOf(ReadingProgress("a:1", 0, 1, 1)),

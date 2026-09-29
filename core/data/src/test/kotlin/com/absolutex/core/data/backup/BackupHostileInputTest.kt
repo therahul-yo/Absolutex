@@ -24,6 +24,9 @@ class BackupHostileInputTest : BackupFixture() {
         listOf(
             """{"schemaVersion":1,"appVersion":"test","progress":[""",
             """{"schemaVersion":"1","appVersion":"test"}""",
+            """{"schemaVersion":1,"appVersion":"test","future":1e999999999}""",
+            """{"schemaVersion":1,"appVersion":"test","preferences":null}""",
+            """{"schemaVersion":1,"appVersion":"test","favourites":[":1"]}""",
             """{"schemaVersion":1,"appVersion":"test","progress":{}}""",
             """{"schemaVersion":1,"appVersion":"test","preferences":{"true_black":"false"}}""",
             """{"schemaVersion":1,"schemaVersion":1,"appVersion":"test"}""",
