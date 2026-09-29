@@ -27,10 +27,11 @@ class LibraryRepository internal constructor(
     private val dao: LibraryDao,
     private val scanner: LibraryScanner,
     private val now: () -> Long,
+    private val pending: com.absolutex.core.data.backup.PendingFavourites? = null,
 ) {
 
     /**
-     * The constructor Hilt uses. Only [dao] is a real dependency.
+     * The constructor Hilt uses. [pending] applies restored favourites after each scan batch.
      *
      * The scanner and clock used to be default arguments on the @Inject constructor itself.
      * Dagger cannot see Kotlin defaults, so it demanded bindings for LibraryScanner and
@@ -38,7 +39,11 @@ class LibraryRepository internal constructor(
      * injected it yet; the library screen was the first caller and hit it. Tests use the internal
      * constructor to supply a fixed clock.
      */
-    @Inject constructor(dao: LibraryDao) : this(dao, LibraryScanner(), System::currentTimeMillis)
+    @Inject constructor(dao: LibraryDao, pending: com.absolutex.core.data.backup.PendingFavourites) :
+        this(dao, LibraryScanner(), System::currentTimeMillis, pending)
+
+    /** Preserve the existing DAO-only seam for callers with no persisted settings (including tests). */
+    constructor(dao: LibraryDao) : this(dao, LibraryScanner(), System::currentTimeMillis)
 
 
     fun observeLibrary(): Flow<List<LibraryBook>> = dao.observeAll()
@@ -73,11 +78,11 @@ class LibraryRepository internal constructor(
             batch += book.toEntity(scanId)
             found++
             if (batch.size >= BATCH) {
-                dao.upsertPreservingAddedAt(batch)
+                upsertScanned(batch)
                 batch.clear()
             }
         }
-        if (batch.isNotEmpty()) dao.upsertPreservingAddedAt(batch)
+        if (batch.isNotEmpty()) upsertScanned(batch)
 
         // Only after the walk completes: deleting on a cancelled scan would remove books whose
         // files are still there, simply because the walk never reached them.
@@ -108,12 +113,12 @@ class LibraryRepository internal constructor(
                 batch += book.toEntity(scanId)
                 found++
                 if (batch.size >= BATCH) {
-                    dao.upsertPreservingAddedAt(batch)
+                    upsertScanned(batch)
                     batch.clear()
                 }
             }
         }
-        if (batch.isNotEmpty()) dao.upsertPreservingAddedAt(batch)
+        if (batch.isNotEmpty()) upsertScanned(batch)
 
         // Only after the walk completes, as in scanLocation: a cancelled walk must not delete the
         // books it simply never reached.
@@ -159,7 +164,7 @@ class LibraryRepository internal constructor(
      */
     private suspend fun upsertOne(path: String): ChangeResult {
         val book = LibraryScanner.scanFile(File(path)) ?: return ChangeResult.NotABook(path)
-        dao.upsertPreservingAddedAt(listOf(book.toEntity(now())))
+        upsertScanned(listOf(book.toEntity(now())))
         return ChangeResult.Upserted(path = path)
     }
 
@@ -174,6 +179,10 @@ class LibraryRepository internal constructor(
     /** Updates the favourites flag for a single book path (§5.1 favourites shelf). */
     suspend fun upsertFavorite(path: String, favorite: Boolean) {
         dao.updateFavorite(path, favorite)
+    }
+
+    private suspend fun upsertScanned(books: List<LibraryBook>) {
+        if (pending == null) dao.upsertPreservingAddedAt(books) else pending.upsertScanned(dao, books)
     }
 
     private fun ScannedBook.toEntity(scanId: Long) = LibraryBook(
