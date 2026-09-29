@@ -16,11 +16,11 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class BackupHostileInputTest : BackupFixture() {
     private suspend fun reject(bytes: ByteArray) {
-        val before = repository.export("test")
-        assertThrows(Exception::class.java) {
+        val before = repository.export("test").bytes
+        assertThrows(InvalidBackup::class.java) {
             kotlinx.coroutines.runBlocking { repository.restore(bytes.inputStream()) }
         }
-        assertArrayEquals(before, repository.export("test"))
+        assertArrayEquals(before, repository.export("test").bytes)
     }
 
     @Test fun `truncated wrong types duplicate keys and trailing content change nothing`() = runTest {
@@ -78,4 +78,24 @@ class BackupHostileInputTest : BackupFixture() {
         assertEquals(id, db.progressDao().get(id)?.bookId)
         reject("""{"schemaVersion":1,"appVersion":"test","favourites":["../../no-size"]}""".toByteArray())
     }
+    @Test fun `BOM and a file at both byte and value caps parse and one extra value fails`() = runTest {
+        val values = List(MAX_JSON_VALUES - 4) { "0" }.joinToString(",")
+        val json = """{"schemaVersion":1,"appVersion":"test","future":[$values]}"""
+        val bytes = ("\uFEFF" + json).toByteArray()
+        val capped = bytes + ByteArray(MAX_BACKUP_BYTES - bytes.size) { ' '.code.toByte() }
+        assertEquals(RestoreResult.Complete(0), repository.restore(capped.inputStream()))
+        reject(json.replace("]}", ",0]}").toByteArray())
+    }
+
+    @Test fun `duplicate progress identities are specifically invalid`() = runTest {
+        val row = """{"bookId":"a:1","pageIndex":0,"pageCount":1,"updatedAt":1}"""
+        reject("""{"schemaVersion":1,"appVersion":"test","progress":[$row,$row]}""".toByteArray())
+    }
+
+    @Test fun `unknown per book enums become global defaults`() = runTest {
+        val data = BackupData("test", bookPrefs = listOf(com.absolutex.core.data.BookPrefs("a:1", "FUTURE", "FUTURE")))
+        repository.restore(BackupWriter.write(data).inputStream())
+        assertEquals(com.absolutex.core.data.BookPrefs("a:1"), db.bookPrefsDao().get("a:1"))
+    }
+
 }

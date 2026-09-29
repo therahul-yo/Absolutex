@@ -11,7 +11,6 @@ import java.nio.charset.CodingErrorAction
 /** Strict JSON with bounded bytes, nesting, strings and total values, including unknown fields. */
 internal object BackupJson {
     private const val MAX_DEPTH = 16
-    private const val MAX_VALUES = 800_000
     private const val MAX_NUMBER_TEXT = 64
     private const val MAX_NUMBER_SCALE = 128
 
@@ -19,7 +18,8 @@ internal object BackupJson {
         val bytes = input.readNBytes(MAX_BACKUP_BYTES + 1)
         require(bytes.size <= MAX_BACKUP_BYTES)
         val utf8 = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
-            .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString()
+            .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes))
+            .toString().removePrefix("\uFEFF")
         return JsonReader(StringReader(utf8)).use { reader ->
             reader.isLenient = false
             val value = readValue(reader, 0, intArrayOf(0)).objectValue()
@@ -29,7 +29,7 @@ internal object BackupJson {
     }
 
     private fun readValue(reader: JsonReader, depth: Int, count: IntArray): Any? {
-        require(depth <= MAX_DEPTH && ++count[0] <= MAX_VALUES)
+        require(depth <= MAX_DEPTH && ++count[0] <= MAX_JSON_VALUES)
         return when (reader.peek()) {
             JsonToken.BEGIN_OBJECT -> readObject(reader, depth, count)
             JsonToken.BEGIN_ARRAY -> {

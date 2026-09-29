@@ -18,6 +18,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
@@ -37,12 +41,21 @@ fun BackupSection(vm: BackupViewModel = hiltViewModel()) {
                 Icon(Icons.Outlined.FileUpload, contentDescription = null)
                 Text(stringResource(R.string.backup_export), Modifier.padding(start = 8.dp))
             }
-            TextButton(enabled = !state.busy, onClick = { import.launch(arrayOf("application/json", "text/plain")) }) {
+            TextButton(enabled = !state.busy, onClick = { import.launch(arrayOf("*/*")) }) {
                 Icon(Icons.Outlined.FileDownload, contentDescription = null)
                 Text(stringResource(R.string.backup_import), Modifier.padding(start = 8.dp))
             }
         }
-        if (state.busy) LinearProgressIndicator()
-        state.message?.let { Text(stringResource(it, state.books), style = MaterialTheme.typography.bodyMedium) }
+        val progressDescription = stringResource(R.string.backup_in_progress)
+        if (state.busy) LinearProgressIndicator(Modifier.semantics { contentDescription = progressDescription })
+        Column(Modifier.semantics { liveRegion = LiveRegionMode.Polite }) {
+            state.message?.let {
+                Text(stringResource(it, *state.arguments.toTypedArray()), style = MaterialTheme.typography.bodyMedium)
+            }
+            if (state.pendingDropped > 0) {
+                Text(stringResource(R.string.backup_pending_dropped, state.pendingDropped),
+                    style = MaterialTheme.typography.bodyMedium)
+            }
+        }
     }
 }

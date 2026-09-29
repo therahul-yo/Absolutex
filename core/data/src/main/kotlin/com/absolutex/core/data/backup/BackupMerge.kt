@@ -3,31 +3,47 @@ package com.absolutex.core.data.backup
 import com.absolutex.core.data.AbsolutexDatabase
 
 /** Invoked only inside the caller's Room transaction. Existing data is never deleted. */
-internal suspend fun AbsolutexDatabase.mergeBackup(data: BackupData): Set<String> {
+internal suspend fun AbsolutexDatabase.mergeBackup(data: BackupData): ReadingChanges {
     val dao = backupDao()
-    val progress = dao.progress().associateBy { it.bookId }
-    val history = pageViewDao().all()
-    val currentRead = history.groupBy { it.bookKey }.mapValues { (_, views) -> views.maxOf { it.atEpochMs } }
+    val changed = mutableSetOf<String>()
+    val oldTimes = data.bookPrefs.associate { row ->
+        row.bookId to lastBackupRead(row.bookId)
+    }
     val importedRead = data.history.groupBy { it.bookKey }.mapValues { (_, views) -> views.maxOf { it.atEpochMs } }
     val importedProgress = data.progress.associateBy { it.bookId }
+    var written = 0
     data.progress.forEach { row ->
-        if (row.updatedAt > (progress[row.bookId]?.updatedAt ?: -1)) progressDao().upsert(row)
+        if (row.updatedAt > (progressDao().get(row.bookId)?.updatedAt ?: -1)) {
+            progressDao().upsert(row)
+            changed += row.bookId
+            written++
+        }
     }
-    val existingPrefs = dao.bookPrefs().associateBy { it.bookId }
     data.bookPrefs.forEach { row ->
-        val oldTime = maxOf(progress[row.bookId]?.updatedAt ?: -1, currentRead[row.bookId] ?: -1)
+        val old = bookPrefsDao().get(row.bookId)
         val newTime = maxOf(importedProgress[row.bookId]?.updatedAt ?: -1, importedRead[row.bookId] ?: -1)
-        if (row.bookId !in existingPrefs || newTime > oldTime) bookPrefsDao().upsert(row)
+        if (old != row && (old == null || newTime > oldTimes.getValue(row.bookId))) {
+            bookPrefsDao().upsert(row)
+            changed += row.bookId
+        }
     }
-    val bookmarks = dao.bookmarks().associateBy { it.bookId to it.pageIndex }
     val newestBookmarks = data.bookmarks.groupBy { it.bookId to it.pageIndex }.values
         .map { rows -> rows.maxBy { it.createdAt } }
     newestBookmarks.forEach { row ->
-        if (row.createdAt > (bookmarks[row.bookId to row.pageIndex]?.createdAt ?: -1)) bookmarkDao().add(row)
+        if (row.createdAt > (dao.bookmark(row.bookId, row.pageIndex)?.createdAt ?: -1)) {
+            bookmarkDao().add(row)
+            changed += row.bookId
+        }
     }
-    val existingViews = history.map { Triple(it.bookKey, it.page, it.atEpochMs) }.toSet()
     val newViews = data.history.distinctBy { Triple(it.bookKey, it.page, it.atEpochMs) }
-        .filter { Triple(it.bookKey, it.page, it.atEpochMs) !in existingViews }
+        .filter { !dao.hasView(it.bookKey, it.page, it.atEpochMs) }
     pageViewDao().record(newViews)
-    return data.favourites.filter { dao.addFavourite(it) == 0 }.toSet()
+    changed += newViews.map { it.bookKey }
+    val unmatched = data.favourites.filterNot { dao.hasBook(it) }.toSet()
+    val applied = (data.favourites - unmatched).filter { dao.addFavourite(it) > 0 }
+    changed += applied
+    return ReadingChanges(changed, written, applied.size, unmatched)
 }
+
+private suspend fun AbsolutexDatabase.lastBackupRead(identity: String): Long =
+    maxOf(progressDao().get(identity)?.updatedAt ?: -1, backupDao().lastRead(identity) ?: -1)

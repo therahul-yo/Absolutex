@@ -280,27 +280,42 @@ when `detekt`, the unit tests of the touched modules, `tools/check-strings.py` a
 ### Reading-data backup
 
 Settings → Backup exports/imports schema-v1 JSON through SAF (no permissions). The file includes
-book names: progress, page-view history, bookmarks, favourites, per-book overrides and
-app/reader/rendering preferences. It excludes server records, credentials and location grants.
-Text-EPUB within-chapter fraction, text scroll/page choice and tap-guide-seen are excluded;
-a restored text EPUB opens at its chapter start.
-Identity remains displayName + size: a renamed or resized book cannot match its old records.
+book names: progress, recent page-view history, bookmarks, favourites, per-book overrides and
+app/reader/rendering preferences. It excludes server records, credentials, location grants and
+`onboarded` (onboarding stays local). Text-EPUB within-chapter fraction, text scroll/page choice
+and tap-guide-seen are excluded; a restored text EPUB opens at its chapter start.
+Identity is the exact displayName + size string: rename, resize, case or Unicode-normalisation
+changes prevent matching. Identities are opaque data, never opened as paths; URI fallbacks are skipped.
 
-Import validates the entire file before writes: strict UTF-8/JSON, 8 MiB, 10,000 book identities,
-100,000 history and bookmark entries each, 1,024 characters per string, nesting depth 16 and
-800,000 JSON values. Future schema versions are refused; unknown fields are ignored within these
-limits. Numeric text/exponents are bounded too. Identities are opaque data, never opened as paths.
-Newer progress and per-book overrides win (ties keep existing); history, bookmarks and favourites
-are unions. Omitted preference keys preserve existing values; PrefCodec supplies defaults/bounds.
+Import validates the entire file before writes: strict UTF-8/JSON (optional initial BOM), 4 MiB,
+2,000 book identities, 10,000 history and bookmark entries each, 1,024 characters per string,
+nesting depth 16 and 100,000 JSON values, including unknown fields. Numeric text is capped at
+64 characters and scale at ±128. Future schema versions are refused; unknown fields are ignored
+within those limits. Any progress/history/bookmark timestamp later than now + one day clamps to now.
+
+Export reads bounded batches, keeps at most the 5,000 newest history rows, and uses a conservative
+byte/book budget so volume never invalidates the backup. Older history and invalid/omitted items
+are counted in the result; source rows are not removed. Other categories read up to 2,000 rows
+per category. Non-conforming identities/positions/timestamps are skipped, never exported as SAF URIs.
+A provider failure during the truncating write can leave a partial file; the error asks the user
+to export again before using it.
+
+Newer progress wins; newer last-read time replaces the WHOLE per-book preference row, so it can
+clear a local override. Ties preserve local records. History, bookmarks and favourites are unions:
+items removed after making the backup can return. Omitted preference keys preserve existing values;
+PrefCodec supplies defaults/bounds. Results count changed books, written progress and favourites
+actually applied or newly pending; an identical re-import reports nothing new.
 
 Reading data merges in one Room transaction, then settings/pending favourites in one DataStore
-edit. There is no cross-store atomicity: a failed second phase reports the partial restore and
-asks for re-import, which is idempotent. Unmatched favourites wait in a bounded DataStore set
-until LibraryRepository scans a matching identity, then are applied and cleared. Re-add folders
+edit. There is no cross-store atomicity: a failed second phase reports which reading changes
+committed and asks for re-import, which retries the rest safely. Only unmatched favourites consume
+the 2,000-entry pending cap (identities at most 1,024 characters, bounded arrival-time metadata).
+When full, the oldest pending entries are dropped and counted; existing entries keep their age
+on re-import. LibraryRepository applies/clears pending entries after matching scans. Re-add folders
 after reinstall; grants cannot be restored. Forgetting a folder still drops favourites on its
 library rows, a pre-existing limitation for a separate favourites-table migration. No migration
-is introduced here. SAF/provider failures, rotation and actual reader restoration need device
-checks; CI covers JVM data/merge/hostile-input tests.
+is introduced here. SAF/provider failures, rotation, TalkBack and actual reader restoration need
+device checks; CI covers JVM data/merge/hostile-input tests.
 
 ### Never `dup()` a file descriptor to share it across threads
 

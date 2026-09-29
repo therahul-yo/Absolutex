@@ -67,13 +67,32 @@ class BackupMergeTest : BackupFixture() {
             preferences = mapOf("true_black" to false))
         val bytes = BackupWriter.write(data)
         failSettings = true
-        assertEquals(RestoreResult.ReadingDataOnly(1), repository.restore(bytes.inputStream()))
+        assertEquals(RestoreResult.ReadingDataOnly(1, progress = 1), repository.restore(bytes.inputStream()))
         assertNotNull(db.progressDao().get("a:1"))
         assertTrue(settings.currentAppPrefs().trueBlack)
         failSettings = false
-        assertEquals(RestoreResult.Complete(1), repository.restore(bytes.inputStream()))
+        assertEquals(RestoreResult.Complete(1, favourites = 1, settingsChanged = true),
+            repository.restore(bytes.inputStream()))
         assertEquals(1, db.pageViewDao().count())
         assertFalse(settings.currentAppPrefs().trueBlack)
         assertEquals(setOf("a:1"), settings.pendingFavourites())
     }
+    @Test fun `far future timestamps clamp to now and later local progress can win`() = runTest {
+        val now = 100_000L
+        val data = BackupData("test", listOf(ReadingProgress("a:1", 0, 2, Long.MAX_VALUE)),
+            listOf(PageView(bookKey = "a:1", page = 0, atEpochMs = Long.MAX_VALUE)),
+            listOf(Bookmark("a:1", 0, Long.MAX_VALUE)))
+        repository.restore(BackupWriter.write(data).inputStream(), now)
+        assertEquals(now, db.progressDao().get("a:1")?.updatedAt)
+        assertEquals(now, db.pageViewDao().all().single().atEpochMs)
+        assertEquals(now, db.backupDao().bookmarks().single().createdAt)
+        val later = data.copy(progress = listOf(ReadingProgress("a:1", 1, 2, now + 1)),
+            history = emptyList(), bookmarks = emptyList())
+        repository.restore(BackupWriter.write(later).inputStream(), now + 1)
+        assertEquals(1, db.progressDao().get("a:1")?.pageIndex)
+        assertEquals(now + ONE_DAY_MS, BackupCodec.read(BackupWriter.write(later.copy(
+            progress = listOf(ReadingProgress("a:1", 1, 2, now + ONE_DAY_MS)),
+        )).inputStream(), now).progress.single().updatedAt)
+    }
+
 }

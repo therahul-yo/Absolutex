@@ -5,11 +5,14 @@ import com.absolutex.core.data.Bookmark
 import com.absolutex.core.data.PageView
 import com.absolutex.core.data.ReadingProgress
 
-internal const val MAX_BACKUP_BYTES = 8 * 1024 * 1024
-internal const val MAX_BOOKS = 10_000
-internal const val MAX_ENTRIES = 100_000
+internal const val MAX_BACKUP_BYTES = 4 * 1024 * 1024
+internal const val MAX_BOOKS = 2000
+internal const val MAX_ENTRIES = 10_000
 internal const val MAX_TEXT = 1024
 internal const val SCHEMA_VERSION = 1
+internal const val MAX_JSON_VALUES = 100_000
+internal const val EXPORT_HISTORY = 5000
+internal const val ONE_DAY_MS = 86_400_000L
 
 internal data class BackupData(
     val appVersion: String,
@@ -24,9 +27,23 @@ internal data class BackupData(
         history.map { it.bookKey } + bookmarks.map { it.bookId } + bookPrefs.map { it.bookId } + favourites
 }
 
+class InvalidBackup : IllegalArgumentException()
+
 class FutureBackupVersion : IllegalArgumentException()
 
+data class ExportResult(val bytes: ByteArray, val skippedItems: Long, val omittedHistory: Long)
+
 sealed interface RestoreResult {
-    data class Complete(val books: Int) : RestoreResult
-    data class ReadingDataOnly(val books: Int) : RestoreResult
+    data class Complete(
+        val books: Int,
+        val progress: Int = 0,
+        val favourites: Int = 0,
+        val settingsChanged: Boolean = false,
+        val pendingDropped: Int = 0,
+    ) : RestoreResult
+    data class ReadingDataOnly(val books: Int, val progress: Int = 0, val favourites: Int = 0) : RestoreResult
 }
+
+internal data class ReadingChanges(
+    val books: Set<String>, val progress: Int, val favourites: Int, val unmatched: Set<String>,
+)

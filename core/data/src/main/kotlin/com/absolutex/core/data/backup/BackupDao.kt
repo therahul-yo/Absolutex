@@ -21,6 +21,17 @@ interface BackupDao {
     @Query("SELECT DISTINCT contentKey FROM library_book WHERE isFavorite = 1")
     suspend fun favourites(): List<String>
 
-    @Query("UPDATE library_book SET isFavorite = 1 WHERE contentKey = :identity")
+    @Query("UPDATE library_book SET isFavorite = 1 WHERE contentKey = :identity AND isFavorite = 0")
     suspend fun addFavourite(identity: String): Int
+    @Query("SELECT EXISTS(SELECT 1 FROM library_book WHERE contentKey = :identity)")
+    suspend fun hasBook(identity: String): Boolean
+
+    @Query("SELECT MAX(atEpochMs) FROM page_view WHERE bookKey = :identity")
+    suspend fun lastRead(identity: String): Long?
+
+    @Query("SELECT EXISTS(SELECT 1 FROM page_view WHERE bookKey = :identity AND page = :page AND atEpochMs = :time)")
+    suspend fun hasView(identity: String, page: Int, time: Long): Boolean
+
+    @Query("SELECT * FROM bookmark WHERE bookId = :identity AND pageIndex = :page")
+    suspend fun bookmark(identity: String, page: Int): Bookmark?
 }

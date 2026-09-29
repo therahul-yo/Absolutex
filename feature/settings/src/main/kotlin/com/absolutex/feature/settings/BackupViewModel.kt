@@ -16,7 +16,10 @@ import kotlinx.coroutines.launch
 import java.io.IOException
 import javax.inject.Inject
 
-data class BackupState(val busy: Boolean = false, val message: Int? = null, val books: Int = 0)
+data class BackupState(
+    val busy: Boolean = false, val message: Int? = null, val books: Int = 0,
+    val arguments: List<Any> = emptyList(), val pendingDropped: Int = 0,
+)
 
 @HiltViewModel
 class BackupViewModel @Inject constructor(
@@ -28,9 +31,9 @@ class BackupViewModel @Inject constructor(
 
     fun export(uri: Uri) = runOperation {
         val version = context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
-        val bytes = backup.export(version)
-        (context.contentResolver.openOutputStream(uri, "wt") ?: throw IOException()).use { it.write(bytes) }
-        BackupState(message = R.string.backup_exported)
+        val result = backup.export(version)
+        (context.contentResolver.openOutputStream(uri, "wt") ?: throw IOException()).use { it.write(result.bytes) }
+        result.toBackupState()
     }
 
     fun import(uri: Uri) = runOperation {

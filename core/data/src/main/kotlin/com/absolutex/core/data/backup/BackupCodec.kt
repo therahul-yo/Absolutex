@@ -10,7 +10,15 @@ import java.io.InputStream
 import java.math.BigDecimal
 
 internal object BackupCodec {
-    fun read(input: InputStream): BackupData {
+    fun read(input: InputStream, now: Long = System.currentTimeMillis()): BackupData = try {
+        parse(input, now)
+    } catch (e: FutureBackupVersion) {
+        throw e
+    } catch (_: Exception) {
+        throw InvalidBackup()
+    }
+
+    private fun parse(input: InputStream, now: Long): BackupData {
         val root = BackupJson.read(input)
         val version = root.number("schemaVersion")
         if (version > SCHEMA_VERSION) throw FutureBackupVersion()
@@ -21,14 +29,14 @@ internal object BackupCodec {
                 val count = row.index("pageCount")
                 val index = row.index("pageIndex")
                 require(count > 0 && index < count)
-                ReadingProgress(row.identity("bookId"), index, count, row.number("updatedAt"))
+                ReadingProgress(row.identity("bookId"), index, count, row.timestamp("updatedAt", now))
             },
             history = root.entries("history").map { row ->
                 PageView(bookKey = row.identity("bookId"), page = row.index("pageIndex"),
-                    atEpochMs = row.number("atEpochMs"))
+                    atEpochMs = row.timestamp("atEpochMs", now))
             },
             bookmarks = root.entries("bookmarks").map { row ->
-                Bookmark(row.identity("bookId"), row.index("pageIndex"), row.number("createdAt"))
+                Bookmark(row.identity("bookId"), row.index("pageIndex"), row.timestamp("createdAt", now))
             },
             bookPrefs = root.entries("bookPrefs").map { row ->
                 BookPrefs(row.identity("bookId"), row.optionalEnum("readingFlow", ReadingFlow.entries),
@@ -72,9 +80,11 @@ internal object BackupCodec {
         (get(key) as? String ?: error("Expected string")).also { require(it.length <= MAX_TEXT) }
 
     private fun Map<String, Any?>.identity(key: String): String = text(key).also {
-        // Opaque identity, never a path to open. Colons/slashes in legitimate display names stay opaque.
-        require(it.substringBeforeLast(':', "").isNotBlank() && it.none { char -> char.isISOControl() })
-        require(it.substringAfterLast(':', "").toLongOrNull()?.let { size -> size >= 0 } == true)
+        require(validBackupIdentity(it))
+    }
+
+    private fun Map<String, Any?>.timestamp(key: String, now: Long): Long = number(key).let {
+        if (it > now + ONE_DAY_MS) now else it
     }
 
     private fun <T : Enum<T>> Map<String, Any?>.optionalEnum(key: String, values: List<T>): String? {

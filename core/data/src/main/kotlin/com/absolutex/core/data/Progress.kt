@@ -72,6 +72,7 @@ interface ProgressDao {
     ],
 )
 abstract class AbsolutexDatabase : RoomDatabase() {
+    abstract fun backupExportDao(): com.absolutex.core.data.backup.BackupExportDao
     abstract fun backupDao(): com.absolutex.core.data.backup.BackupDao
     abstract fun progressDao(): ProgressDao
     abstract fun libraryDao(): LibraryDao

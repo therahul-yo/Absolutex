@@ -6,14 +6,11 @@ import com.absolutex.core.data.BookPrefs
 import com.absolutex.core.data.Bookmark
 import com.absolutex.core.data.PageView
 import com.absolutex.core.data.ReadingProgress
-import com.absolutex.core.data.settings.pendingFavourites
-import com.absolutex.core.data.settings.restoreBackup
 import com.absolutex.model.ReadingFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -28,17 +25,18 @@ class BackupRoundTripTest : BackupFixture() {
             listOf(PageView(bookKey = "a.cbz:12", page = 2, atEpochMs = 100)),
             listOf(Bookmark("a.cbz:12", 2, 100)), listOf(BookPrefs("a.cbz:12", "RTL", "DOUBLE")),
             setOf("a.cbz:12"), mapOf("reading_flow" to "RTL", "colour_brightness" to 0.1f))
-        assertEquals(RestoreResult.Complete(1), repository.restore(BackupWriter.write(data).inputStream()))
+        assertEquals(RestoreResult.Complete(1, progress = 1, favourites = 1, settingsChanged = true),
+            repository.restore(BackupWriter.write(data).inputStream()))
         assertTrue(db.libraryDao().allOnce().isEmpty())
-        val exported = BackupCodec.read(repository.export("test").inputStream())
+        val exported = BackupCodec.read(repository.export("test").bytes.inputStream())
         assertEquals(data.progress, exported.progress)
         assertEquals(data.history, exported.history.map { it.copy(id = 0) })
         assertEquals(data.bookmarks, exported.bookmarks)
         assertEquals(data.bookPrefs, exported.bookPrefs)
         assertEquals(data.favourites, exported.favourites)
-        val bytes = repository.export("test")
+        val bytes = repository.export("test").bytes
         repository.restore(bytes.inputStream())
-        assertArrayEquals(bytes, repository.export("test"))
+        assertArrayEquals(bytes, repository.export("test").bytes)
     }
 
     @Test fun `credentials server records and SAF grants never leave the device`() = runTest {
@@ -47,7 +45,7 @@ class BackupRoundTripTest : BackupFixture() {
             it[stringPreferencesKey("password")] = "secret-password"
             it[stringPreferencesKey("server_record")] = "smb://private-host"
         }
-        val text = repository.export("test").toString(Charsets.UTF_8)
+        val text = repository.export("test").bytes.toString(Charsets.UTF_8)
         listOf("password", "secret-password", "server_record", "private-host", "content://", "library_locations")
             .forEach { assertFalse(text.contains(it)) }
         repository.restore(
@@ -79,14 +77,16 @@ class BackupRoundTripTest : BackupFixture() {
         assertEquals(com.absolutex.core.data.settings.AppPrefs().nightMode, settings.currentAppPrefs().nightMode)
     }
 
-    @Test fun `pending capacity failure changes neither store`() = runTest {
-        settings.restoreBackup(emptyMap(), (1..MAX_BOOKS).map { "book$it:1" }.toSet())
-        val before = repository.export("test")
-        val data = BackupData("test", listOf(ReadingProgress("extra:1", 0, 1, 1)), favourites = setOf("extra:1"))
-        assertThrows(IllegalArgumentException::class.java) {
-            kotlinx.coroutines.runBlocking { repository.restore(BackupWriter.write(data).inputStream()) }
-        }
-        assertArrayEquals(before, repository.export("test"))
-        assertEquals(MAX_BOOKS, settings.pendingFavourites().size)
+    @Test fun `identical import counts only actual changes and onboarding stays local`() = runTest {
+        val data = BackupData("test", listOf(ReadingProgress("a:1", 0, 1, 1)),
+            favourites = setOf("a:1"), preferences = mapOf("onboarded" to true))
+        val bytes = BackupWriter.write(data)
+        assertEquals(RestoreResult.Complete(1, progress = 1, favourites = 1), repository.restore(bytes.inputStream()))
+        assertEquals(RestoreResult.Complete(0), repository.restore(bytes.inputStream()))
+        assertFalse(settings.currentAppPrefs().onboarded)
+        settings.updateApp { it.copy(onboarded = true) }
+        assertFalse(repository.export("test").bytes.toString(Charsets.UTF_8).contains("onboarded"))
+        repository.restore(bytes.inputStream())
+        assertTrue(settings.currentAppPrefs().onboarded)
     }
 }

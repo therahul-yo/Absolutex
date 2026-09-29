@@ -16,7 +16,7 @@ internal object BackupPreferences {
         PrefCodec.encodeReader(reader, bag)
         PrefCodec.encodeRendering(rendering, bag)
         bag.putStringSet("fit_by_context", reader.fitMemory.asPairs().map { "${it.key}=${it.value}" }.toSet())
-        return bag.snapshot()
+        return bag.snapshot() - "onboarded"
     }
 
     fun validate(raw: Map<String, Any?>): Map<String, Any> {
