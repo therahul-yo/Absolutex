@@ -224,13 +224,6 @@ private fun KindPicker(kind: RemoteKind, enabled: Boolean, onKind: (RemoteKind) 
     }
 }
 
-private fun kindLabelRes(kind: RemoteKind): Int = when (kind) {
-    RemoteKind.SMB -> R.string.remote_kind_smb
-    RemoteKind.FTP -> R.string.remote_kind_ftp
-    RemoteKind.KOMGA -> R.string.remote_kind_komga
-    RemoteKind.KAVITA -> R.string.remote_kind_kavita
-}
-
 @Composable
 private fun KindChip(
     value: RemoteKind,

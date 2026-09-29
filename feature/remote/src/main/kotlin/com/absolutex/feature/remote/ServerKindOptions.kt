@@ -26,3 +26,11 @@ internal fun selectableKinds(
 ): List<RemoteKind> = RemoteKind.entries.filter { kind ->
     kind == current || offerSyncKinds || (kind != RemoteKind.KOMGA && kind != RemoteKind.KAVITA)
 }
+
+/** The chip label for [kind]. */
+internal fun kindLabelRes(kind: RemoteKind): Int = when (kind) {
+    RemoteKind.SMB -> R.string.remote_kind_smb
+    RemoteKind.FTP -> R.string.remote_kind_ftp
+    RemoteKind.KOMGA -> R.string.remote_kind_komga
+    RemoteKind.KAVITA -> R.string.remote_kind_kavita
+}
