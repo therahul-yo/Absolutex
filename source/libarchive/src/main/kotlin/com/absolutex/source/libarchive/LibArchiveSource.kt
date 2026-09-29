@@ -119,8 +119,8 @@ class LibArchiveSource private constructor(
          * Copies [passphrase]; the caller owns and should clear its CharArray after this call.
          * Only a successful encrypted source retains its copy, until [close]. UTF-8 passwords
          * must be nonempty and contain no NUL (libarchive's C-string contract).
-         * TODO(lead): catch ArchivePasswordException at the reader open boundary, prompt/retry
-         * for required/rejected passwords, and show unsupported encryption without retrying.
+         * The reader catches [ArchivePasswordException] at its open boundary (ReaderViewModel):
+         * required/rejected passwords prompt and retry, unsupported encryption is terminal.
          */
         fun open(passphrase: CharArray?, openFd: () -> ParcelFileDescriptor): LibArchiveSource =
             traced("absx.archiveOpen") {

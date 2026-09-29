@@ -15,6 +15,7 @@ import com.absolutex.source.folder.FolderEntry
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import com.absolutex.source.libarchive.ArchiveEntries
+import com.absolutex.source.libarchive.ArchivePasswordException
 import com.absolutex.source.libarchive.LibArchiveSource
 import com.absolutex.source.pdf.PdfDocument
 import java.io.Closeable
@@ -40,11 +41,17 @@ internal fun Context.openBook(uri: Uri, password: String? = null): Closeable {
     return when (FormatSniffer.detect(head)) {
         ContainerFormat.PDF -> openPdf(uri, password)
         // A malformed package is still a ZIP; the archive reader opens its images.
-        ContainerFormat.EPUB -> openEpub(uri) ?: LibArchiveSource.open { openDescriptor(uri) }
+        // An encrypted ZIP sniffed as EPUB is not an EPUB reading problem: the package parse has
+        // no password to offer, so it hands over to the archive reader, which does.
+        ContainerFormat.EPUB -> try {
+            openEpub(uri)
+        } catch (ignored: ArchivePasswordException) {
+            null
+        } ?: openArchive(uri, password)
         // Everything else is libarchive's, which reads more formats than the sniffer names — so
         // UNKNOWN is a route, not a failure. A fresh descriptor per read: a shared SAF fd
         // corrupts parallel reads.
-        else -> LibArchiveSource.open { openDescriptor(uri) }
+        else -> openArchive(uri, password)
     }
 }
 

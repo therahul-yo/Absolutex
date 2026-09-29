@@ -8,7 +8,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -32,14 +32,15 @@ internal fun PasswordPrompt(
 }
 
 /**
- * The encrypted-PDF prompt: the one open failure the reader can recover from in place.
+ * The encrypted PDF / archive prompt: the open failure the reader can recover from in place.
  *
  * Shaped like the delete confirmation in `:feature:remote` (an `AlertDialog` with resource
  * strings and nothing else), plus the one thing that case has no use for: a password field.
- * The typed password lives only in this composition — `rememberSaveable` survives a rotation
- * while the prompt is up, and leaving the composition drops it. It is handed to [onSubmit]
- * and never written to the ViewModel's state, so a password cannot leak into a saved
- * `ReaderUiState`, a log line, or process death restoration.
+ * The typed password lives only in this composition, in plain `remember`: `rememberSaveable`
+ * would write it into the saved-instance-state Bundle, which is the process-death restoration
+ * path. A rotation therefore clears the field, which is the cheaper failure. It is handed to
+ * [onSubmit] and never written to the ViewModel's state, so a password cannot leak into a saved
+ * `ReaderUiState`, a log line, or restoration.
  */
 @Composable
 internal fun PdfPasswordDialog(
@@ -47,7 +48,7 @@ internal fun PdfPasswordDialog(
     onSubmit: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var password by rememberSaveable { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.reader_password_title)) },
