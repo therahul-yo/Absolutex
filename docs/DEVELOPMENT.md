@@ -22,6 +22,17 @@ thumbnail pipeline, a settings surface, and remote modules for SMB, FTP/FTPS and
 progress sync. SMB and FTP/FTPS are wired into the app; Komga and Kavita are built but not offered
 (see below).
 
+**First run.** The library's top bar has an "Open file" button that launches the system file picker
+(`ActivityResultContracts.OpenDocument`, types in `OpenFileTypes`, ending in `*/*` so an unknown type
+can still be chosen). The picked file opens through the same reader sheet as a library row; when the
+provider grants a persistable read permission it is also remembered for resume and written to the
+library (`OpenedBooks`), which is what puts it in Recent. The empty state is decided from the saved
+folders, not the book list: no folder (add one or open a file), scanning, folder unreadable, and
+scanned with nothing found (rescan or add another). `ContentResolverTree` logs the exception class of
+a failed folder read and counts it (`ReadFailures`) instead of returning an empty list silently; the
+app shell publishes that through `ScanStatus`. The manifest's VIEW filter also declares the CB7, CBT,
+7z, RAR and tar types, so a file manager offers Absolutex for them.
+
 **Built but not yet connected.** Four features are merged, tested and unreachable, which is
 worth stating plainly rather than leaving for someone to discover:
 

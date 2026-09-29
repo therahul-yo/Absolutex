@@ -137,6 +137,42 @@ class EmptyStateTest {
         assertEquals(LibraryEmptyReason.SECTION_EMPTY, s.emptyReason)
     }
 
+    @Test fun `a scan in progress is not reported as nothing found`() {
+        val s = st(emptyList(), HomeSection.COMICS).copy(scanning = true)
+        assertEquals(LibraryEmptyReason.SCANNING, s.emptyReason)
+    }
+
+    @Test fun `a folder that could not be read is not reported as empty`() {
+        val s = st(emptyList(), HomeSection.COMICS).copy(scanFailed = true)
+        assertEquals(LibraryEmptyReason.SCAN_FAILED, s.emptyReason)
+    }
+
+    @Test fun `a rescan of a failed folder reads as scanning until it settles`() {
+        val s = st(emptyList(), HomeSection.COMICS).copy(scanning = true, scanFailed = true)
+        assertEquals(LibraryEmptyReason.SCANNING, s.emptyReason)
+    }
+
+    @Test fun `folders scanned and nothing found is its own state`() {
+        val s = st(emptyList(), HomeSection.COMICS).copy(hasLocations = true, scanning = false, scanFailed = false)
+        assertEquals(LibraryEmptyReason.LIBRARY_EMPTY, s.emptyReason)
+    }
+
+    @Test fun `no folder outranks a scan and a failure`() {
+        val s = st(emptyList(), HomeSection.COMICS).copy(hasLocations = false, scanning = true, scanFailed = true)
+        assertEquals(LibraryEmptyReason.NO_LOCATIONS, s.emptyReason)
+    }
+
+    @Test fun `books on screen hide a scan or a failure`() {
+        // Empty states explain a blank screen. With books showing there is nothing to explain.
+        val s = st(one, HomeSection.COMICS).copy(scanning = true, scanFailed = true)
+        assertEquals(LibraryEmptyReason.NONE, s.emptyReason)
+    }
+
+    @Test fun `an empty section of a populated library ignores the scan`() {
+        val s = st(one, HomeSection.FAVORITES).copy(scanning = true)
+        assertEquals(LibraryEmptyReason.SECTION_EMPTY, s.emptyReason)
+    }
+
     @Test fun `books on screen means no empty state`() {
         assertEquals(LibraryEmptyReason.NONE, st(one, HomeSection.COMICS).emptyReason)
     }

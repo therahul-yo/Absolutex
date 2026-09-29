@@ -50,11 +50,22 @@
                 <data android:mimeType="application/zip" />
                 <data android:mimeType="application/pdf" />
                 <data android:mimeType="application/epub+zip" />
+                <!-- Other archive types a comic arrives as: RAR and 7z by their own MIME types, the
+                     x- types file managers register for CB7 and CBT, and tar. -->
+                <data android:mimeType="application/vnd.rar" />
+                <data android:mimeType="application/x-rar-compressed" />
+                <data android:mimeType="application/x-cb7" />
+                <data android:mimeType="application/x-7z-compressed" />
+                <data android:mimeType="application/x-cbt" />
+                <data android:mimeType="application/x-tar" />
                 <!-- Extension filters for SAF tree picks where MIME isn't set. -->
                 <data android:pathPattern=".*\\.cbz" />
                 <data android:pathPattern=".*\\.epub" />
                 <data android:pathPattern=".*\\.cbr" />
                 <data android:pathPattern=".*\\.cb7" />
+                <data android:pathPattern=".*\\.cbt" />
+                <data android:pathPattern=".*\\.7z" />
+                <data android:pathPattern=".*\\.tar" />
             </intent-filter>
         </activity>
 
