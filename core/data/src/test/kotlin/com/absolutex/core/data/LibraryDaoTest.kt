@@ -129,6 +129,164 @@ class LibraryDaoTest {
         assertEquals(listOf("/internal/Other.cbz", "/sd/Comics/Kept.cbz"), left)
     }
 
+    // ---- stale-scan cleanup stays inside its own root -------------------------------------
+
+    private fun saf(tree: String, name: String) =
+        "content://com.android.externalstorage.documents/tree/$tree/document/$tree%2F$name"
+
+    private suspend fun paths() = dao.allOnce().map { it.path }.sorted()
+
+    @Test fun `a scan of books does not delete books-old`() = runTest {
+        dao.upsertAll(
+            listOf(
+                book("/sd/books/Gone.cbz", scan = 1),
+                book("/sd/books-old/Old.cbz", scan = 1),
+                book("/sd/books2/Two.cbz", scan = 1),
+                book("/sd/booksXYZ", scan = 1),
+            ),
+        )
+        assertEquals(1, dao.deleteStaleIn("/sd/books", scanId = 2))
+        assertEquals(listOf("/sd/books-old/Old.cbz", "/sd/books2/Two.cbz", "/sd/booksXYZ"), paths())
+    }
+
+    @Test fun `underscore in a root is not a wildcard`() = runTest {
+        dao.upsertAll(
+            listOf(
+                book("/sd/my_comics/Gone.cbz", scan = 1),
+                book("/sd/myXcomics/Other.cbz", scan = 1),
+            ),
+        )
+        assertEquals(1, dao.deleteStaleIn("/sd/my_comics", scanId = 2))
+        assertEquals(listOf("/sd/myXcomics/Other.cbz"), paths())
+    }
+
+    @Test fun `percent in a root is not a wildcard`() = runTest {
+        dao.upsertAll(
+            listOf(
+                book("/sd/100%/Gone.cbz", scan = 1),
+                book("/sd/100 pages/Other.cbz", scan = 1),
+                book("/sd/100/Other2.cbz", scan = 1),
+            ),
+        )
+        assertEquals(1, dao.deleteStaleIn("/sd/100%", scanId = 2))
+        assertEquals(listOf("/sd/100 pages/Other.cbz", "/sd/100/Other2.cbz"), paths())
+    }
+
+    @Test fun `a root differing only by letter case is a different root`() = runTest {
+        dao.upsertAll(listOf(book("/sd/Comics/A.cbz", scan = 1), book("/sd/comics/B.cbz", scan = 1)))
+        assertEquals(1, dao.deleteStaleIn("/sd/comics", scanId = 2))
+        assertEquals(listOf("/sd/Comics/A.cbz"), paths())
+    }
+
+    @Test fun `a trailing slash on the root scopes the same as none`() = runTest {
+        dao.upsertAll(
+            listOf(book("/sd/Comics/Gone.cbz", scan = 1), book("/sd/Comics-old/Old.cbz", scan = 1)),
+        )
+        assertEquals(1, dao.deleteStaleIn("/sd/Comics/", scanId = 2))
+        assertEquals(listOf("/sd/Comics-old/Old.cbz"), paths())
+    }
+
+    @Test fun `the root's own row is swept when stale`() = runTest {
+        // A folder of loose images that is itself the scan root is stored under the root's path.
+        dao.upsertAll(listOf(book("/sd/Scans", scan = 1), book("/sd/Scans-old", scan = 1)))
+        assertEquals(1, dao.deleteStaleIn("/sd/Scans", scanId = 2))
+        assertEquals(listOf("/sd/Scans-old"), paths())
+    }
+
+    @Test fun `SAF trees with a shared prefix stay isolated`() = runTest {
+        val tree = "content://com.android.externalstorage.documents/tree/primary%3AComics"
+        dao.upsertAll(
+            listOf(
+                book(saf("primary%3AComics", "Gone.cbz"), scan = 1),
+                book(saf("primary%3AComics2", "Two.cbz"), scan = 1),
+                book(saf("primary%3AComics-old", "Old.cbz"), scan = 1),
+                // A tree granted on a sub-folder is its own root; its "/" is percent-encoded.
+                book(saf("primary%3AComics%2FSub", "Sub.cbz"), scan = 1),
+            ),
+        )
+        assertEquals(1, dao.deleteStaleIn(tree, scanId = 2))
+        assertEquals(
+            listOf(
+                saf("primary%3AComics%2FSub", "Sub.cbz"),
+                saf("primary%3AComics-old", "Old.cbz"),
+                saf("primary%3AComics2", "Two.cbz"),
+            ).sorted(),
+            paths(),
+        )
+    }
+
+    @Test fun `the percent signs in a SAF tree Uri are literal, not wildcards`() = runTest {
+        // As a LIKE pattern "%3A" is "%" then "3A", so it would also claim "primaryZ3AComics".
+        val tree = "content://com.android.externalstorage.documents/tree/primary%3AComics"
+        val lookalike = tree.replace("%3A", "Z3A")
+        dao.upsertAll(
+            listOf(book(saf("primary%3AComics", "Gone.cbz"), scan = 1), book("$lookalike/document/y", scan = 1)),
+        )
+        assertEquals(1, dao.deleteStaleIn(tree, scanId = 2))
+        assertEquals(listOf("$lookalike/document/y"), paths())
+    }
+
+    @Test fun `a SAF tree that is itself an image folder is swept by its own uri`() = runTest {
+        val tree = "content://com.android.externalstorage.documents/tree/primary%3AScans"
+        dao.upsertAll(listOf(book(tree, scan = 1), book("$tree-old", scan = 1)))
+        assertEquals(1, dao.deleteStaleIn(tree, scanId = 2))
+        assertEquals(listOf("$tree-old"), paths())
+    }
+
+    @Test fun `nested roots - the outer scan sweeps below it, the inner scan never touches the outer`() = runTest {
+        dao.upsertAll(
+            listOf(
+                book("/sd/Outer.cbz", scan = 1),
+                book("/sd/Comics/Inner.cbz", scan = 1),
+                book("/sd/Comics/Deep/Deeper.cbz", scan = 1),
+            ),
+        )
+        // Rescanning the inner root only reaches its own subtree.
+        assertEquals(2, dao.deleteStaleIn("/sd/Comics", scanId = 2))
+        assertEquals(listOf("/sd/Outer.cbz"), paths())
+
+        dao.upsertAll(
+            listOf(
+                book("/sd/Outer.cbz", scan = 3),
+                book("/sd/Comics/Inner.cbz", scan = 3),
+                book("/sd/Comics/Stale.cbz", scan = 1),
+            ),
+        )
+        // The outer scan sweeps stale rows at any depth below it, including the inner root's.
+        assertEquals(1, dao.deleteStaleIn("/sd", scanId = 3))
+        assertEquals(listOf("/sd/Comics/Inner.cbz", "/sd/Outer.cbz"), paths())
+    }
+
+    @Test fun `a scan that found nothing deletes only under its own root`() = runTest {
+        dao.upsertAll(
+            listOf(
+                book("/sd/Comics/A.cbz", scan = 1),
+                book("/sd/Comics/B.cbz", scan = 1),
+                book("/sd/Comics-old/C.cbz", scan = 1),
+                book("/internal/D.cbz", scan = 1),
+                book(saf("primary%3AComics", "E.cbz"), scan = 1),
+            ),
+        )
+        assertEquals(2, dao.deleteStaleIn("/sd/Comics", scanId = 2))
+        assertEquals(
+            listOf("/internal/D.cbz", "/sd/Comics-old/C.cbz", saf("primary%3AComics", "E.cbz")).sorted(),
+            paths(),
+        )
+    }
+
+    @Test fun `rows seen by the scan are never deleted`() = runTest {
+        dao.upsertAll(listOf(book("/sd/Comics/A.cbz", scan = 2), book("/sd/Comics/B.cbz", scan = 3)))
+        assertEquals(0, dao.deleteStaleIn("/sd/Comics", scanId = 2))
+        assertEquals(2, dao.allOnce().size)
+    }
+
+    @Test fun `an empty root is refused rather than matching every row`() = runTest {
+        dao.upsertAll(listOf(book("/sd/Comics/A.cbz", scan = 1)))
+        val failure = runCatching { dao.deleteStaleIn("", scanId = 2) }.exceptionOrNull()
+        assertTrue(failure is IllegalArgumentException)
+        assertEquals(1, dao.allOnce().size)
+    }
+
     @Test fun `books in a series come back in issue order`() = runTest {
         dao.upsertAll(
             listOf(
