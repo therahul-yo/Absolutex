@@ -12,10 +12,13 @@ import java.io.Closeable
  * leaking the just-opened handle on a cancel that lands mid-open) are a plain unit test against a
  * fake source, not something only a real archive or PDF can exercise.
  *
- * [password] reaches only the PDF open (see `openPdf`); every other format ignores it. Null
- * means no password was offered, which for an encrypted PDF fails with `PdfPasswordException`
- * rather than prompting anywhere down here — the prompt lives in the reader UI, which retries
- * through this same seam.
+ * [password] reaches the PDF open (see `openPdf`) and the archive open (see `openArchive`); every
+ * other format ignores it. Null means no password was offered, which for an encrypted PDF or
+ * archive fails with `PdfPasswordException` / `ArchivePasswordException` rather than prompting
+ * anywhere down here — the prompt lives in the reader UI, which retries through this same seam.
+ * It is a String because the Compose text field hands over one; the archive path copies it to a
+ * CharArray it wipes, but the String itself cannot be wiped and lives until it is collected.
+ * A failed open must leave nothing open: it throws instead of returning a handle.
  */
 internal fun interface BookOpener {
     suspend fun open(uri: Uri, password: String?): Pair<Closeable, String>

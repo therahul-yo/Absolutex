@@ -35,7 +35,10 @@ import com.absolutex.remote.core.REMOTE_URI_SCHEME
 import com.absolutex.remote.core.RemoteBookOpener
 import com.absolutex.remote.core.RemoteOpenResult
 import com.absolutex.source.ComicSource
+import com.absolutex.source.libarchive.ArchivePasswordException
 import com.absolutex.source.libarchive.LibArchiveSource
+import com.absolutex.source.libarchive.UnsupportedEncryptionException
+import com.absolutex.source.libarchive.WrongPasswordException
 import com.absolutex.source.pdf.PdfDocument
 import com.absolutex.source.pdf.PdfPasswordException
 import java.io.Closeable
@@ -85,13 +88,13 @@ data class ReaderUiState(
     /** Payload recovery report, never used as the pager/progress count. */
     val recoveryNotice: String? = null,
     /**
-     * An encrypted PDF is waiting for its password. Set alongside [error] (the same generic
+     * An encrypted PDF or archive is waiting for its password. Set alongside [error] (the same generic
      * string), so dismissing the prompt leaves the ordinary failure behind it. The password
      * itself is never held here: it travels as an argument to [ReaderViewModel.open] and lives
      * otherwise only in the dialog's own text field, which composition drops on dismiss.
      */
     val passwordRequired: Boolean = false,
-    /** The prompt is a retry: a password was offered and PDFium refused it. */
+    /** The prompt is a retry: a password was offered and the PDF or archive refused it. */
     val passwordIncorrect: Boolean = false,
     /** A reflowable text EPUB: the screen shows the text reader instead of pages. */
     val textEpub: Boolean = false,
@@ -318,9 +321,10 @@ class ReaderViewModel internal constructor(
     /**
      * Opens [uri], joining an in-flight open of the same Uri rather than restarting it.
      *
-     * [password] is the encrypted-PDF retry: the prompt submits back through this same function.
-     * Remote books never take the password path — [RemoteOpenResult.Ready] carries a ComicSource,
-     * and a PDF is not one — so it reaches only the local open inside [openAttempt].
+     * [password] is the encrypted-PDF or encrypted-archive retry: the prompt submits back through
+     * this same function. Remote books never take the password path — [RemoteOpenResult.Ready]
+     * carries a ComicSource, and a PDF is not one — so it reaches only the local open inside
+     * [openAttempt].
      */
     fun open(uri: Uri, password: String? = null) {
         // Already open, and nothing else is in flight to contradict it: a genuine no-op. The
@@ -499,7 +503,7 @@ class ReaderViewModel internal constructor(
     }
 
     /**
-     * Dismisses the encrypted-PDF prompt, keeping the generic failure it was shown over.
+     * Dismisses the password prompt, keeping the generic failure it was shown over.
      *
      * The guard is the whole point: a submit already in flight has cleared the prompt for a
      * loading state, and clobbering that with an error would lie about an open still running.
@@ -812,12 +816,39 @@ private suspend fun openAttempt(
         // exactly the state a wrong-format book shows.
         Log.e(TAG, "open needs password", e)
         OpenAttempt.Show(generic.copy(passwordRequired = true, passwordIncorrect = password != null))
+    } catch (e: ArchivePasswordException) {
+        archivePasswordAttempt(context, e, password, generic)
     } catch (t: Throwable) {
         // Generic UI string: t.message can embed the raw Uri or an archive entry name.
         // The detail goes to logcat only.
         Log.e(TAG, "open failed", t)
         OpenAttempt.Show(generic)
     }
+}
+
+/**
+ * The end state for an archive that would not open for want of, or in spite of, a password.
+ *
+ * Required and wrong reuse the PDF prompt: [ReaderUiState.passwordIncorrect] is set when the
+ * archive said "wrong password", or when a non-null password was offered and it still asked for
+ * one. Unsupported encryption is terminal — no prompt, since no password can help — and says so.
+ * Only the exception's class is logged: its message is native text this file does not control,
+ * and neither it nor [password] belongs in a log line.
+ */
+private fun archivePasswordAttempt(
+    context: Context,
+    e: ArchivePasswordException,
+    password: String?,
+    generic: ReaderUiState,
+): OpenAttempt.Show {
+    Log.i(TAG, "archive password: ${e.javaClass.simpleName}")
+    return OpenAttempt.Show(
+        if (e is UnsupportedEncryptionException) {
+            generic.copy(error = context.getString(R.string.reader_open_unsupported_encryption))
+        } else {
+            generic.copy(passwordRequired = true, passwordIncorrect = password != null || e is WrongPasswordException)
+        },
+    )
 }
 
 /**

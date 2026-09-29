@@ -15,7 +15,9 @@ import com.absolutex.source.folder.FolderEntry
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import com.absolutex.source.libarchive.ArchiveEntries
+import com.absolutex.source.libarchive.ArchivePasswordException
 import com.absolutex.source.libarchive.LibArchiveSource
+import com.absolutex.source.libarchive.WrongPasswordException
 import com.absolutex.source.pdf.PdfDocument
 import java.io.Closeable
 import java.io.File
@@ -40,11 +42,49 @@ internal fun Context.openBook(uri: Uri, password: String? = null): Closeable {
     return when (FormatSniffer.detect(head)) {
         ContainerFormat.PDF -> openPdf(uri, password)
         // A malformed package is still a ZIP; the archive reader opens its images.
-        ContainerFormat.EPUB -> openEpub(uri) ?: LibArchiveSource.open { openDescriptor(uri) }
+        // An encrypted ZIP sniffed as EPUB is not an EPUB reading problem: the package parse has
+        // no password to offer, so it hands over to the archive reader, which does.
+        ContainerFormat.EPUB -> try {
+            openEpub(uri)
+        } catch (ignored: ArchivePasswordException) {
+            null
+        } ?: openArchive(uri, password)
         // Everything else is libarchive's, which reads more formats than the sniffer names — so
         // UNKNOWN is a route, not a failure. A fresh descriptor per read: a shared SAF fd
         // corrupts parallel reads.
-        else -> LibArchiveSource.open { openDescriptor(uri) }
+        else -> openArchive(uri, password)
+    }
+}
+
+/**
+ * The archive reader, with [password] when one was offered. Encrypted archives fail here with an
+ * [ArchivePasswordException], which the reader turns into the password prompt.
+ *
+ * The password is converted to a CharArray only for the duration of the call and wiped after it
+ * ([withPasswordChars]); [LibArchiveSource] takes its own UTF-8 copy and keeps it only for an
+ * encrypted book, until close. The incoming String cannot be wiped — see [BookOpener].
+ */
+private fun Context.openArchive(uri: Uri, password: String?): Closeable =
+    if (password == null) {
+        LibArchiveSource.open { openDescriptor(uri) }
+    } else {
+        withPasswordChars(password) { chars -> LibArchiveSource.open(chars) { openDescriptor(uri) } }
+    }
+
+/**
+ * Runs [block] with [password] as a CharArray that is zeroed afterwards, even when [block] throws.
+ *
+ * A password the archive API cannot take (empty, or containing NUL: libarchive's C-string
+ * contract) is refused as a wrong password without reaching it, so the prompt says "incorrect"
+ * instead of the open failing with an unrelated error.
+ */
+internal fun <T> withPasswordChars(password: String, block: (CharArray) -> T): T {
+    if (password.isEmpty() || '\u0000' in password) throw WrongPasswordException("password rejected")
+    val chars = password.toCharArray()
+    try {
+        return block(chars)
+    } finally {
+        chars.fill('\u0000')
     }
 }
 
