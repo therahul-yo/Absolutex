@@ -222,6 +222,13 @@ changes to the Room database are agreed with the lead first. A pull request is g
 when `detekt`, the unit tests of the touched modules, `tools/check-strings.py` and
 `tools/check-apk-size.py` pass, with their output shown.
 
+### Reading-data backup
+
+Settings will offer a versioned JSON export/import through SAF. Imports validate before writes,
+then merge reading data in one Room transaction and preferences in one DataStore edit. No Room
+migration, credentials, server records or location grants are included. Book identity remains
+filename plus size: renaming a file prevents its old backup records from matching.
+
 ### Never `dup()` a file descriptor to share it across threads
 
 This cost two debugging cycles, in two different disguises.
