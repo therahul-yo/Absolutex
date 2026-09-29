@@ -685,6 +685,7 @@ private fun PageSlotContent(
             upscaler = upscaler,
             // The user's crop setting, except for a PDF: see cropApplies.
             cropEnabled = rememberCropEnabled(vm),
+            autoBackground = rememberAutoBackground(vm),
             onDoubleTapInWindow = strip?.onDoubleTap,
             onTapInWindow = strip?.onTap,
             maxBaseWidth = strip?.maxBaseWidth,

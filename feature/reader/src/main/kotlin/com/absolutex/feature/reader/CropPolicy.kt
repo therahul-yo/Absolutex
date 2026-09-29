@@ -34,6 +34,18 @@ internal fun rememberCropEnabled(vm: ReaderViewModel): Boolean {
 }
 
 /**
+ * The live automatic-background switch, seeded like [rememberCropEnabled]. It decides whether a
+ * page with crop off still samples its edge colour; it never touches the crop itself.
+ */
+@Composable
+internal fun rememberAutoBackground(vm: ReaderViewModel): Boolean {
+    val flow = remember(vm) { vm.renderingPrefs.map { it.autoBackground }.distinctUntilChanged() }
+    val seed = remember(vm) { vm.renderingPrefs.value.autoBackground }
+    val on by flow.collectAsStateWithLifecycle(initialValue = seed)
+    return on
+}
+
+/**
  * The aspect a continuous-strip page is laid out at once its crop is decided: the crop's own
  * aspect, or the whole page's when there is no crop ([crop] null: none found, or crop switched
  * off). Null when neither is known yet, and the caller keeps what it had.

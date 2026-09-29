@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -101,6 +103,7 @@ internal fun rememberFitContext(landscapePage: Boolean): FitContext {
  * here, they stay with the book: a manga keeps reading right to left without the whole library
  * following it.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun BookOptionsRow(
     bookId: String,
@@ -119,6 +122,10 @@ internal fun BookOptionsRow(
         RotationLock.entries.forEach { lock ->
             OptionButton(stringResource(rotationLabel(lock)), lock == prefs.rotationLock) { vm.setRotation(lock) }
         }
+    }
+    // Their own row, and one that wraps: appended to the scrolling rotation row above they sat past
+    // the right edge of a phone with nothing to say the row scrolled, so "Trim margins" went unseen.
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OptionButton(stringResource(R.string.reader_dark_pages), prefs.darkPages) { vm.setDarkPages(!prefs.darkPages) }
         val crop by vm.cropEnabled.collectAsStateWithLifecycle(initialValue = true)
         OptionButton(stringResource(R.string.reader_crop), crop) { vm.setCrop(!crop) }

@@ -17,10 +17,12 @@ import com.absolutex.source.libarchive.UnsupportedEncryptionException
 import com.absolutex.source.libarchive.WrongPasswordException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -127,7 +129,7 @@ class ArchivePasswordPromptTest {
         assertFalse(vm.ui.value.toString().contains("hunter2"))
     }
 
-    @Test fun `cancelling the prompt leaves a clean error and does not retry`() = test {
+    @Test fun `cancelling the prompt leaves the reader with no error and does not retry`() = test {
         val opener = ArchiveOpener(correct = "secret")
         val vm = vm(opener)
         vm.open(uri("locked.cbz"))
@@ -138,9 +140,36 @@ class ArchivePasswordPromptTest {
 
         assertFalse("the prompt must be gone", vm.ui.value.passwordRequired)
         assertFalse(vm.ui.value.loading)
-        assertEquals(string(R.string.reader_open_failed), vm.ui.value.error)
+        assertNull("cancelling is a choice, not a failure", vm.ui.value.error)
+        assertEquals("cancel emits exactly one leave event", Unit, vm.leave.first())
+        assertNull("and only one", withTimeoutOrNull(1) { vm.leave.first() })
         assertEquals("cancel must not retry the open", listOf<String?>(null), opener.attempts)
         assertEquals(0, opener.openHandles)
+    }
+
+    @Test fun `a wrong password or a correct one never emits the leave event`() = test {
+        val vm = vm(ArchiveOpener(correct = "secret"))
+        vm.open(uri("locked.cbz"))
+        advanceUntilIdle()
+        vm.open(uri("locked.cbz"), "guess")
+        advanceUntilIdle()
+        assertTrue(vm.ui.value.passwordRequired)
+        vm.open(uri("locked.cbz"), "secret")
+        advanceUntilIdle()
+
+        assertEquals(1, vm.ui.value.pageCount)
+        assertNull(withTimeoutOrNull(1) { vm.leave.first() })
+    }
+
+    @Test fun `cancelling with no prompt showing does nothing`() = test {
+        val vm = vm(ArchiveOpener(correct = "secret"))
+        vm.open(uri("locked.cbz"), "secret")
+        advanceUntilIdle()
+
+        vm.cancelPasswordPrompt()
+
+        assertEquals("an open book stays open", 1, vm.ui.value.pageCount)
+        assertNull(withTimeoutOrNull(1) { vm.leave.first() })
     }
 
     @Test fun `unsupported encryption is terminal - a clear message and no prompt`() = test {

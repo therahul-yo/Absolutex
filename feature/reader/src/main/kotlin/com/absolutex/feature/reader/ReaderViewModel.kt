@@ -50,7 +50,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -150,6 +153,15 @@ class ReaderViewModel internal constructor(
 
     private val _ui = MutableStateFlow(ReaderUiState())
     val ui: StateFlow<ReaderUiState> = _ui.asStateFlow()
+
+    private val _leave = Channel<Unit>(Channel.BUFFERED)
+
+    /**
+     * One-shot: the user chose to leave the reader rather than fail to open a book (cancelling the
+     * password prompt). A channel, not state, so it is delivered once and cannot replay on a later
+     * book or a recomposition. The host consumes it and goes back to where the user came from.
+     */
+    val leave: Flow<Unit> = _leave.receiveAsFlow()
 
     /** Whether the open book is a PDF, on its own so a page recomposes only when that changes. */
     val isPdf: StateFlow<Boolean> = _ui.map { it.isPdf }.distinctUntilChanged()
@@ -503,19 +515,18 @@ class ReaderViewModel internal constructor(
     }
 
     /**
-     * Dismisses the password prompt, keeping the generic failure it was shown over.
+     * Cancels the password prompt: a choice to leave, not a failed open. The state is reset clean
+     * (no error, nothing to retry) and [leave] fires once so the host goes back.
      *
      * The guard is the whole point: a submit already in flight has cleared the prompt for a
-     * loading state, and clobbering that with an error would lie about an open still running.
-     * A member (rather than top-level like [openAttempt]) because only the class may write its
-     * own state — the room for it comes from [evictFarPages] moving the other way.
+     * loading state, and leaving over it would abandon an open still running. A member (rather
+     * than top-level like [openAttempt]) because only the class may write its own state — the room
+     * for it comes from [evictFarPages] moving the other way.
      */
     fun cancelPasswordPrompt() {
         if (_ui.value.passwordRequired) {
-            _ui.value = ReaderUiState(
-                loading = false,
-                error = context.getString(R.string.reader_open_failed),
-            )
+            _ui.value = ReaderUiState()
+            _leave.trySend(Unit)
         }
     }
 
