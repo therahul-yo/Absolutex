@@ -89,7 +89,7 @@ class LibraryRepository internal constructor(
      * Scans a SAF tree the user granted (§5.1), the same way [scanLocation] scans a directory.
      *
      * Rows carry the document Uri as their path, which is what the reader opens and what the
-     * stale sweep scopes by: every document Uri under a tree starts with that tree's own Uri.
+     * stale sweep scopes by: every document Uri under a tree starts with that tree's own Uri and a `/`.
      *
      * Batched and cancellation-cooperative exactly like [scanLocation]: [SafScanner.scan] is a
      * Flow now rather than a fully materialised list, so a book lands in the database as it is
@@ -164,11 +164,12 @@ class LibraryRepository internal constructor(
     }
 
     /**
-     * Drops every book a removed SAF location contributed. The prefix ends at "/document/" so
-     * `…/tree/downloads` never also matches a sibling tree such as `…/tree/downloads2`. Every row
-     * is older than a scan that never ends, so the stale-row delete removes them all.
+     * Drops every book a removed SAF location contributed. [deleteStaleIn] matches the tree Uri on
+     * a `/` boundary, so `…/tree/downloads` never also matches a sibling tree such as
+     * `…/tree/downloads2`. Every row is older than a scan that never ends, so the stale-row delete
+     * removes them all.
      */
-    suspend fun forgetLocation(treeUri: String): Int = dao.deleteStaleIn("$treeUri/document/", Long.MAX_VALUE)
+    suspend fun forgetLocation(treeUri: String): Int = dao.deleteStaleIn(treeUri, Long.MAX_VALUE)
 
     /** Updates the favourites flag for a single book path (§5.1 favourites shelf). */
     suspend fun upsertFavorite(path: String, favorite: Boolean) {

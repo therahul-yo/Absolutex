@@ -141,10 +141,20 @@ interface LibraryDao {
 
     /**
      * Removes rows the latest scan did not see — the files are gone from disk (§5.1 file
-     * monitoring). Scoped to [pathPrefix] so scanning one location never deletes another's books.
+     * monitoring). Only the row at [root] itself and rows whose path starts with [childPrefix]
+     * (the root plus `/`) are eligible, so scanning one location never deletes another's books.
+     *
+     * Call [deleteStaleIn] rather than this: it derives both arguments from one root. `substr`
+     * rather than `LIKE`, so `%`, `_` and letter case in a root can never act as a wildcard.
      */
-    @Query("DELETE FROM library_book WHERE seenAtScan < :scanId AND path LIKE :pathPrefix || '%'")
-    suspend fun deleteStaleIn(pathPrefix: String, scanId: Long): Int
+    @Query(
+        """
+        DELETE FROM library_book
+        WHERE seenAtScan < :scanId
+          AND (path = :root OR substr(path, 1, length(:childPrefix)) = :childPrefix)
+        """,
+    )
+    suspend fun deleteStaleUnder(root: String, childPrefix: String, scanId: Long): Int
 
     @Query("UPDATE library_book SET isFavorite = :favorite WHERE path = :path")
     suspend fun updateFavorite(path: String, favorite: Boolean): Int
