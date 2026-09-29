@@ -94,4 +94,13 @@
     <string name="settings_location_remove_cancel">Cancel</string>
     <string name="settings_document_covers">Show document covers</string>
     <string name="settings_document_covers_desc">Show document covers. Use each PDF\'s first page as its cover. Off keeps private documents out of sight in the library.</string>
+    <string name="backup_title">Backup</string>
+    <string name="backup_description">Save reading data and settings. The backup file contains the names of your books. Server details and folder access are excluded; add your folders again after restoring.</string>
+    <string name="backup_export">Export</string>
+    <string name="backup_import">Import</string>
+    <string name="backup_exported">Backup exported</string>
+    <string name="backup_restored">Restored %1$d books</string>
+    <string name="backup_partial">Restored reading data for %1$d books. Settings and pending favourites could not be saved. Import again to retry the rest.</string>
+    <string name="backup_future_version">This backup was created with a newer backup format. Update Absolutex before importing.</string>
+    <string name="backup_failed">Backup could not be completed. Check that the file is a valid Absolutex backup, is within the supported limits, and its location is available.</string>
 </resources>
