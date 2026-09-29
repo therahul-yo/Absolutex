@@ -242,6 +242,7 @@ class PrefCodecTest {
                 PrefCodec.KEY_COLOUR_GAMMA_B,
                 PrefCodec.KEY_UPSCALER,
                 PrefCodec.KEY_AUTO_BACKGROUND,
+                PrefCodec.KEY_CROP_ENABLED,
             ),
             bag.snapshot().keys,
         )
@@ -607,5 +608,37 @@ class PrefCodecTest {
         val on = MapPrefBag()
         PrefCodec.encodeRendering(RenderingPrefs(autoBackground = true), on)
         assertTrue(PrefCodec.decodeRendering(MapPrefBag(mapOf("auto_background" to true))).autoBackground)
+    }
+
+    @Test
+    fun `crop defaults on and round-trips both ways`() {
+        // On: existing installs must see no behaviour change. Writes the non-default too, since
+        // writing only the default would pass whether or not anything persisted.
+        assertTrue(RenderingPrefs().cropEnabled)
+        assertTrue(PrefCodec.decodeRendering(MapPrefBag()).cropEnabled)
+
+        val off = MapPrefBag()
+        PrefCodec.encodeRendering(RenderingPrefs(cropEnabled = false), off)
+        assertFalse(PrefCodec.decodeRendering(off).cropEnabled)
+
+        val on = MapPrefBag()
+        PrefCodec.encodeRendering(RenderingPrefs(cropEnabled = true), on)
+        assertTrue(PrefCodec.decodeRendering(on).cropEnabled)
+    }
+
+    @Test
+    fun `a wrongly typed crop value falls back to on and spares its neighbours`() {
+        val bag = MapPrefBag(mapOf(PrefCodec.KEY_CROP_ENABLED to "no", PrefCodec.KEY_AUTO_BACKGROUND to true))
+        val decoded = PrefCodec.decodeRendering(bag)
+        assertTrue(decoded.cropEnabled)
+        assertTrue(decoded.autoBackground)
+    }
+
+    @Test
+    fun `crop is stored under the literal key crop_enabled`() {
+        assertFalse(PrefCodec.decodeRendering(MapPrefBag(mapOf("crop_enabled" to false))).cropEnabled)
+        val bag = MapPrefBag()
+        PrefCodec.encodeRendering(RenderingPrefs(cropEnabled = false), bag)
+        assertEquals(false, bag.snapshot()["crop_enabled"])
     }
 }

@@ -379,7 +379,7 @@ private fun Strip(
     var firstPageDrawn by remember(bookId) { mutableStateOf(false) }
     ReportDrawnWhen { firstPageDrawn }
     val toc by vm.toc.collectAsStateWithLifecycle()
-    val aspects = remember(bookId) { mutableStateMapOf<Int, Float>() }
+    val aspects = remember(bookId) { StripAspects() }
     val zoom = remember(listState) { StripZoomState(listState) }
     val stripPage = rememberStripPage(zoom, scope) { x, y, w, h -> tap(TapGrid.zoneAt(x, y, w, h, rtl)) }
 
@@ -401,11 +401,8 @@ private fun Strip(
                         pagerVertical = true, onPagerLockChanged = {}, onEdgeSwipe = {}, onTapZone = tap,
                         spreadSide = SpreadSide.NONE, onBaseReady = { if (index == startPage) firstPageDrawn = true },
                         decodeNow = true, zoomSteps = null,
-                        onLoaded = { aspects[index] = it.width.toFloat() / it.height },
-                        onCropDecided = { crop ->
-                            val a = crop?.let { it.width.toFloat() / it.height }
-                            if (a != null) aspects[index] = a
-                        },
+                        onLoaded = { aspects.loaded(index, it.width, it.height) },
+                        onCropDecided = { crop -> aspects.cropped(index, crop) },
                         onBackgroundColour = { pageBackgrounds[index] = it },
                         strip = stripPage,
                     )
@@ -686,9 +683,8 @@ private fun PageSlotContent(
             onBackgroundColour = onBackgroundColour,
             colour = colourState,
             upscaler = upscaler,
-            // Border crop trims a scan's empty margins. A document's margins are designed, and
-            // its thin marginal labels read as blank on the crop thumbnail: cropping cut them.
-            cropEnabled = !vm.isPdf.collectAsStateWithLifecycle().value,
+            // The user's crop setting, except for a PDF: see cropApplies.
+            cropEnabled = rememberCropEnabled(vm),
             onDoubleTapInWindow = strip?.onDoubleTap,
             onTapInWindow = strip?.onTap,
             maxBaseWidth = strip?.maxBaseWidth,

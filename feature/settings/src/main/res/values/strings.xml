@@ -79,6 +79,8 @@
     <string name="settings_add_location_desc">Choose a folder for the library to scan</string>
     <string name="settings_auto_background">Match background to page</string>
     <string name="settings_auto_background_desc">Tint the space around a page to its own edge colour instead of black</string>
+    <string name="settings_crop">Trim page margins</string>
+    <string name="settings_crop_desc">Crop the empty border around a scanned page. PDFs are never cropped</string>
     <string name="settings_group_remote">Remote</string>
     <string name="settings_remote_title">Remote servers</string>
     <string name="settings_remote_desc">SMB, FTP and sync servers to read from</string>

@@ -22,6 +22,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -273,6 +274,19 @@ class DataStoreSettingsTest {
 
         val (reopened, job) = open(f)
         assertEquals(expected, reopened.currentRenderingPrefs())
+        job.cancelAndJoin()
+    }
+
+    @Test fun `crop defaults on and an off choice survives reopen`() = runBlocking {
+        val f = file()
+        val (first, firstJob) = open(f)
+        assertTrue(first.currentRenderingPrefs().cropEnabled)
+        first.updateRendering { it.copy(cropEnabled = false) }
+        assertFalse(first.currentRenderingPrefs().cropEnabled)
+        firstJob.cancelAndJoin()
+
+        val (reopened, job) = open(f)
+        assertFalse(reopened.currentRenderingPrefs().cropEnabled)
         job.cancelAndJoin()
     }
 

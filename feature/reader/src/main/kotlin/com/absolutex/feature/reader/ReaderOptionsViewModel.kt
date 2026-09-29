@@ -18,6 +18,11 @@ import androidx.lifecycle.viewModelScope
 import com.absolutex.core.data.BookPrefs
 import com.absolutex.core.data.BookPrefsDao
 import com.absolutex.core.data.settings.ReaderPrefs
+import com.absolutex.core.data.settings.RenderingPrefsSource
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import com.absolutex.model.PageLayout
 import com.absolutex.model.ReadingFlow
 import kotlinx.coroutines.flow.Flow
@@ -37,7 +42,16 @@ import kotlinx.coroutines.launch
 class ReaderOptionsViewModel @Inject constructor(
     private val writer: SettingsWriter,
     private val books: BookPrefsDao,
+    rendering: RenderingPrefsSource,
 ) : ViewModel() {
+
+    /** The crop setting, live, so the chip below reads what settings shows. */
+    val cropEnabled: Flow<Boolean> = rendering.renderingPrefs.map { it.cropEnabled }.distinctUntilChanged()
+
+    /** App-wide, like dark pages: it is how a scan reads, not a trait of one book. */
+    fun setCrop(on: Boolean) {
+        viewModelScope.launch { writer.updateRendering { it.copy(cropEnabled = on) } }
+    }
 
     /** Remembers the fit for this shape of screen and page only; other shapes keep theirs. */
     fun setFit(context: FitContext, mode: FitMode) {
@@ -106,6 +120,8 @@ internal fun BookOptionsRow(
             OptionButton(stringResource(rotationLabel(lock)), lock == prefs.rotationLock) { vm.setRotation(lock) }
         }
         OptionButton(stringResource(R.string.reader_dark_pages), prefs.darkPages) { vm.setDarkPages(!prefs.darkPages) }
+        val crop by vm.cropEnabled.collectAsStateWithLifecycle(initialValue = true)
+        OptionButton(stringResource(R.string.reader_crop), crop) { vm.setCrop(!crop) }
     }
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         PageLayout.entries.forEach { layout ->

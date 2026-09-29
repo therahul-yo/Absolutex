@@ -169,6 +169,12 @@ private fun RenderingGroup(app: AppPrefs, rendering: RenderingPrefs, actions: Se
         onChange = { on -> actions.onRendering { it.copy(autoBackground = on) } },
         descriptionRes = R.string.settings_auto_background_desc,
     )
+    SwitchSettingRow(
+        titleRes = R.string.settings_crop,
+        checked = rendering.cropEnabled,
+        onChange = { on -> actions.onRendering { it.copy(cropEnabled = on) } },
+        descriptionRes = R.string.settings_crop_desc,
+    )
 }
 
 @Composable

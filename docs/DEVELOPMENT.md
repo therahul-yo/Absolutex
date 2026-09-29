@@ -315,7 +315,7 @@ permission monitoring* is on **and the phone has been rebooted since**.
 |---|---|---|
 | Audit, licensing gates, platform decisions | done |
 | Scaffold + CBZ/CBR vertical slice | done; page turn measured (see above) |
-| Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | tiles, colour (#22), upscaling (#24), crop (#25) and auto background (#26) done; prefetch engine in review (#77). `PageCanvas` still takes no `cropEnabled` — see its `TODO(lead)` |
+| Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | tiles, colour (#22), upscaling (#24), crop (#25) and auto background (#26) done; prefetch engine in review (#77). Crop has a Settings switch and a reader-options chip (`RenderingPrefs.cropEnabled`, default on); PDFs stay uncropped |
 | Library: parallel scanner, metadata, home, browse, search | done, and the launch destination; live updates merged (#63) |
 | Reader depth: layouts, flows, transitions, bookmarks, TOC, input devices | done, transitions and per-book overrides included |
 | Formats: 7z, TAR, PDFium, image folders, full codec set | archives, PDF, image folders (#76) and recovery/encryption/indexed extraction (#39) all open in the reader; `:source:epub` (#90) is built but **not yet dispatched** by `openBook` |
