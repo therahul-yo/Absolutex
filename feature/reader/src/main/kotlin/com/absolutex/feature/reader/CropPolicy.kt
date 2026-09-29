@@ -27,7 +27,8 @@ internal fun cropApplies(preference: Boolean, isPdf: Boolean): Boolean = prefere
 @Composable
 internal fun rememberCropEnabled(vm: ReaderViewModel): Boolean {
     val flow = remember(vm) { vm.renderingPrefs.map { it.cropEnabled }.distinctUntilChanged() }
-    val preference by flow.collectAsStateWithLifecycle(initialValue = vm.renderingPrefs.value.cropEnabled)
+    val seed = remember(vm) { vm.renderingPrefs.value.cropEnabled }
+    val preference by flow.collectAsStateWithLifecycle(initialValue = seed)
     val isPdf by vm.isPdf.collectAsStateWithLifecycle()
     return cropApplies(preference, isPdf)
 }
