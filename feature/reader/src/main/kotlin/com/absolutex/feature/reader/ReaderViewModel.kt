@@ -406,7 +406,9 @@ class ReaderViewModel internal constructor(
                     openedUri = uri.toString()
                     bookId = identity
                     closeSource(old, oldWasRemote)
-                    val resume = progressDao.get(bookId)?.pageIndex ?: 0
+                    val resume = if (count > 0) {
+                        progressDao.recordOpened(bookId, count, System.currentTimeMillis()).pageIndex
+                    } else 0
                     // The previous book's settled page would otherwise stand in until the pager settles.
                     settledPage = resume.coerceIn(0, (count - 1).coerceAtLeast(0))
                     _ui.value = ReaderUiState(

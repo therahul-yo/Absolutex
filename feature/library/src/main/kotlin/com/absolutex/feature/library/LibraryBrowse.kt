@@ -85,9 +85,7 @@ internal fun LibraryPane(
     // Not while searching: the strip is a shortcut home, not a search result.
     val browsingComics = state.section == HomeSection.COMICS && state.query.isBlank() && onOpenSeries != null
     val continueReading = if (browsingComics) {
-        state.allBooks.filter { !it.isBook && it.readState == ReadState.IN_PROGRESS }
-            .sortedByDescending { it.lastReadAt ?: 0L }
-            .take(CONTINUE_LIMIT)
+        state.allBooks.continueReadingBooks()
     } else {
         emptyList()
     }

@@ -64,7 +64,10 @@ data class LibraryBook(
 const val FOLDER_FORMAT = "folder"
 
 /** Just the columns the upsert has to preserve across a rescan. */
-data class BookOrigin(val path: String, val addedAt: Long, val isFavorite: Boolean, val format: String)
+data class BookOrigin(
+    val path: String, val addedAt: Long, val isFavorite: Boolean, val format: String,
+    val contentKey: String, val lastModified: Long, val pageCount: Int?,
+)
 
 @Dao
 interface LibraryDao {
@@ -72,7 +75,10 @@ interface LibraryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(books: List<LibraryBook>)
 
-    @Query("SELECT path, addedAt, isFavorite, format FROM library_book WHERE path IN (:paths)")
+    @Query(
+        "SELECT path, addedAt, isFavorite, format, contentKey, lastModified, pageCount " +
+            "FROM library_book WHERE path IN (:paths)",
+    )
     suspend fun originsOf(paths: List<String>): List<BookOrigin>
 
     /**
@@ -80,8 +86,8 @@ interface LibraryDao {
      *
      * REPLACE deletes and reinserts, so a plain upsert resets addedAt on every scan and
      * "recently added" would show the whole library after any rescan. [LibraryBook.isFavorite]
-     * is the same shape of problem: the user set it, so no scan may clear it. Everything else
-     * about a book is re-derived from disk and should be overwritten.
+     * is the same shape of problem: the user set it, so no scan may clear it. Learned page counts also survive
+     * for an unchanged identity and modification time; fresh scan counts take precedence.
      */
     @Transaction
     suspend fun upsertPreservingAddedAt(books: List<LibraryBook>) {
@@ -93,6 +99,9 @@ interface LibraryDao {
                 book.copy(
                     addedAt = kept.addedAt,
                     isFavorite = kept.isFavorite,
+                    pageCount = book.pageCount ?: kept.pageCount.takeIf {
+                        kept.contentKey == book.contentKey && kept.lastModified == book.lastModified
+                    },
                     // A scan names an .epub "epub"; that it is a text book was learned by opening
                     // it, and rescanning must not forget that.
                     format = if (kept.format == TEXT_EPUB_FORMAT && book.format == "epub") kept.format else book.format,

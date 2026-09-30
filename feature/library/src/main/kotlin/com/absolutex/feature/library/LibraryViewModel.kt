@@ -138,10 +138,12 @@ internal class LibraryViewModel @Inject constructor(
                             scanFailed = snapshot.scanFailed,
                             error = null,
                         )
-                        // A scan landing mid-search must not yank the user's results out from
-                        // under them; the next keystroke (or clearing the box) picks them up.
-                        if (booksChanged && state.query.isBlank()) {
-                            next.copy(allBooks = snapshot.books).recomputed()
+                        // Keep search membership stable, but refresh facts on its existing cards.
+                        if (booksChanged) {
+                            val byPath = snapshot.books.associateBy { it.path }
+                            val refreshed = if (state.query.isBlank()) snapshot.books else
+                                state.allBooks.map { byPath[it.path] ?: it }
+                            next.copy(allBooks = refreshed).recomputed()
                         } else {
                             next
                         }

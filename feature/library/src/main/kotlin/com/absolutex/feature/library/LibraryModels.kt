@@ -6,7 +6,7 @@ import java.io.File
 /**
  * How far through a book the reader got.
  *
- * Derived from the page position rather than stored: a "read" flag and a reading position are two
+ * Derived from the presence and position of a reading row: a "read" flag and a reading position are two
  * facts that can disagree, and the position is the one the reader actually writes.
  */
 internal enum class ReadState { UNREAD, IN_PROGRESS, FINISHED }
@@ -98,7 +98,7 @@ internal data class LibraryBookUi(
 
     val readState: ReadState
         get() = when {
-            currentPage == null || currentPage <= 0 -> ReadState.UNREAD
+            currentPage == null -> ReadState.UNREAD
             pageCount != null && currentPage >= pageCount - 1 -> ReadState.FINISHED
             else -> ReadState.IN_PROGRESS
         }

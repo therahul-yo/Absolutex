@@ -691,6 +691,7 @@ private class FakeProgressDao : ProgressDao {
     override suspend fun get(bookId: String): ReadingProgress? = null
     override fun observe(bookId: String): Flow<ReadingProgress?> = flowOf(null)
     override suspend fun upsert(progress: ReadingProgress) = Unit
+    override suspend fun clear(bookId: String) = Unit
     override suspend fun mostRecent(): ReadingProgress? = null
     override fun observeAll(): Flow<List<ReadingProgress>> = flowOf(emptyList())
 }

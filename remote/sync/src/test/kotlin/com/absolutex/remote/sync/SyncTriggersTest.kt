@@ -54,6 +54,10 @@ class SyncTriggersTest {
         override fun observe(bookId: String): Flow<ReadingProgress?> =
             feed.map { list -> list.firstOrNull { it.bookId == bookId } }
 
+        override suspend fun clear(bookId: String) {
+            rows.remove(bookId)
+            feed.value = rows.values.toList()
+        }
         override suspend fun mostRecent(): ReadingProgress? = rows.values.maxByOrNull { it.updatedAt }
 
         override fun observeAll(): Flow<List<ReadingProgress>> = feed

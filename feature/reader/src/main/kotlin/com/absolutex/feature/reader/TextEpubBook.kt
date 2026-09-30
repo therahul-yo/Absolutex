@@ -113,7 +113,8 @@ class TextEpubViewModel @Inject constructor(
         val book = runCatching { TextEpubBook.open(context, uri) }.getOrNull() ?: return@withContext null
         // Opening it proves it a text book: the library files it with the documents from now on.
         facts.updateFormat(if (uri.scheme == "file") uri.path.orEmpty() else uri.toString(), TEXT_EPUB_FORMAT)
-        val chapter = (progress.get(book.identity)?.pageIndex ?: 0).coerceIn(0, (book.spine.size - 1).coerceAtLeast(0))
+        val position = progress.recordOpened(book.identity, book.spine.size, System.currentTimeMillis())
+        val chapter = position.pageIndex.coerceIn(0, (book.spine.size - 1).coerceAtLeast(0))
         val saved = prefs.getString(POSITION + book.identity, null)?.split('|')
         val fraction = saved?.takeIf { it.firstOrNull()?.toIntOrNull() == chapter }?.getOrNull(1)?.toFloatOrNull() ?: 0f
         book to TextResume(chapter, fraction.coerceIn(0f, 1f), prefs.getBoolean(SCROLL, false))

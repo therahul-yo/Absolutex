@@ -46,8 +46,8 @@ internal fun planSetRead(targets: List<ReadTarget>, read: Boolean): ReadPlan {
             }
             writes += ReadWrite(target.bookId, pageIndex = pages - 1, pageCount = pages)
         } else {
-            // Page 0 clears the position. The *count* is kept: 45 is what opening the file cost,
-            // and overwriting it with 0 throws away the only place that number exists.
+            // The feed clears the reading row and saves this count to library facts first:
+            // marking unread must not throw away what opening the file learned.
             writes += ReadWrite(target.bookId, pageIndex = 0, pageCount = pages ?: 0)
         }
     }

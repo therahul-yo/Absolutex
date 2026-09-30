@@ -9,6 +9,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "reading_progress")
@@ -30,6 +31,22 @@ interface ProgressDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(progress: ReadingProgress)
+
+    /** Opening page 0 is a real position; reopening must preserve an existing later position. */
+    @Transaction
+    suspend fun recordOpened(bookId: String, pageCount: Int, now: Long): ReadingProgress {
+        require(pageCount > 0)
+        val previous = get(bookId)
+        val opened = previous?.copy(
+            pageCount = if (previous.pageIndex < pageCount) pageCount else previous.pageCount,
+            updatedAt = now,
+        ) ?: ReadingProgress(bookId, 0, pageCount, now)
+        upsert(opened)
+        return opened
+    }
+
+    @Query("DELETE FROM reading_progress WHERE bookId = :bookId")
+    suspend fun clear(bookId: String)
 
     @Query("SELECT * FROM reading_progress ORDER BY updatedAt DESC LIMIT 1")
     suspend fun mostRecent(): ReadingProgress?
