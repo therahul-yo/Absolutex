@@ -10,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -53,7 +54,10 @@ internal fun PdfPasswordDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.reader_password_title)) },
         text = {
+            // A book's password must never reach a password manager: no fill offer, no save prompt.
+            ExcludeDialogFromAutofill()
             OutlinedTextField(
+                modifier = Modifier.notAutofillable(),
                 value = password,
                 onValueChange = { password = it },
                 label = { Text(stringResource(R.string.reader_password_label)) },

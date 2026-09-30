@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -423,7 +424,7 @@ class ReaderViewModelTest {
         assertEquals(genericError(), vm.ui.value.error)
     }
 
-    @Test fun `cancelling the prompt leaves the generic error and opens nothing`() = test {
+    @Test fun `cancelling the prompt leaves with no error and opens nothing`() = test {
         val opener = PasswordBookOpener(correct = "secret")
         val vm = vm(opener)
         vm.open(uri("locked.pdf"))
@@ -432,7 +433,8 @@ class ReaderViewModelTest {
         vm.cancelPasswordPrompt()
 
         assertTrue("the prompt must be gone", !vm.ui.value.passwordRequired)
-        assertEquals(genericError(), vm.ui.value.error)
+        assertEquals("cancelling is a choice, not a failure", null, vm.ui.value.error)
+        assertEquals("cancel asks the host to leave", Unit, vm.leave.first())
         assertEquals("cancel must not retry the open", listOf(null), opener.attempts)
     }
 

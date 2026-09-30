@@ -3,14 +3,12 @@ package com.absolutex.feature.reader
 import com.absolutex.core.data.settings.RotationLock
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.FilterChip
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.FlowRowScope
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -107,7 +105,7 @@ internal fun BookOptionsRow(
     prefs: ReaderPrefs,
     vm: ReaderOptionsViewModel = hiltViewModel(),
 ) {
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    OptionRow {
         ReadingFlow.entries.forEach { flow ->
             OptionButton(stringResource(flowLabel(flow)), flow == prefs.readingFlow) {
                 vm.setFlow(bookId, flow)
@@ -115,21 +113,33 @@ internal fun BookOptionsRow(
         }
     }
     // Rotation sat only in the settings screen, so from inside a book there was no way to turn it.
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    OptionRow {
         RotationLock.entries.forEach { lock ->
             OptionButton(stringResource(rotationLabel(lock)), lock == prefs.rotationLock) { vm.setRotation(lock) }
         }
+    }
+    OptionRow {
         OptionButton(stringResource(R.string.reader_dark_pages), prefs.darkPages) { vm.setDarkPages(!prefs.darkPages) }
         val crop by vm.cropEnabled.collectAsStateWithLifecycle(initialValue = true)
         OptionButton(stringResource(R.string.reader_crop), crop) { vm.setCrop(!crop) }
     }
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    OptionRow {
         PageLayout.entries.forEach { layout ->
             OptionButton(stringResource(layoutLabel(layout)), layout == prefs.pageLayout) {
                 vm.setLayout(bookId, layout)
             }
         }
     }
+}
+
+/**
+ * A row of options that wraps onto the next line instead of scrolling sideways. The rows used to
+ * scroll, which hid the chips past the right edge of a phone (Dark pages and Trim margins were
+ * never seen, and nothing said the row scrolled), so every chip is now on screen.
+ */
+@Composable
+private fun OptionRow(content: @Composable FlowRowScope.() -> Unit) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), content = content)
 }
 
 /** One option in a chrome row, as a filter chip: the chosen one is filled and checked. */
@@ -163,7 +173,7 @@ internal fun FitRow(
     vm: ReaderOptionsViewModel = hiltViewModel(),
 ) {
     val current = prefs.fitFor(context)
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    OptionRow {
         FitMode.entries.forEach { mode ->
             OptionButton(stringResource(fitLabel(mode)), mode == current) { vm.setFit(context, mode) }
         }

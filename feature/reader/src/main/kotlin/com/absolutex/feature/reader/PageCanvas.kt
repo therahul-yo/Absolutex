@@ -45,7 +45,6 @@ import com.absolutex.core.decode.PageImage
 import com.absolutex.core.decode.TileCache
 import com.absolutex.core.decode.TileGrid
 import com.absolutex.core.decode.TileKey
-import com.absolutex.core.gpu.BackgroundMath
 import com.absolutex.core.gpu.ColourParams
 import com.absolutex.core.gpu.ColourPipeline
 import com.absolutex.core.gpu.CropMath
@@ -173,6 +172,13 @@ fun PageCanvas(
      */
     cropEnabled: Boolean = true,
     /**
+     * The automatic background is on. With crop off the page's edge colour is still sampled from
+     * the whole page (no crop, nothing trimmed) so Match background works without Trim margins;
+     * with crop on the colour comes off the crop thumbnail either way. Off, with crop off too, no
+     * thumbnail is decoded.
+     */
+    autoBackground: Boolean = false,
+    /**
      * Fires once when the border crop is decided (or confirmed absent). Passes the [CropRect] the
      * page draws at, or null when uncropped / crop disabled. Lets a host re-size the page to the
      * cropped aspect so a cropped page leaves no clip or gap in a continuous strip.
@@ -184,7 +190,8 @@ fun PageCanvas(
      * otherwise. Piggybacks the M4 crop thumbnail this page already decodes: zero extra work
      * when a crop is active. Fires before the crop decision lands (same effect, computed first),
      * so the next page's colour is known before it settles. No report on a failed decode: the
-     * caller keeps its last colour rather than flashing to black. Always reports — the reader
+     * caller keeps its last colour rather than flashing to black. Reports whenever crop is on, and
+     * with crop off when [autoBackground] is on (whole-page edge sample, no crop) — the reader
      * (ReaderScreen) decides whether to animate off it, gated on RenderingPrefs.autoBackground.
      */
     onBackgroundColour: (Color) -> Unit = {},
@@ -363,31 +370,26 @@ fun PageCanvas(
             // Background colour rides the same thumbnail and the same pixel readback as crop
             // detection (zero extra decode): sampled in thumbnail space, before the detected
             // rect is scaled to full resolution, since a mean colour needs no precision.
-            val (result, background) = withContext(DecodeDispatchers.decode) {
-                val thumb = runCatching { page.decodeThumbnail(CropMath.THUMB_EDGE) }.getOrNull()
-                    ?: return@withContext null to null
-                val sw = thumb.width
-                val sh = thumb.height
-                val pixels = IntArray(sw * sh)
-                Trace.beginSection("absx.cropDetect")
-                try {
-                    thumb.getPixels(pixels, 0, sw, 0, 0, sw, sh)
-                    val detected = CropMath.detect(pixels, sw, sh)
-                    val edge = BackgroundMath.sampleEdge(pixels, sw, sh, detected)
-                    detected?.scaleFrom(sw, sh, page.width, page.height) to edge
-                } finally {
-                    Trace.endSection()
-                    thumb.recycle()
-                }
-            }
-            crop = result
+            val edges = analysePage(page, detectCrop = true)
+            crop = edges?.crop
             // A failed decode reports neither: the caller keeps its last background colour
             // rather than flashing to black (keep-last semantics belong to the caller, not here).
-            if (background != null) backgroundColourCb(Color(background))
+            if (edges != null) backgroundColourCb(Color(edges.background))
         } finally {
             cropDecided = true
             cropDecidedCb?.invoke(crop)
         }
+    }
+
+    // Trim margins and Match background are independent settings: with crop off the effect above
+    // decides nothing to trim, and this one still reads the page's edge colour for the automatic
+    // background (whole page, no crop). With crop on the colour came off the crop pass above, and
+    // with both off no thumbnail is decoded at all (sampleEdgesOnly is false).
+    val sampleEdgesOnly = edgeSampleOnly(cropActive, autoBackground)
+    LaunchedEffect(pageIndex, sampleEdgesOnly) {
+        if (!sampleEdgesOnly || page.width <= 0 || page.height <= 0) return@LaunchedEffect
+        // A failed decode reports nothing: the caller keeps its last colour.
+        analysePage(page, detectCrop = false)?.let { backgroundColourCb(Color(it.background)) }
     }
 
     // Base layer: decoded once at its drawn size, kept resident for the whole page. Gated on

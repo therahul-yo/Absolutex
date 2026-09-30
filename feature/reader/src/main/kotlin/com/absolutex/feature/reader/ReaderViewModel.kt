@@ -50,7 +50,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -89,7 +92,8 @@ data class ReaderUiState(
     val recoveryNotice: String? = null,
     /**
      * An encrypted PDF or archive is waiting for its password. Set alongside [error] (the same generic
-     * string), so dismissing the prompt leaves the ordinary failure behind it. The password
+     * string) so the screen behind the prompt is the ordinary failure; cancelling clears it and
+     * leaves the reader (see [ReaderViewModel.cancelPasswordPrompt]). The password
      * itself is never held here: it travels as an argument to [ReaderViewModel.open] and lives
      * otherwise only in the dialog's own text field, which composition drops on dismiss.
      */
@@ -150,6 +154,15 @@ class ReaderViewModel internal constructor(
 
     private val _ui = MutableStateFlow(ReaderUiState())
     val ui: StateFlow<ReaderUiState> = _ui.asStateFlow()
+
+    private val _leave = Channel<Unit>(Channel.BUFFERED)
+
+    /**
+     * One-shot: the user chose to leave the reader rather than fail to open a book (cancelling the
+     * password prompt). A channel, not state, so it is delivered once and cannot replay on a later
+     * book or a recomposition. The host consumes it and goes back to where the user came from.
+     */
+    val leave: Flow<Unit> = _leave.receiveAsFlow()
 
     /** Whether the open book is a PDF, on its own so a page recomposes only when that changes. */
     val isPdf: StateFlow<Boolean> = _ui.map { it.isPdf }.distinctUntilChanged()
@@ -503,19 +516,18 @@ class ReaderViewModel internal constructor(
     }
 
     /**
-     * Dismisses the password prompt, keeping the generic failure it was shown over.
+     * Cancels the password prompt: a choice to leave, not a failed open. The state is reset clean
+     * (no error, nothing to retry) and [leave] fires once so the host goes back.
      *
      * The guard is the whole point: a submit already in flight has cleared the prompt for a
-     * loading state, and clobbering that with an error would lie about an open still running.
-     * A member (rather than top-level like [openAttempt]) because only the class may write its
-     * own state — the room for it comes from [evictFarPages] moving the other way.
+     * loading state, and leaving over it would abandon an open still running. A member (rather
+     * than top-level like [openAttempt]) because only the class may write its own state — the room
+     * for it comes from [evictFarPages] moving the other way.
      */
     fun cancelPasswordPrompt() {
         if (_ui.value.passwordRequired) {
-            _ui.value = ReaderUiState(
-                loading = false,
-                error = context.getString(R.string.reader_open_failed),
-            )
+            _ui.value = ReaderUiState()
+            _leave.trySend(Unit)
         }
     }
 
@@ -812,8 +824,8 @@ private suspend fun openAttempt(
         OpenAttempt.Show(ReaderUiState(loading = false, textEpub = true, title = bookOpener.titleOf(uri)))
     } catch (e: PdfPasswordException) {
         // An encrypted PDF, with no password offered or the wrong one: prompt rather
-        // than fail. The generic error rides along, so cancelling the prompt leaves
-        // exactly the state a wrong-format book shows.
+        // than fail. The generic error rides along under the prompt; cancelling clears it
+        // and leaves the reader rather than stranding the user on that failure.
         Log.e(TAG, "open needs password", e)
         OpenAttempt.Show(generic.copy(passwordRequired = true, passwordIncorrect = password != null))
     } catch (e: ArchivePasswordException) {

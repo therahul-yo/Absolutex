@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import android.net.Uri
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import com.absolutex.feature.reader.ReaderScreen
@@ -38,6 +39,11 @@ internal fun ReaderDestination(
     val haptics = rememberHaptics()
     val back = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     var finished by remember(uri) { mutableStateOf<Finished?>(null) }
+    // Cancelling the password prompt is a choice to leave, not a failed open: go back the way the
+    // system Back would. Over the library that closes the book sheet; for a book launched from
+    // another app the reader is the start destination, so nothing is left to pop and the activity
+    // finishes, returning to that app rather than stranding the user on a dead end.
+    LaunchedEffect(readerVm) { readerVm.leave.collect { back?.onBackPressed() } }
     Box(Modifier.fillMaxSize()) {
         ReaderScreen(
             uri = uri,
