@@ -6,6 +6,10 @@ what the app is and does, see the [README](../README.md).
 
 ## Status
 
+This inventory describes current `main`, including unreleased changes. The public download is
+v0.1.3; CB7/LZMA, Open file, reading-data backup, empty-state improvements, reader fixes and scan
+safety are for the next release. The README separates them from released features.
+
 **The reader** opens `.cbz`, `.cbr`, `.cb7`, `.cbt` and PDF through SAF or a file path, and
 renders them tiled. It has reading flows (LTR, RTL, vertical), page layouts (single, double,
 double-with-cover, continuous vertical), four fit modes, pinch and double-tap zoom, a 3x3 tap
@@ -13,12 +17,13 @@ grid mirrored for RTL, immersive chrome with a seek bar, a thumbnail strip, book
 of contents, page export, keyboard, gamepad and volume-key control, and progress that resumes
 the last book on launch.
 
-It also has page transitions, per-book reading flow and layout overrides, an AGSL colour
-pipeline with GPU crop, Mitchell/Lanczos upscaling and an automatic background colour.
+It also has page transitions and per-book reading flow/layout overrides. Colour correction,
+Mitchell/Lanczos upscaling and automatic background colour are opt-in and off by default;
+smart crop defaults on, has a switch, and never crops PDFs.
 
 **Around it:** the library is the app's home screen, with the reader and settings as
-destinations. A parallel scanner with a filesystem watcher keeps it live, and there is a
-thumbnail pipeline, a settings surface, and remote modules for SMB, FTP/FTPS and Komga/Kavita
+destinations. Granted folders rescan when the library screen opens or Rescan is requested;
+the filesystem watcher only watches plain paths. There is a thumbnail pipeline, a settings surface, and remote modules for SMB, FTP/FTPS and Komga/Kavita
 progress sync. SMB and FTP/FTPS are wired into the app; Komga and Kavita are built but not offered
 (see below).
 
@@ -91,8 +96,8 @@ registrations that only the project owner can create: an Azure application id fo
 Dropbox app key, and a Google OAuth client with the release signing SHA-1 for Drive. Until those
 exist the lane can be built and tested against fakes and no further, which is exactly where it is.
 
-Folder browsing over a remote share is in review (#50), and the settings row that finally opens
-the servers list is #98. The roadmap names the pull request for each. See [Roadmap](#roadmap).
+Folder browsing over SMB and FTP/FTPS is connected, including remote cover fetching; Settings
+opens the servers list. See [Roadmap](#roadmap).
 
 ## Platform floor
 
@@ -124,14 +129,30 @@ the migration to genuinely adaptive layouts happens deliberately before that dat
 
 ```
 :app                    Application, Hilt root, SAF picker, resume-last-book
-:core:model             pure Kotlin — Book, Page, ReadingFlow, FitMode          (JVM)
-:core:ui                Material 3 Expressive theme, dynamic colour, true black
-:core:data              Room progress, DataStore prefs
-:core:decode            dispatchers, tile geometry, tile cache, page decoding
-:source:api             ComicSource, natural sort, entry filtering              (JVM)
-:source:libarchive      libarchive over JNI — cbz / cbr / cb7 / cbt
-:source:pdf             PDFium over JNI — per-tile render, page size, outline
-:feature:reader         the reader surface
+:core:model             Kotlin/JVM domain models
+:core:ui                Compose theme and shared UI
+:core:data              Room reading/library data, DataStore preferences, JSON backup
+:core:decode            Decode dispatchers, page images, tile cache, prefetch
+:core:gpu               Colour, upscaling, crop and background analysis
+:core:scan              Filesystem/SAF scanners and filesystem watcher (JVM)
+:core:thumbnails        Thumbnail cache and pipeline
+:core:stats             Reading insights (JVM)
+:source:api             ComicSource, natural sort, entry filtering (JVM)
+:source:epub            Comic and text EPUB parsing
+:source:folder          Loose-image folders
+:source:libarchive      Native CBZ/CBR/CB7/CBT reader
+:source:pdf             PDFium page rendering
+:remote:core            Remote browsing/opening contracts and cover fetching
+:remote:smb             SMB transport
+:remote:ftp             FTP/FTPS transport
+:remote:sync            Komga/Kavita sync engine; reader lifecycle wiring missing
+:remote:cloud           Cloud engine; outside the app dependency graph
+:remote:offline         Offline-copy engine; outside the app dependency graph
+:feature:library        Library UI
+:feature:reader         Comic/PDF and text EPUB reader UI
+:feature:settings       Preferences and backup UI
+:feature:remote         Server setup and browsing UI
+:feature:widget         Widget module
 :benchmark              Macrobenchmark
 ```
 
@@ -431,11 +452,11 @@ permission monitoring* is on **and the phone has been rebooted since**.
 |---|---|---|
 | Audit, licensing gates, platform decisions | done |
 | Scaffold + CBZ/CBR vertical slice | done; page turn measured (see above) |
-| Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | tiles, colour (#22), upscaling (#24), crop (#25) and auto background (#26) done; prefetch engine in review (#77). Crop has a Settings switch and a reader-options chip (`RenderingPrefs.cropEnabled`, default on); PDFs stay uncropped |
-| Library: parallel scanner, metadata, home, browse, search | done, and the launch destination; live updates merged (#63) |
+| Tiled renderer depth, prefetch engine, AGSL colour, GPU crop | tiles, colour (#22), upscaling (#24), crop (#25) and auto background (#26) done; prefetch engine wired into ReaderViewModel. Crop has a Settings switch and a reader-options chip (`RenderingPrefs.cropEnabled`, default on); PDFs stay uncropped |
+| Library: parallel scanner, metadata, home, browse, search | done, and the launch destination; plain-path watcher updates are live, SAF folders rescan on library entry or request |
 | Reader depth: layouts, flows, transitions, bookmarks, TOC, input devices | done, transitions and per-book overrides included |
-| Formats: 7z, TAR, PDFium, image folders, full codec set | archives, PDF, image folders (#76) and recovery/encryption/indexed extraction (#39) all open in the reader; `:source:epub` (#90) is built but **not yet dispatched** by `openBook` |
+| Formats: supported archives, PDF, EPUB and image folders | archives, PDF, image folders (#76) and recovery/encryption/indexed extraction (#39) all open in the reader; `openBook` dispatches comic EPUBs and routes text EPUBs to the text reader; CB7 decoding is enabled, with the solid/encrypted archive limits above |
 | Settings surface | done and reachable from the library |
-| Remote: SMB streaming, FTP, Komga/Kavita sync | transports merged and reachable — the settings row that opens the servers list is #98. Sync is merged but **inert**, and the Add-server form hides Komga and Kavita for that reason (`OFFER_SYNC_SERVER_KINDS`): `SyncController.onAppStart`/`onAppBackgrounded` fire, but `onBookOpened`/`onPageSettled`/`onBookClosed` have no callers, so the controller never learns a book is open and nothing is pushed or pulled. Browse UI in review (#50). See the `TODO(lead)`s in `SyncController.kt` |
+| Remote: SMB streaming, FTP, Komga/Kavita sync | transports merged and reachable — the settings row that opens the servers list is #98. Sync is merged but **inert**, and the Add-server form hides Komga and Kavita for that reason (`OFFER_SYNC_SERVER_KINDS`): `SyncController.onAppStart`/`onAppBackgrounded` fire, but `onBookOpened`/`onPageSettled`/`onBookClosed` have no callers, so the controller never learns a book is open and nothing is pushed or pulled. Browse UI is connected and fetches remote covers. See the `TODO(lead)`s in `SyncController.kt` |
 | NPU upscaling R&D (§4 M6); release polish: licence, signing, launcher icon, baseline profiles | R&D done and the verdict is **no** — see [`docs/npu-sr-report.md`](npu-sr-report.md); Apache-2.0 (#70), signing config, licences screen and launcher icon (#56) done |
-| — | Cloud sources (OneDrive, Dropbox, Drive) and offline copies | **work in progress, out of current scope.** Engine merged and tested; not on the app's dependency graph, no UI, and the OAuth client registrations are the project owner's to create. See [Cloud and offline are work in progress](#cloud-and-offline-are-work-in-progress) |
+| Cloud sources (OneDrive, Dropbox, Drive) and offline copies | **work in progress, out of current scope.** Engine merged and tested; not on the app's dependency graph, no UI, and the OAuth client registrations are the project owner's to create. See [Cloud and offline are work in progress](#cloud-and-offline-are-work-in-progress) |
