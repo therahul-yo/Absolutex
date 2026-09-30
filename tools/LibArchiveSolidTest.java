@@ -177,6 +177,24 @@ public class LibArchive {
         });
     }
 
+    /** The first entry declares 48 MB: past the probe's decode bound, and past the pass's per-entry cap. */
+    static void huge(Path huge) throws Exception {
+        with(huge, fd -> {
+            long[] total = {-1};
+            long start = System.nanoTime();
+            check(!nativeProbeSolid(fd, total), "a block that opens with a huge entry is not probed as solid");
+            long ms = (System.nanoTime() - start) / 1_000_000;
+            check(ms < 500, "the probe gives up without decoding the huge entry (" + ms + " ms)");
+            check(total[0] > 48_000_000L, "the declared total still counts the huge entry");
+
+            Recorder rec = new Recorder(-1);
+            check(nativeStreamEntries(fd, all(3), 1L << 40, null, rec) == LIMIT,
+                "an entry above the pass cap ends the pass as LIMIT (abandoned, read directly)");
+            check(rec.ordinals.isEmpty(), "and nothing is delivered for it");
+            check(nativeExtract(fd, 0, null).length == 50331648, "the direct read still extracts it");
+        });
+    }
+
     static void leaks(Path solid, Path nonsolid) throws Exception {
         int before = openFds();
         for (int i = 0; i < 300; i++) {
@@ -199,8 +217,9 @@ public class LibArchive {
         Path zip = dir.resolve("plain.zip"), corrupt = dir.resolve("corrupt.7z");
         probe(solid, nonsolid, zip, assets);
         stream(solid, corrupt);
+        huge(dir.resolve("huge.7z"));
         leaks(solid, nonsolid);
         System.out.println("PASS: solid 7z probe (generated, committed, zip, encrypted) and single-pass "
-            + "stream (order, subset, stop, ceiling, sink exception, corrupt, no descriptor leak)");
+            + "stream (order, subset, stop, ceiling, sink exception, corrupt, huge first entry, no descriptor leak)");
     }
 }

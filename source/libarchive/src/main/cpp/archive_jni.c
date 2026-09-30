@@ -250,7 +250,8 @@ static const char *entry_name(struct archive_entry *e) {
  * A truncated archive yields the entries read before the failure rather than nothing — the
  * brief requires degrading to "N of M readable", never crashing.
  */
-static jbyteArray read_entry(JNIEnv *env, struct archive *a, struct archive_entry *e);
+static jbyteArray read_entry(JNIEnv *env, struct archive *a, struct archive_entry *e,
+                             int64_t cap_bytes, int *over_cap);
 
 static jobjectArray
 list_impl(JNIEnv *env, jclass clazz, jint fd, jbooleanArray complete,
@@ -369,17 +370,20 @@ fail:
  * straight into a critical Java region, because the read can block on I/O and a critical region
  * held across a blocking read stalls the GC. One memcpy of ~1 MB against the 250 ms open budget.
  */
-static jbyteArray read_entry(JNIEnv *env, struct archive *a, struct archive_entry *e) {
+static jbyteArray read_entry(JNIEnv *env, struct archive *a, struct archive_entry *e,
+                             int64_t cap_bytes, int *over_cap) {
+    if (over_cap != NULL) *over_cap = 0;
     int sized = archive_entry_size_is_set(e);
     la_int64_t declared = sized ? archive_entry_size(e) : -1;
-    if (sized && (declared < 0 || declared > MAX_ENTRY_BYTES)) {
+    if (sized && (declared < 0 || declared > cap_bytes)) {
         LOGE("entry size %lld out of range", (long long) declared);
+        if (over_cap != NULL && declared > cap_bytes) *over_cap = 1;
         return NULL;
     }
 
     /* min(declared, 8 MB) up front, then grow as bytes arrive — never one giant malloc
        against an untrusted header. Total is still bounded: sized entries by declared
-       (<= 128 MB), unsized by MAX_ENTRY_BYTES. */
+       (<= cap_bytes), unsized by cap_bytes. */
     size_t cap = sized
         ? (size_t) (declared <= 0 ? 1 : declared < SIZED_START_MAX ? declared : SIZED_START_MAX)
         : UNKNOWN_SIZE_START;
@@ -390,10 +394,11 @@ static jbyteArray read_entry(JNIEnv *env, struct archive *a, struct archive_entr
     for (;;) {
         if (len == cap) {
             if (sized && len >= (size_t) declared) break;   // declared size fully read
-            size_t limit = sized ? (size_t) declared : (size_t) MAX_ENTRY_BYTES;
+            size_t limit = sized ? (size_t) declared : (size_t) cap_bytes;
             if (cap >= limit) {
                 if (!sized) {
-                    LOGE("entry exceeds %ld bytes", MAX_ENTRY_BYTES);
+                    LOGE("entry exceeds %lld bytes", (long long) cap_bytes);
+                    if (over_cap != NULL) *over_cap = 1;
                     free(buf);
                     return NULL;
                 }
@@ -490,7 +495,7 @@ extract_impl(JNIEnv *env, jclass clazz,
         if (archive_entry_is_encrypted(entry) > 0 && (passphrase == NULL || is_7zip(a))) {
             throw_encrypted(env, is_7zip(a));
         } else {
-            result = read_entry(env, a, entry);
+            result = read_entry(env, a, entry, MAX_ENTRY_BYTES, NULL);
         }
         break;
     }
@@ -607,7 +612,7 @@ extract_window_impl(JNIEnv *env, jclass clazz,
             encrypted_unsupported = is_7zip(a);
             break;
         }
-        jbyteArray bytes = read_entry(env, a, entry);
+        jbyteArray bytes = read_entry(env, a, entry, MAX_ENTRY_BYTES, NULL);
         /* read_entry calls password_error, which THROWS, on a wrong passphrase mid-entry.
            That leaves an exception pending, and continuing the walk would make JNI calls with
            one pending -- forbidden, and reported by -Xcheck:jni on device exactly as on the
@@ -685,7 +690,17 @@ Java_com_absolutex_source_libarchive_LibArchive_nativeExtract(JNIEnv *env, jclas
 #define PASS_COMPLETE 0   /* every wanted entry was delivered */
 #define PASS_STOPPED  1   /* the sink asked to stop (book closed, cache refused a write) */
 #define PASS_FAILED   2   /* the archive broke first: later entries were never delivered */
-#define PASS_LIMIT    3   /* the byte ceiling was reached */
+#define PASS_LIMIT    3   /* the byte ceiling was reached, or one page was too big to buffer */
+
+/* The background pass buffers a page natively AND as a Java array (then hands it to the cache),
+   so its per-entry cap is far below MAX_ENTRY_BYTES. A wanted entry above it ends the pass as
+   PASS_LIMIT: the cache is abandoned and pages are read directly. */
+#define PASS_ENTRY_BYTES (32L * 1024 * 1024)
+
+/* The most declared bytes the solid probe will make libarchive decode. pack_start_of decodes
+   every entry before its target, and that runs synchronously in open with no way to cancel, so
+   a block that starts with more than this is answered "not solid" (the direct path). */
+#define PROBE_WALK_BYTES (32L * 1024 * 1024)
 
 static int64_t sat_add(int64_t a, int64_t b) {
     return (a > INT64_MAX - b) ? INT64_MAX : a + b;
@@ -739,8 +754,8 @@ static la_int64_t probe_seek(struct archive *a, void *data, la_int64_t offset, i
  * Two entries of one solid block start decoding at the SAME offset (the block's start), while
  * entries of separate blocks start at their own. libarchive exposes neither the folder layout
  * nor a solid flag, so this is how a caller tells them apart through the public API alone.
- * For a solid block the read also decodes whatever precedes the target, so the caller picks
- * entries near the front.
+ * For a solid block the read also decodes EVERYTHING that precedes the target, so the caller
+ * must bound the declared bytes before it (see probe_solid_impl).
  */
 static int64_t pack_start_of(JNIEnv *env, int fd, jint target) {
     struct probe_io *io = calloc(1, sizeof(*io));
@@ -779,8 +794,9 @@ static int64_t pack_start_of(JNIEnv *env, int fd, jint target) {
  * Is this a solid 7z whose entries cannot be reached without decoding the ones before them, and
  * how many bytes do its regular files declare in all?
  *
- * Reads no more than the first two non-empty entries (a page each), so it is safe to run on
- * every open. Never throws: anything unexpected answers "not solid", which is today's behaviour.
+ * Decodes the first non-empty entry and the start of the second, and everything declared before
+ * the second: when that is more than PROBE_WALK_BYTES it gives up and answers "not solid", so
+ * the synchronous open never waits on an unbounded decode. Never throws: anything unexpected answers "not solid", which is today's behaviour.
  * [total_out][0] is the declared total, 0 for anything that is not a 7z.
  */
 static jboolean probe_solid_impl(JNIEnv *env, int fd, jlongArray total_out) {
@@ -792,6 +808,7 @@ static jboolean probe_solid_impl(JNIEnv *env, int fd, jlongArray total_out) {
     struct archive_entry *entry;
     jint seen = -1;
     int seven = 0;
+    int64_t walked = 0;   /* declared bytes the probe must decode to reach [second] */
     while (header_ok(archive_read_next_header(a, &entry))) {
         if (!seven) {
             if (!is_7zip(a)) break;
@@ -802,13 +819,14 @@ static jboolean probe_solid_impl(JNIEnv *env, int fd, jlongArray total_out) {
         la_int64_t size = archive_entry_size_is_set(entry) ? archive_entry_size(entry) : 0;
         if (size <= 0) continue;
         total = sat_add(total, size);
-        if (size > MAX_ENTRY_BYTES) continue;
-        if (first < 0) first = seen; else if (second < 0) second = seen;
+        /* The only entry decoded before [second] is [first]. An oversized one is not skipped: the
+           probe reads through it, so it is what the bound below is for. */
+        if (first < 0) { first = seen; walked = size; } else if (second < 0) second = seen;
     }
     close_archive(a, dfd);
 
     jboolean solid = JNI_FALSE;
-    if (seven && first >= 0 && second >= 0) {
+    if (seven && first >= 0 && second >= 0 && walked <= PROBE_WALK_BYTES) {
         int64_t start_first = pack_start_of(env, fd, first);
         int64_t start_second = start_first < 0 ? -1 : pack_start_of(env, fd, second);
         solid = (start_first >= 0 && start_first == start_second) ? JNI_TRUE : JNI_FALSE;
@@ -882,8 +900,10 @@ static jint stream_entries_impl(JNIEnv *env, int fd, jbooleanArray wanted, jlong
             if (total > max_bytes) { status = PASS_LIMIT; break; }
             continue;   /* libarchive skips the data with the next header call */
         }
-        jbyteArray bytes = read_entry(env, a, entry);
+        int over_cap = 0;
+        jbyteArray bytes = read_entry(env, a, entry, PASS_ENTRY_BYTES, &over_cap);
         if ((*env)->ExceptionCheck(env)) break;
+        if (over_cap) { status = PASS_LIMIT; break; }   /* this page is read directly instead */
         jsize len = bytes == NULL ? 0 : (*env)->GetArrayLength(env, bytes);
         total = sat_add(total, bytes != NULL ? len : (declared > 0 ? declared : 0));
         if (total > max_bytes) {

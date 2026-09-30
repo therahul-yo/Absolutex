@@ -208,6 +208,15 @@ class SolidCacheTest {
         assertFalse("and is deleted, not kept for reuse", rig.store.dir(rig.key).exists())
     }
 
+    @Test fun a_pass_that_fails_before_delivering_anything_falls_back_instead_of_tearing_every_page() {
+        val streamer = FakeStreamer(emptyList(), end = PassEnd.FAILED)
+        val session = start(streamer)!!
+        assertSame("nothing was tried, so the direct read gets its turn", SolidRead.Fallback, session.read(0))
+        assertSame(SolidRead.Fallback, session.read(4))
+        assertFalse(rig.store.dir(rig.key).exists())
+        session.close()
+    }
+
     @Test fun a_torn_entry_costs_that_page_only() {
         val entries = pageBytes(4).toMutableList().also { it[1] = null }
         val session = start(FakeStreamer(entries), bookOf(4))!!

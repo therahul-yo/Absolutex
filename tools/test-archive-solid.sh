@@ -15,6 +15,14 @@ rm -rf "$OUT"
 mkdir -p "$OUT/android" "$OUT/com/absolutex/source/libarchive" "$OUT/fixtures" "$OUT/corpus"
 trap 'rm -rf "$OUT/corpus" "$OUT/fixtures"' EXIT
 python3 "$ROOT/tools/make-solid-corpus.py" "$OUT/corpus" --pages 40 --page-kib 200
+# A solid 7z whose FIRST entry declares 48 MB of zeros (a few KiB packed), then two small pages:
+# the probe must give up on it (decoding past 32 MB at open), and the pass must refuse the entry.
+mkdir -p "$OUT/corpus/huge"
+head -c 50331648 /dev/zero > "$OUT/corpus/huge/000.bin"
+head -c 65536 "$OUT/corpus/pages/001.png" > "$OUT/corpus/huge/001.png"
+head -c 65536 "$OUT/corpus/pages/002.png" > "$OUT/corpus/huge/002.png"
+(cd "$OUT/corpus/huge" && "$(command -v 7zz || command -v 7z)" a -t7z -m0=lzma2 -ms=on -mqs=off \
+    ../huge.7z 000.bin 001.png 002.png > /dev/null)
 for name in lzma2-solid lzma2-nonsolid encrypted-content encrypted-header; do
     base64 -d < "$ASSETS/7z-$name.cb7.b64" > "$OUT/fixtures/$name.cb7" 2>/dev/null ||
         base64 -D < "$ASSETS/7z-$name.cb7.b64" > "$OUT/fixtures/$name.cb7"

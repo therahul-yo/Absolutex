@@ -61,9 +61,11 @@ internal class SolidPass(
     private var written = 0L
     private var gaveUp = false
     private var tornSeen = false
+    private var delivered = false
 
     override fun onEntry(ordinal: Int, data: ByteArray?): Boolean {
         if (pages.isClosed) return false
+        delivered = true
         if (data == null) {
             tornSeen = true
             pages.markTorn(ordinal)
@@ -97,6 +99,9 @@ internal class SolidPass(
     private fun outcomeOf(end: PassEnd?): PassOutcome = when {
         pages.isClosed -> PassOutcome.CLOSED
         gaveUp || end == null || end == PassEnd.LIMIT || end == PassEnd.STOPPED -> PassOutcome.ABANDONED
+        // Failing before anything arrived (open, allocation or guard failure) says nothing about the
+        // pages: the direct read gets its own try rather than every page being called torn.
+        end == PassEnd.FAILED && !delivered -> PassOutcome.ABANDONED
         // A torn entry has no file, so a cache with one is served this session but never kept.
         end == PassEnd.COMPLETE && !tornSeen -> PassOutcome.CACHED
         else -> PassOutcome.BROKEN
