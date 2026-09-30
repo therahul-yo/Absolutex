@@ -111,7 +111,9 @@ v0.1.4 is being prepared from merged `main`; the download above remains v0.1.3 u
 CB7 checks covered small and 83 MB solid/non-solid archives on one OnePlus 11R. Solid-archive
 performance was measured on a laptop; one 300-page solid CB7 device pass opened its first page in
 about 0.5 seconds and passed jump checks. Enhance strengths were judged by eye on one page only.
-Big CBR paging has measured process PSS around 170 MB. See the
+One measurement on 30 September 2026 on a OnePlus 11R after paging and jumping through a
+564 MB CBR: about 171 MB process PSS (183 MB right after seek jumps); the project budget is
+150 MB. This differs from the older 12-page-turn measurement in DEVELOPMENT.md. See the
 [draft v0.1.4 notes](docs/releases/0.1.4.md) for test scope and limitations.
 
 ## Updates
