@@ -36,6 +36,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.Role
 import androidx.compose.material3.LinearProgressIndicator
@@ -114,6 +115,8 @@ private fun ContinueCard(
     onHide: () -> Unit,
     modifier: Modifier = Modifier,
     art: Modifier = Modifier,
+    captions: Modifier = Modifier,
+    captionInset: Dp = 0.dp,
 ) {
     var menu by remember { mutableStateOf(false) }
     val haptics = rememberHaptics()
@@ -147,19 +150,28 @@ private fun ContinueCard(
                 )
             }
         }
-        Text(
-            book.displayName,
-            style = MaterialTheme.typography.titleSmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        book.progressLabel()?.let { progress ->
+        // Inset by what a side cover's shrink takes back, and moved with it ([captions]), so a
+        // side card's words sit under its cover, inside the gutter, rather than under its slot.
+        Column(
+            captions.padding(horizontal = captionInset),
+            verticalArrangement = Arrangement.spacedBy(Space.Tight),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
             Text(
-                progress,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                book.displayName,
+                style = MaterialTheme.typography.titleSmall,
+                textAlign = TextAlign.Center,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
+            book.progressLabel()?.let { progress ->
+                Text(
+                    progress,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
         }
     }
     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -240,6 +252,11 @@ private fun ContinueCarousel(books: List<LibraryBookUi>, context: RowContext, on
                     onOpen = { context.onOpen(book) },
                     onHide = { onHide(book.path) },
                     modifier = Modifier.width(cardWidth).animateItem(),
+                    captionInset = cardWidth * (SHRINK / 2),
+                    captions = Modifier.graphicsLayer {
+                        val d = list.offsetFromCentre(i, spacing.toPx())
+                        translationX = -PULL.toPx() * d.coerceIn(-MAX_AWAY, MAX_AWAY)
+                    },
                     art = Modifier
                         .graphicsLayer {
                             val d = list.offsetFromCentre(i, spacing.toPx())
