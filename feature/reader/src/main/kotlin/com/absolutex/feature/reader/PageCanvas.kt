@@ -357,19 +357,11 @@ fun PageCanvas(
     // detection run off the main thread, so the crop is decided before the first paint and
     // layout never snaps. No hardware bitmap is ever touched on Main here: the thumbnail is
     // allocated software and the work runs entirely on DecodeDispatchers.decode.
-    // With crop off the same effect still samples the page's edge colour when the automatic
-    // background is on (edgesOnly): Trim margins and Match background are independent settings.
-    val edgesOnly = !cropActive && autoBackground
-    LaunchedEffect(pageIndex, cropEnabled, edgesOnly) {
+    LaunchedEffect(pageIndex, cropEnabled) {
         if (!cropActive) {
             crop = null
             cropDecided = true
             cropDecidedCb?.invoke(null)
-            if (needsPageThumbnail(cropActive = false, autoBackground = autoBackground) &&
-                page.width > 0 && page.height > 0
-            ) {
-                analysePage(page, detectCrop = false)?.let { backgroundColourCb(Color(it.background)) }
-            }
             return@LaunchedEffect
         }
         if (cropDecided) return@LaunchedEffect
@@ -387,6 +379,17 @@ fun PageCanvas(
             cropDecided = true
             cropDecidedCb?.invoke(crop)
         }
+    }
+
+    // Trim margins and Match background are independent settings: with crop off the effect above
+    // decides nothing to trim, and this one still reads the page's edge colour for the automatic
+    // background (whole page, no crop). With crop on the colour came off the crop pass above, and
+    // with both off no thumbnail is decoded at all (sampleEdgesOnly is false).
+    val sampleEdgesOnly = edgeSampleOnly(cropActive, autoBackground)
+    LaunchedEffect(pageIndex, sampleEdgesOnly) {
+        if (!sampleEdgesOnly || page.width <= 0 || page.height <= 0) return@LaunchedEffect
+        // A failed decode reports nothing: the caller keeps its last colour.
+        analysePage(page, detectCrop = false)?.let { backgroundColourCb(Color(it.background)) }
     }
 
     // Base layer: decoded once at its drawn size, kept resident for the whole page. Gated on

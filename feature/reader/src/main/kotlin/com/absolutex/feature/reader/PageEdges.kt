@@ -9,13 +9,13 @@ import com.absolutex.core.gpu.CropRect
 import kotlinx.coroutines.withContext
 
 /**
- * Whether a page needs its analysis thumbnail decoded at all. Crop detection and the automatic
- * background colour read the same thumbnail, so either one is reason enough; with both off nothing
- * is decoded. Crop being off no longer implies the background is off: the two settings are
- * independent, and only the page-edge colour is sampled in that case.
+ * Whether a page is decoded only to sample its edge colour: the automatic background is on but
+ * crop is not. Crop detection and the colour read the same thumbnail (crop on does both in one
+ * pass); with both off nothing is decoded. Crop off no longer implies the background is off: the
+ * two settings are independent.
  */
-internal fun needsPageThumbnail(cropActive: Boolean, autoBackground: Boolean): Boolean =
-    cropActive || autoBackground
+internal fun edgeSampleOnly(cropActive: Boolean, autoBackground: Boolean): Boolean =
+    !cropActive && autoBackground
 
 /**
  * What one pass over the analysis thumbnail found, in thumbnail pixels: the crop (null when crop

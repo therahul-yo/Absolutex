@@ -18,7 +18,6 @@ import kotlinx.coroutines.flow.Flow
 import com.absolutex.core.data.settings.ReaderPrefs
 import com.absolutex.core.gpu.CropRect
 import com.absolutex.core.gpu.ColourParams
-import com.absolutex.core.gpu.Upscaler
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.isShiftPressed
@@ -101,8 +100,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.distinctUntilChanged
 import com.absolutex.core.decode.PageImage
 import com.absolutex.model.FitContext
 import com.absolutex.model.FitMode
@@ -655,13 +652,7 @@ private fun PageSlotContent(
             vm.renderingPrefs.collect { colourState.value = it.colour }
         }
     }
-    // Upscaler recomposes only on a real switch: distinctUntilChanged keeps a colour
-    // change (a new RenderingPrefs instance) from recomposing the slot through this read.
-    // The operators run inside remember, not composition (FlowOperatorInvokedInComposition).
-    val upscalerFlow = remember(vm) {
-        vm.renderingPrefs.map { it.upscaler }.distinctUntilChanged()
-    }
-    val upscaler by upscalerFlow.collectAsStateWithLifecycle(initialValue = Upscaler.PLATFORM)
+    val upscaler = rememberUpscaler(vm)
     when {
         img != null -> PageCanvas(
             page = img,

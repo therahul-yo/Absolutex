@@ -3,6 +3,7 @@ package com.absolutex.feature.reader
 import com.absolutex.core.gpu.CropRect
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -30,11 +31,11 @@ class PageEdgesTest {
     }
 
     @Test
-    fun `a thumbnail is needed when crop or automatic background is on, and only then`() {
-        assertTrue(needsPageThumbnail(cropActive = true, autoBackground = true))
-        assertTrue(needsPageThumbnail(cropActive = true, autoBackground = false))
-        assertTrue("crop off must not switch the background off", needsPageThumbnail(false, true))
-        assertFalse("neither feature on decodes nothing", needsPageThumbnail(false, false))
+    fun `crop off with automatic background on is sampled for colour only, and nothing else is`() {
+        assertTrue("crop off must not switch the background off", edgeSampleOnly(false, true))
+        assertFalse("crop on does both in its own pass", edgeSampleOnly(true, true))
+        assertFalse(edgeSampleOnly(true, false))
+        assertFalse("neither feature on decodes nothing", edgeSampleOnly(false, false))
     }
 
     @Test
@@ -45,10 +46,13 @@ class PageEdgesTest {
     }
 
     @Test
-    fun `with crop on the margin is detected and the same colour is sampled`() {
+    fun `with crop on the margin is detected and the colour comes off the cropped edge`() {
         val edges = readPageEdges(page(100, 140, margin = 10), 100, 140, detectCrop = true)
         assertEquals(CropRect(10, 10, 90, 130), edges.crop)
-        assertEquals(cream, edges.background)
+        // The letterbox meets what the trimmed page ends in, so the cream margin (already cut away)
+        // is not sampled: the border strips of the striped content average 40 and 200 to 120.
+        assertEquals(argb(120, 120, 120), edges.background)
+        assertNotEquals(cream, edges.background)
     }
 
     @Test

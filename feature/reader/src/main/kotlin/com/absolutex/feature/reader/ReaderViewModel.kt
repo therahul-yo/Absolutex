@@ -92,7 +92,8 @@ data class ReaderUiState(
     val recoveryNotice: String? = null,
     /**
      * An encrypted PDF or archive is waiting for its password. Set alongside [error] (the same generic
-     * string), so dismissing the prompt leaves the ordinary failure behind it. The password
+     * string) so the screen behind the prompt is the ordinary failure; cancelling clears it and
+     * leaves the reader (see [ReaderViewModel.cancelPasswordPrompt]). The password
      * itself is never held here: it travels as an argument to [ReaderViewModel.open] and lives
      * otherwise only in the dialog's own text field, which composition drops on dismiss.
      */
@@ -823,8 +824,8 @@ private suspend fun openAttempt(
         OpenAttempt.Show(ReaderUiState(loading = false, textEpub = true, title = bookOpener.titleOf(uri)))
     } catch (e: PdfPasswordException) {
         // An encrypted PDF, with no password offered or the wrong one: prompt rather
-        // than fail. The generic error rides along, so cancelling the prompt leaves
-        // exactly the state a wrong-format book shows.
+        // than fail. The generic error rides along under the prompt; cancelling clears it
+        // and leaves the reader rather than stranding the user on that failure.
         Log.e(TAG, "open needs password", e)
         OpenAttempt.Show(generic.copy(passwordRequired = true, passwordIncorrect = password != null))
     } catch (e: ArchivePasswordException) {
