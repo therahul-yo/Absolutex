@@ -2,10 +2,16 @@ package com.absolutex.feature.settings
 
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.LargeTopAppBar
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import com.absolutex.core.ui.A11y
+import com.absolutex.core.ui.AsciiTitle
+import com.absolutex.core.ui.PageHeader
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -16,7 +22,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -50,6 +55,7 @@ import com.absolutex.model.ReadingFlow
 fun SettingsScreen(
     onOpenRemote: () -> Unit = {},
     onAddLocation: () -> Unit = {},
+    onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     vm: SettingsViewModel = hiltViewModel(),
     locationsVm: LocationsViewModel = hiltViewModel(),
@@ -87,12 +93,12 @@ fun SettingsScreen(
             locations = locations,
             onOpenRemote = onOpenRemote,
             onAddLocation = onAddLocation,
+            onBack = onBack,
             modifier = modifier,
         )
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsContent(
     app: AppPrefs,
@@ -101,15 +107,29 @@ fun SettingsContent(
     actions: SettingsActions,
     onOpenRemote: () -> Unit = {},
     onAddLocation: () -> Unit = {},
+    onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     locations: List<StorageLocation> = emptyList(),
 ) {
-    // The large title collapses into the bar as the page scrolls, as Material 3 settings do.
-    val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
-        modifier = modifier.fillMaxSize().nestedScroll(scroll.nestedScrollConnection),
+        modifier = modifier.fillMaxSize(),
+        // The same header as the library's pages: the pixel-block title, a back button before it.
         topBar = {
-            LargeTopAppBar(title = { Text(stringResource(R.string.settings_title)) }, scrollBehavior = scroll)
+            PageHeader(
+                modifier = Modifier.statusBarsPadding(),
+                navigation = {
+                    if (onBack != null) {
+                        FilledTonalIconButton(onClick = onBack, modifier = Modifier.size(A11y.MinTouchTarget)) {
+                            Icon(
+                                Icons.AutoMirrored.Outlined.ArrowBack,
+                                contentDescription = stringResource(R.string.settings_back),
+                            )
+                        }
+                    }
+                },
+            ) {
+                AsciiTitle(stringResource(R.string.settings_title), fallback = MaterialTheme.typography.headlineMedium)
+            }
         },
     ) { inner ->
         Column(

@@ -2,7 +2,6 @@ package com.absolutex.feature.library
 
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material3.IconButton
@@ -20,7 +19,7 @@ import com.absolutex.core.ui.Motion
 import com.absolutex.core.ui.A11y
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material.icons.outlined.FileOpen
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.foundation.layout.size
 import androidx.compose.animation.shrinkVertically
@@ -41,7 +40,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.CompositionLocalProvider
@@ -60,6 +58,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.absolutex.core.scan.SortKey
 import com.absolutex.core.ui.AsciiTitle
+import com.absolutex.core.ui.PageHeader
 
 /**
  * The library screen.
@@ -232,39 +231,32 @@ private fun LibraryBody(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * The title, and the open-file and settings buttons at its end, on the [PageHeader] grid the
+ * search row beneath shares: open-file sits over sort and settings over view. The TopAppBar this
+ * replaced insets its actions 4 dp more, which put the pair 12 dp from the edge and off the row.
+ */
 @Composable
 private fun LibraryTopBar(section: HomeSection, onOpenSettings: () -> Unit, onOpenFile: () -> Unit) {
-    TopAppBar(
-        // The status-bar inset is the collapsing header's (CollapsingHeader), not the bar's.
-        windowInsets = WindowInsets(0),
+    PageHeader(
         title = {
             // The section name is the title; it cross-fades rather than jumping.
             Crossfade(section, animationSpec = Motion.enter(), label = "title") { shown ->
-                // A gap before the settings button: the longest title fills the width otherwise.
-                AsciiTitle(
-                    shown.label(),
-                    fallback = MaterialTheme.typography.headlineMedium,
-                    modifier = Modifier.padding(end = Space.Row),
-                )
+                AsciiTitle(shown.label(), fallback = MaterialTheme.typography.headlineMedium)
             }
         },
         actions = {
             // Icon-only controls, so the description is the only thing a screen reader has to go
             // on. Tonal and full-size so each reads as a button, not a stray glyph.
-            FilledTonalIconButton(
-                onClick = onOpenFile,
-                modifier = Modifier.padding(end = Space.Gap).size(A11y.MinTouchTarget),
-            ) {
+            FilledTonalIconButton(onClick = onOpenFile, modifier = Modifier.size(A11y.MinTouchTarget)) {
+                // An open folder, not FileOpen: that glyph is a page with a cursor, which read as
+                // the Documents tab's page icon in the bar below.
                 Icon(
-                    imageVector = Icons.Outlined.FileOpen,
+                    imageVector = Icons.Outlined.FolderOpen,
                     contentDescription = stringResource(R.string.library_open_file),
                 )
             }
-            FilledTonalIconButton(
-                onClick = onOpenSettings,
-                modifier = Modifier.padding(end = Space.Gap).size(A11y.MinTouchTarget),
-            ) {
+            FilledTonalIconButton(onClick = onOpenSettings, modifier = Modifier.size(A11y.MinTouchTarget)) {
                 Icon(
                     imageVector = Icons.Outlined.Settings,
                     contentDescription = stringResource(R.string.library_open_settings),

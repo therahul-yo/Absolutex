@@ -14,13 +14,15 @@ const val SETTINGS_ROUTE = "settings"
  * screen reads its own ViewModel via Hilt and previews the theme it configures, so there is
  * nothing to pass in beyond [onOpenRemote], which the host supplies because only the host knows
  * the graph the remote list lives in. Back navigation is the host's concern: this destination
- * pushes nothing and pops nothing itself.
+ * pushes nothing and pops nothing itself, and shows a back button only when the host supplies
+ * [onBack].
  */
 fun NavGraphBuilder.settingsDestination(
     onOpenRemote: () -> Unit = {},
     onAddLocation: () -> Unit = {},
+    onBack: (() -> Unit)? = null,
 ) {
     composable(SETTINGS_ROUTE) {
-        SettingsScreen(onOpenRemote = onOpenRemote, onAddLocation = onAddLocation)
+        SettingsScreen(onOpenRemote = onOpenRemote, onAddLocation = onAddLocation, onBack = onBack)
     }
 }
