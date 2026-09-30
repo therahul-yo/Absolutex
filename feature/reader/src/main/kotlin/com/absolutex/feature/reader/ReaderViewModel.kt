@@ -65,6 +65,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
@@ -446,7 +447,9 @@ class ReaderViewModel internal constructor(
                 // this page was not in the window, or the window could not serve it, and the
                 // per-page read below is the pre-existing behaviour.
                 val staged = prefetch.takeStagedBytes(index)
-                val bytes = staged ?: withContext(DecodeDispatchers.extract) {
+                // Interruptible: a page of a solid archive still being decoded into the cache waits
+                // for the pass, and a page the reader has moved on from must not hold this thread.
+                val bytes = staged ?: runInterruptible(DecodeDispatchers.extract) {
                     (src as ComicSource).openPage(index).readBytes()
                 }
                 withContext(DecodeDispatchers.decode) { PageImage.from(bytes) }
@@ -906,7 +909,7 @@ private suspend fun batchPageBytes(
 requested += pages
 consulted += source
 val archive = source as? LibArchiveSource ?: return null
-return withContext(DecodeDispatchers.extract) {
+return runInterruptible(DecodeDispatchers.extract) {
     runCatching {
         archive.openPages(pages).mapIndexedNotNull { i, stream ->
             // readBytes on a ByteArrayInputStream, but the contract is a generic

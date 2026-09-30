@@ -34,15 +34,21 @@ class LibArchiveSource private constructor(
     override val pages: List<Page>,
     /** Archive ordinal of each page, parallel to [pages]. Sorting reorders pages, not ordinals. */
     private val ordinals: IntArray,
-    override val comicInfo: ComicInfo?,
+    private val readInfo: ComicInfo?,
     override val pageReadability: PageReadability?,
     val isEncrypted: Boolean,
     private val passphrase: ArchivePassphrase,
+    /** The decode-once cache of a solid archive, or null for everything read directly. */
+    private val solid: SolidSession?,
 ) : ComicSource {
+
+    /** A solid archive's ComicInfo arrives with the cache pass instead of delaying the open. */
+    override val comicInfo: ComicInfo? get() = readInfo ?: solid?.comicInfo
 
     override fun openPage(index: Int): InputStream {
         val page = pages.getOrNull(index)
             ?: throw IndexOutOfBoundsException("page $index of ${pages.size}")
+        fromSolid(index)?.let { return it }
         // By ordinal, never by name: two entries can share a name, and names do not survive a
         // JNI round trip byte-for-byte (see nativeList in archive_jni.c).
         val bytes = traced("absx.entryExtract") {
@@ -77,7 +83,13 @@ class LibArchiveSource private constructor(
         // A scattered set is served one page at a time, which is what it would have cost
         // anyway — routing it through the window path would save nothing and would be
         // misleading to read.
-        val run = planWindow(indexes, ordinals) as? WindowPlan.Run
+        val plan = planWindow(indexes, ordinals)
+        return solidWindow(indexes) ?: directWindow(indexes, plan)
+    }
+
+    /** [openPages] from the archive itself: one window for a run, one read per page otherwise. */
+    private fun directWindow(indexes: List<Int>, plan: WindowPlan): List<InputStream?> {
+        val run = plan as? WindowPlan.Run
             ?: return indexes.map { openPage(it) }
         val bytes = traced("absx.entryExtract") {
             passphrase.useBytes { password ->
@@ -93,8 +105,45 @@ class LibArchiveSource private constructor(
         return bytes.map { it?.let(::ByteArrayInputStream) }
     }
 
-    /** Owns no descriptor; clear the session password and reject subsequent reads. */
-    override fun close() = passphrase.close()
+    /**
+     * A page from the solid cache, waiting for the pass if it has not reached it. Null means read
+     * the archive directly (no cache, or it was abandoned); an unreadable entry throws exactly as
+     * the direct read does.
+     */
+    private fun fromSolid(index: Int): InputStream? {
+        val session = solid ?: return null
+        return when (val read = session.read(ordinals[index])) {
+            is SolidRead.Hit -> read.stream
+            SolidRead.Torn -> throw IOException("unreadable entry: ${pages[index].entryName}")
+            SolidRead.Fallback -> null
+        }
+    }
+
+    /** [openPages] through the cache; null if any page needs the archive, which then serves them all. */
+    private fun solidWindow(indexes: List<Int>): List<InputStream?>? {
+        val session = solid ?: return null
+        val streams = ArrayList<InputStream?>(indexes.size)
+        for (index in indexes) {
+            when (val read = session.read(ordinals[index])) {
+                is SolidRead.Hit -> streams += read.stream
+                SolidRead.Torn -> streams += null
+                SolidRead.Fallback -> {
+                    streams.forEach { it?.close() }
+                    return null
+                }
+            }
+        }
+        return streams
+    }
+
+    /**
+     * Owns no descriptor; clear the session password and reject subsequent reads. A solid cache
+     * pass is told to stop (it ends within one entry and releases its own descriptor).
+     */
+    override fun close() {
+        solid?.close()
+        passphrase.close()
+    }
 
     companion object {
         private const val MAX_COMIC_INFO_BYTES = 1024 * 1024
@@ -123,11 +172,25 @@ class LibArchiveSource private constructor(
          * required/rejected passwords prompt and retry, unsupported encryption is terminal.
          */
         fun open(passphrase: CharArray?, openFd: () -> ParcelFileDescriptor): LibArchiveSource =
+            open(passphrase, null, openFd)
+
+        /**
+         * [open] for a reader that wants a solid 7z decoded ONCE: with [cache] set, a solid archive
+         * is written page by page to the cache directory by one background pass, and every later
+         * read waits for or reads that copy instead of re-decoding the block. Anything else (no
+         * cache, a non-solid archive, a book too large for the cap, a full disk) reads directly,
+         * exactly as before. Pass null from anything that opens books in bulk (covers, scans).
+         */
+        fun open(
+            passphrase: CharArray?,
+            cache: SolidCacheConfig?,
+            openFd: () -> ParcelFileDescriptor,
+        ): LibArchiveSource =
             traced("absx.archiveOpen") {
                 val owned = ArchivePassphrase(passphrase)
                 var transferred = false
                 try {
-                    owned.useBytes { password -> openWithPassword(openFd, owned, password) }
+                    owned.useBytes { password -> openWithPassword(openFd, owned, password, cache) }
                         .also { transferred = true }
                 } finally {
                     if (!transferred) owned.close()
@@ -161,6 +224,7 @@ class LibArchiveSource private constructor(
             openFd: () -> ParcelFileDescriptor,
             owned: ArchivePassphrase,
             password: ByteArray?,
+            cache: SolidCacheConfig?,
         ): LibArchiveSource {
             // Out-params rather than a richer return type: the listing already crosses JNI, and
             // whether it reached clean EOF — and whether anything in it is encrypted — are the
@@ -183,7 +247,15 @@ class LibArchiveSource private constructor(
             val ordinals = IntArray(kept.size) { kept[it].first }
             // Locate against the RAW entry list (ordinals must match nativeExtract), parse once;
             // a missing, unreadable or malformed ComicInfo costs the metadata, not the open.
-            val info = comicInfoFrom(openFd, raw, password)
+            // A solid archive's cache starts here instead, and delivers ComicInfo with the pass:
+            // 7-Zip writes it LAST in the block, so reading it now would decode the whole block
+            // before page one.
+            val solid = if (cache != null && complete[0] && !encrypted[0]) {
+                startNativeSolidCache(cache, NativeSolidArchive(openFd, owned), raw, ordinals)
+            } else {
+                null
+            }
+            val info = if (solid != null) null else comicInfoFrom(openFd, raw, password)
             // Only recovery pays for payload validation. A single password probe verifies the
             // session passphrase before any page is read; readability is counted in a single
             // pass over the discovered ordinals.
@@ -191,7 +263,7 @@ class LibArchiveSource private constructor(
             val readability = computeReadability(openFd, ordinals, info, recovery, encrypted[0], password)
             // A plain archive keeps no copy of the password it never needed.
             if (!encrypted[0]) owned.forget()
-            return LibArchiveSource(openFd, pages, ordinals, info, readability, encrypted[0], owned)
+            return LibArchiveSource(openFd, pages, ordinals, info, readability, encrypted[0], owned, solid)
         }
 
         /**

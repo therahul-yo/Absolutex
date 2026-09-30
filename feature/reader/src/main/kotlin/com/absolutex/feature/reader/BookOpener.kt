@@ -31,7 +31,7 @@ internal fun interface BookOpener {
 internal class ContextBookOpener(private val context: Context) : BookOpener {
     override suspend fun open(uri: Uri, password: String?): Pair<Closeable, String> =
         withContext(DecodeDispatchers.extract) {
-            context.openBook(uri, password) to context.identityOf(uri)
+            context.openBook(uri, password, cacheSolid = true) to context.identityOf(uri)
         }
 
     // A SAF document's last segment is its document id ("msf:1000092392"), not its name, so the

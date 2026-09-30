@@ -30,8 +30,11 @@ import java.io.IOException
  * actually go wrong — a ZIP wearing .cbr, a CBZ that merely contains "%PDF-", a truncated header
  * — are JVM tests instead of something only a device can reproduce. It costs the same single
  * header read the inline check did.
+ *
+ * [cacheSolid] is for the reader alone: it lets a solid 7z be decoded once into the app cache (see
+ * [openArchive]). Bulk callers (covers) leave it off.
  */
-internal fun Context.openBook(uri: Uri, password: String? = null): Closeable {
+internal fun Context.openBook(uri: Uri, password: String? = null, cacheSolid: Boolean = false): Closeable {
     // Folders are asked about first: a folder is not a container with an unfamiliar header, it
     // has no header at all and no descriptor worth opening. See [folderPages] for the cost.
     val folder = folderPages(uri)
@@ -47,11 +50,11 @@ internal fun Context.openBook(uri: Uri, password: String? = null): Closeable {
             openEpub(uri)
         } catch (ignored: ArchivePasswordException) {
             null
-        } ?: openArchive(uri, password)
+        } ?: openArchive(uri, password, cacheSolid)
         // Everything else is libarchive's, which reads more formats than the sniffer names — so
         // UNKNOWN is a route, not a failure. A fresh descriptor per read: a shared SAF fd
         // corrupts parallel reads.
-        else -> openArchive(uri, password)
+        else -> openArchive(uri, password, cacheSolid)
     }
 }
 
