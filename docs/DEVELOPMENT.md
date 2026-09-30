@@ -38,7 +38,7 @@ stale-row deletion for the whole location; cancellation also skips deletion. For
 still deliberately removes its rows. Device check: make a subfolder unreadable, rescan, and confirm
 its favourites survive while the library reports that the folder could not be read.
 
-**Built but not yet connected.** Four features are merged, tested and unreachable, which is
+**Built but not yet connected.** Three features are merged, tested and unreachable, which is
 worth stating plainly rather than leaving for someone to discover:
 
 - **Progress sync is inert.** `SyncController.onAppStart` and `onAppBackgrounded` fire from the
@@ -49,8 +49,6 @@ worth stating plainly rather than leaving for someone to discover:
   `ServerKindOptions.kt` is `false`, and flipping it is the change that goes with wiring those
   three hooks. Servers of those kinds saved earlier still load, list, edit and delete; opening
   one shows its kind read-only.
-- **Remote covers are never fetched.** `TransportCoverFetcher` and `FtpCovers` exist; no screen
-  mints the `ThumbRequest` that would drive them.
 - **No cloud account can be added.** `:remote:cloud` holds the PKCE flow, the token endpoint, the
   per-account token store, OneDrive over Graph and Dropbox over its v2 API, all range-reading so a
   300 MB book opens without transferring 300 MB. Nothing constructs any of it: no screen offers a
@@ -59,6 +57,9 @@ worth stating plainly rather than leaving for someone to discover:
   resumes an interrupted copy and reads the result back through `FileRangeTransport`. Nothing
   calls it, and there is no registry recording that a copy exists, so a local copy could not be
   preferred over the network even if one were made.
+
+Remote browsing fetches covers through `BrowseViewModel` and `TransportCoverFetcher`; the grid
+records loading failures per book rather than waiting for every cover.
 
 Those last two are a step further from reachable than the other two, and the distinction
 matters when estimating the work: **no module depends on `:remote:cloud` or `:remote:offline`.**
