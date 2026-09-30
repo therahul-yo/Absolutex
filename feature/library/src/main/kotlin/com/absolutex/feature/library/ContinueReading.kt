@@ -137,8 +137,8 @@ private fun ContinueCard(
             .semantics { customActions = listOf(CustomAccessibilityAction(hideLabel) { onHide(); true }) },
         verticalArrangement = Arrangement.spacedBy(Space.Tight),
     ) {
-        // The cover and its bar are the part the wheel turns ([art]); the words below stay put,
-        // so every card's title and percentage share one line however far it is from the middle.
+        // The cover and its bar are the part the wheel turns ([art]); the words below only slide
+        // sideways with it, so every card's title and percentage share one line.
         Column(art, verticalArrangement = Arrangement.spacedBy(Space.Tight)) {
             BookCover(book, Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
             book.progressFraction?.let { fraction ->
@@ -150,29 +150,7 @@ private fun ContinueCard(
                 )
             }
         }
-        // Inset by what a side cover's shrink takes back, and moved with it ([captions]), so a
-        // side card's words sit under its cover, inside the gutter, rather than under its slot.
-        Column(
-            captions.padding(horizontal = captionInset),
-            verticalArrangement = Arrangement.spacedBy(Space.Tight),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                book.displayName,
-                style = MaterialTheme.typography.titleSmall,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            book.progressLabel()?.let { progress ->
-                Text(
-                    progress,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-            }
-        }
+        ContinueCaptions(book, captions, captionInset)
     }
     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
         DropdownMenuItem(
@@ -184,6 +162,36 @@ private fun ContinueCard(
             },
         )
     }
+    }
+}
+
+/**
+ * A card's title and progress. Inset by what a side cover's shrink takes back, and moved with the
+ * cover ([modifier]), so a side card's words sit under its cover, inside the gutter, rather than
+ * under its slot.
+ */
+@Composable
+private fun ContinueCaptions(book: LibraryBookUi, modifier: Modifier, inset: Dp) {
+    Column(
+        modifier.padding(horizontal = inset),
+        verticalArrangement = Arrangement.spacedBy(Space.Tight),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            book.displayName,
+            style = MaterialTheme.typography.titleSmall,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        book.progressLabel()?.let { progress ->
+            Text(
+                progress,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
     }
 }
 
