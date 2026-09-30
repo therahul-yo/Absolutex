@@ -23,8 +23,8 @@ smart crop defaults on, has a switch, and never crops PDFs.
 
 **Around it:** the library is the app's home screen, with the reader and settings as
 destinations. Granted folders rescan when the library screen opens or Rescan is requested;
-the filesystem watcher only watches plain paths. There is a thumbnail pipeline, a settings surface, and remote modules for SMB, FTP/FTPS and Komga/Kavita
-progress sync. SMB and FTP/FTPS are wired into the app; Komga and Kavita are built but not offered
+the filesystem watcher only watches plain paths. There is a thumbnail pipeline, a settings
+surface, and remote modules for SMB, FTP/FTPS and Komga/Kavita progress sync. SMB and FTP/FTPS are wired into the app; Komga and Kavita are built but not offered
 (see below).
 
 **First run.** The library's top bar has an "Open file" button that launches the system file picker

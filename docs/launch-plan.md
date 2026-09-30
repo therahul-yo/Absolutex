@@ -50,7 +50,6 @@ smoothness guarantee. See DEVELOPMENT: Measured on the reference device.
 - Owner confirms signing-key backups without sharing secrets.
 - Owner/lead tests the signed release on additional phones. Do not describe untested devices as supported by testing.
 - Replace copyrighted promotional screenshots with licensed assets before using them in a post or store listing.
-- Lead reviews the claims table and shows the owner final website wording before merging this PR.
 
 ### Phase 1: first impression and trust
 
