@@ -1,6 +1,6 @@
 # Absolutex
 
-**A fast, minimal comic and manga reader for flagship Android phones.**
+**A beta comic and manga reader for flagship Android phones.**
 
 **[Download the latest APK](https://github.com/therahul-yo/Absolutex/releases/latest)** · [Website](https://absolutex.vercel.app/) · [Developer docs](docs/DEVELOPMENT.md)
 
@@ -17,14 +17,14 @@
   <img src="docs/screenshots/settings.jpg" width="180" alt="Settings: night mode, true black, and the library's folders">
 </p>
 
-Open your comics, manga, PDFs and EPUBs straight from your phone or a network share, and read
-them on a true-black, distraction-free screen that keeps up with a 120 Hz display. Pages are
-rendered in tiles on the GPU, so zooming into a 6-megapixel scan stays sharp and smooth.
+The current download is **v0.1.3**. Open comics, manga, PDFs and EPUBs from your phone or an
+SMB/FTP share and read them on a true-black screen. Comic and PDF pages use tiled GPU rendering.
+Performance has been measured only on a OnePlus 11R; there is no frame-rate guarantee.
 
 ## Features
 
 **Reads what you have**
-- Comic archives: CBZ, CBR (including RAR5), CB7 and CBT
+- Comic archives: CBZ, CBR (RAR4/RAR5) and CBT; folders of loose images
 - PDF, including password-protected files
 - EPUB: fixed-layout comic EPUBs as pages, novels and web novels as reflowable text
 - Opens from any folder you pick, from the file manager, or from SMB and FTP/FTPS shares
@@ -33,16 +33,20 @@ rendered in tiles on the GPU, so zooming into a 6-megapixel scan stays sharp and
 - Left-to-right, right-to-left (manga) and vertical reading, chosen per book
 - Single page, two-page spreads in landscape, and a continuous vertical strip (the default for PDFs)
 - In the strip, pinch zooms the whole column and a finger pans across it, like a document reader
-- Smooth pinch and double-tap zoom, tap zones mirrored for right-to-left books
+- Pinch and double-tap zoom, tap zones mirrored for right-to-left books
 - A seek slider with haptic ticks, a thumbnail strip, bookmarks and a table of contents
 - Dark pages for documents, rotation lock, keep-screen-on, volume-key, keyboard and gamepad turning
 - Finishing a book offers the next one in the series; save any page as an image
 
 **Picture quality, on the GPU**
+
+Colour correction, Mitchell/Lanczos upscaling and matching the background to the page are optional
+and off by default. The default sampler is the platform filter.
+
 - Colour correction: brightness, contrast, saturation, vibrance, warmth and gamma
-- Smart border crop that trims scan margins before the first frame
+- Smart border crop, on by default with a switch to turn it off; PDFs are never cropped
 - Mitchell and Lanczos upscaling for sharp text when zoomed
-- A background that matches each page's own edge colour
+- Optional background matching; in v0.1.3 it has no effect when margin trimming is off
 
 **Reading novels**
 - Pages that turn like a book, or one continuous scroll per chapter, with adjustable text size
@@ -55,10 +59,10 @@ rendered in tiles on the GPU, so zooming into a 6-megapixel scan stays sharp and
 - Real cover art, series stacks and "new" badges; dense grids become a wall of covers
 - Reading stats: pages read, time spent reading and your daily streak
 - Search across the whole library, sort by name, date or size, grid or list
-- Stays in sync with your folders as files are added or removed
+- Folders picked through Android rescan when the library screen opens; they are not watched live
 
 **Design**
-- Minimal Material 3 in true black, pixel-block titles, fast non-bouncy motion and haptics
+- Minimal Material 3 in true black, pixel-block titles, motion and haptics
 - A one-time setup on first launch: folders, reading direction and a few privacy choices
 - Resumes the last book you were reading when the app opens
 
@@ -71,9 +75,28 @@ Updates install over it with your library and reading positions kept.
 **Requirements:** Android 13 or newer on a 64-bit flagship-class phone (Snapdragon 8 Gen 1-class
 or better). Developed and measured on a OnePlus 11R.
 
-Absolutex deliberately does not support low-end devices: no 16-bit colour paths, no small-cache
-fallbacks, no single-threaded decode kept around for weak chips. The hardware floor is a feature —
-every compromise removed is a code path that cannot rot or drop a frame.
+The supported floor is Android 13+, arm64 and a flagship-class Snapdragon phone. Testing has
+covered only a OnePlus 11R; other phones and providers are unverified.
+
+## Known limitations
+
+- CB7/7z does not open in the current v0.1.3 download.
+- Classic ZIP encryption (ZipCrypto) prompts for a password. AES-encrypted ZIP and encrypted
+  7z are unsupported; password-protected RAR/CBR is untested.
+- Komga/Kavita sync is not wired and those server types are hidden. Cloud sources and offline
+  copies are not connected.
+- The OnePlus 11R benchmark recorded 2 missed deadlines in 1,387 frames and a median tap-to-first-page
+  time of 329.8 ms, above the 250 ms target. See the [measurements](docs/DEVELOPMENT.md#measured-on-the-reference-device).
+
+## Next release — not in the current download yet
+
+Current `main` adds CB7 decoding (large solid archives can page slowly; encrypted 7z remains
+unsupported), an **Open file** button, clearer empty states and scan safety that preserves rows
+when a folder cannot be read. It also separates background matching from cropping, wraps reader
+option chips, excludes the password box from password-manager prompts and makes Cancel leave the reader.
+Settings → Backup exports/imports reading data and preferences as merge-only JSON: the file contains
+book names, never server records, credentials or folder grants. Text-EPUB position inside a chapter
+and the tap-guide flag are excluded; after restore a text EPUB reopens at its chapter start.
 
 ## Updates
 
@@ -84,7 +107,7 @@ this repository.
 
 ## Privacy
 
-No ads, no analytics, no crash reporting. Nothing leaves your phone unless you add a network share
+No ads, no analytics, no crash reporting. Reading files stay local unless you add a network share
 yourself. Document covers stay hidden unless you turn them on, so private PDFs never show on your
 shelf.
 
@@ -93,6 +116,12 @@ shelf.
 Apache-2.0 — see [LICENSE](LICENSE). No dependency is GPL or AGPL; RAR support comes from
 libarchive's clean-room readers, never RARLAB's UnRAR. Details are in the
 [developer docs](docs/DEVELOPMENT.md#licensing).
+
+| Component | Licence | Note |
+|---|---|---|
+| libarchive | New BSD | RAR4/RAR5 readers |
+| PDFium | BSD-3-Clause | Bundled permissive dependencies |
+| xz / liblzma | 0BSD | Next release: statically linked, decoder only |
 
 ## Contributing
 
