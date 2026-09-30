@@ -36,4 +36,25 @@ internal object LibArchive {
         count: Int,
         passphrase: ByteArray?,
     ): Array<ByteArray?>?
+
+    /**
+     * Whether the archive is a solid 7z (entries that can only be reached by decoding the ones
+     * before them), with the total its regular files declare in [totalBytes] (element 0; 0 for
+     * anything that is not a 7z). Reads at most a page or two and never throws: anything unexpected
+     * answers false, which is today's behaviour.
+     */
+    @JvmStatic external fun nativeProbeSolid(fd: Int, totalBytes: LongArray): Boolean
+
+    /**
+     * One forward pass: hands every entry whose ordinal is true in [wanted] to [sink] as it is
+     * decoded, and returns a [PassEnd] code. Holds one entry in memory at a time; [maxBytes]
+     * bounds what is walked and delivered. An exception from the sink propagates.
+     */
+    @JvmStatic external fun nativeStreamEntries(
+        fd: Int,
+        wanted: BooleanArray,
+        maxBytes: Long,
+        passphrase: ByteArray?,
+        sink: EntrySink,
+    ): Int
 }

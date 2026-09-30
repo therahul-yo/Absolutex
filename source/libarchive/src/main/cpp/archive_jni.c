@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -138,14 +139,12 @@ static void throw_encrypted(JNIEnv *env, int unsupported) {
     }
 }
 
-static struct archive *open_fd(JNIEnv *env, int fd, int *dup_out, const char *passphrase) {
-    int dfd = private_fd(fd);
-    if (dfd < 0) return NULL;
-    /* A pipe cannot seek; libarchive then uses its streaming readers, so this is not fatal. */
-    (void) lseek(dfd, 0, SEEK_SET);
-
+/* A reader with every format and filter this app uses registered, and the passphrase added.
+   Shared by the descriptor open below and the probe's callback open, so both see the same
+   archives. NULL (with a Java exception pending only for a passphrase failure) on error. */
+static struct archive *new_reader(JNIEnv *env, const char *passphrase) {
     struct archive *a = archive_read_new();
-    if (a == NULL) { close(dfd); return NULL; }
+    if (a == NULL) return NULL;
 
     archive_read_support_format_zip(a);
     archive_read_support_format_rar(a);    // RAR4 — what the reference corpus actually is
@@ -166,9 +165,19 @@ static struct archive *open_fd(JNIEnv *env, int fd, int *dup_out, const char *pa
     if (passphrase != NULL && archive_read_add_passphrase(a, passphrase) != ARCHIVE_OK) {
         throw_named(env, "java/io/IOException", "Could not register archive password");
         archive_read_free(a);
-        close(dfd);
         return NULL;
     }
+    return a;
+}
+
+static struct archive *open_fd(JNIEnv *env, int fd, int *dup_out, const char *passphrase) {
+    int dfd = private_fd(fd);
+    if (dfd < 0) return NULL;
+    /* A pipe cannot seek; libarchive then uses its streaming readers, so this is not fatal. */
+    (void) lseek(dfd, 0, SEEK_SET);
+
+    struct archive *a = new_reader(env, passphrase);
+    if (a == NULL) { close(dfd); return NULL; }
     if (archive_read_open_fd(a, dfd, BLOCK_SIZE) != ARCHIVE_OK) {
         password_error(env, a);
         archive_read_free(a);
@@ -241,7 +250,8 @@ static const char *entry_name(struct archive_entry *e) {
  * A truncated archive yields the entries read before the failure rather than nothing — the
  * brief requires degrading to "N of M readable", never crashing.
  */
-static jbyteArray read_entry(JNIEnv *env, struct archive *a, struct archive_entry *e);
+static jbyteArray read_entry(JNIEnv *env, struct archive *a, struct archive_entry *e,
+                             int64_t cap_bytes, int *over_cap);
 
 static jobjectArray
 list_impl(JNIEnv *env, jclass clazz, jint fd, jbooleanArray complete,
@@ -360,17 +370,20 @@ fail:
  * straight into a critical Java region, because the read can block on I/O and a critical region
  * held across a blocking read stalls the GC. One memcpy of ~1 MB against the 250 ms open budget.
  */
-static jbyteArray read_entry(JNIEnv *env, struct archive *a, struct archive_entry *e) {
+static jbyteArray read_entry(JNIEnv *env, struct archive *a, struct archive_entry *e,
+                             int64_t cap_bytes, int *over_cap) {
+    if (over_cap != NULL) *over_cap = 0;
     int sized = archive_entry_size_is_set(e);
     la_int64_t declared = sized ? archive_entry_size(e) : -1;
-    if (sized && (declared < 0 || declared > MAX_ENTRY_BYTES)) {
+    if (sized && (declared < 0 || declared > cap_bytes)) {
         LOGE("entry size %lld out of range", (long long) declared);
+        if (over_cap != NULL && declared > cap_bytes) *over_cap = 1;
         return NULL;
     }
 
     /* min(declared, 8 MB) up front, then grow as bytes arrive — never one giant malloc
        against an untrusted header. Total is still bounded: sized entries by declared
-       (<= 128 MB), unsized by MAX_ENTRY_BYTES. */
+       (<= cap_bytes), unsized by cap_bytes. */
     size_t cap = sized
         ? (size_t) (declared <= 0 ? 1 : declared < SIZED_START_MAX ? declared : SIZED_START_MAX)
         : UNKNOWN_SIZE_START;
@@ -381,10 +394,11 @@ static jbyteArray read_entry(JNIEnv *env, struct archive *a, struct archive_entr
     for (;;) {
         if (len == cap) {
             if (sized && len >= (size_t) declared) break;   // declared size fully read
-            size_t limit = sized ? (size_t) declared : (size_t) MAX_ENTRY_BYTES;
+            size_t limit = sized ? (size_t) declared : (size_t) cap_bytes;
             if (cap >= limit) {
                 if (!sized) {
-                    LOGE("entry exceeds %ld bytes", MAX_ENTRY_BYTES);
+                    LOGE("entry exceeds %lld bytes", (long long) cap_bytes);
+                    if (over_cap != NULL) *over_cap = 1;
                     free(buf);
                     return NULL;
                 }
@@ -481,7 +495,7 @@ extract_impl(JNIEnv *env, jclass clazz,
         if (archive_entry_is_encrypted(entry) > 0 && (passphrase == NULL || is_7zip(a))) {
             throw_encrypted(env, is_7zip(a));
         } else {
-            result = read_entry(env, a, entry);
+            result = read_entry(env, a, entry, MAX_ENTRY_BYTES, NULL);
         }
         break;
     }
@@ -598,7 +612,7 @@ extract_window_impl(JNIEnv *env, jclass clazz,
             encrypted_unsupported = is_7zip(a);
             break;
         }
-        jbyteArray bytes = read_entry(env, a, entry);
+        jbyteArray bytes = read_entry(env, a, entry, MAX_ENTRY_BYTES, NULL);
         /* read_entry calls password_error, which THROWS, on a wrong passphrase mid-entry.
            That leaves an exception pending, and continuing the walk would make JNI calls with
            one pending -- forbidden, and reported by -Xcheck:jni on device exactly as on the
@@ -658,6 +672,269 @@ Java_com_absolutex_source_libarchive_LibArchive_nativeExtract(JNIEnv *env, jclas
     if ((*env)->ExceptionCheck(env)) return NULL;
     locale_t prev = enter_utf8();
     jbyteArray r = extract_impl(env, clazz, fd, ordinal, passphrase);
+    leave_utf8(prev);
+    wipe_free(passphrase);
+    return r;
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Solid 7z: detection and the one-pass stream.
+ *
+ * 7-Zip's default is one solid LZMA2 block, so entry N can only be reached by decoding entries
+ * 0..N-1, and the stateless calls above restart that decode on every page turn. Kotlin copes by
+ * decoding the block ONCE into a cache (SolidPass); the two entry points below are its native
+ * half. Neither changes what the calls above do.
+ * ------------------------------------------------------------------------------------------- */
+
+/* Outcomes of nativeStreamEntries; SolidPass.kt (PassEnd) reads them by value. */
+#define PASS_COMPLETE 0   /* every wanted entry was delivered */
+#define PASS_STOPPED  1   /* the sink asked to stop (book closed, cache refused a write) */
+#define PASS_FAILED   2   /* the archive broke first: later entries were never delivered */
+#define PASS_LIMIT    3   /* the byte ceiling was reached, or one page was too big to buffer */
+
+/* The background pass buffers a page natively AND as a Java array (then hands it to the cache),
+   so its per-entry cap is far below MAX_ENTRY_BYTES. A wanted entry above it ends the pass as
+   PASS_LIMIT: the cache is abandoned and pages are read directly. */
+#define PASS_ENTRY_BYTES (32L * 1024 * 1024)
+
+/* The most declared bytes the solid probe will make libarchive decode. pack_start_of decodes
+   every entry before its target, and that runs synchronously in open with no way to cancel, so
+   a block that starts with more than this is answered "not solid" (the direct path). */
+#define PROBE_WALK_BYTES (32L * 1024 * 1024)
+
+static int64_t sat_add(int64_t a, int64_t b) {
+    return (a > INT64_MAX - b) ? INT64_MAX : a + b;
+}
+
+/*
+ * The reader's view of the file, so a probe can see WHERE libarchive reads. Only the offset of the
+ * first read after the headers matters: it is where the entry's pack stream starts.
+ */
+struct probe_io {
+    int fd;
+    int64_t pos;
+    int data_phase;           /* set once the first header (which slurps the directory) returned */
+    int64_t first_data_read;  /* file offset of the first read in the data phase, or -1 */
+    char buf[BLOCK_SIZE];
+};
+
+static la_ssize_t probe_read(struct archive *a, void *data, const void **out) {
+    (void) a;
+    struct probe_io *io = data;
+    ssize_t n = read(io->fd, io->buf, sizeof(io->buf));
+    if (n < 0) return -1;
+    if (io->data_phase && io->first_data_read < 0) io->first_data_read = io->pos;
+    io->pos += n;
+    *out = io->buf;
+    return n;
+}
+
+static la_int64_t probe_skip(struct archive *a, void *data, la_int64_t request) {
+    (void) a;
+    struct probe_io *io = data;
+    off_t r = lseek(io->fd, (off_t) request, SEEK_CUR);
+    if (r < 0) return 0;
+    io->pos = r;
+    return request;
+}
+
+static la_int64_t probe_seek(struct archive *a, void *data, la_int64_t offset, int whence) {
+    (void) a;
+    struct probe_io *io = data;
+    off_t r = lseek(io->fd, (off_t) offset, whence);
+    if (r < 0) return ARCHIVE_FATAL;
+    io->pos = r;
+    return r;
+}
+
+/*
+ * Where does the pack stream holding regular-file ordinal [target] begin? Reads one byte of it
+ * and reports the file offset libarchive first read from after the headers; -1 when unknown.
+ *
+ * Two entries of one solid block start decoding at the SAME offset (the block's start), while
+ * entries of separate blocks start at their own. libarchive exposes neither the folder layout
+ * nor a solid flag, so this is how a caller tells them apart through the public API alone.
+ * For a solid block the read also decodes EVERYTHING that precedes the target, so the caller
+ * must bound the declared bytes before it (see probe_solid_impl).
+ */
+static int64_t pack_start_of(JNIEnv *env, int fd, jint target) {
+    struct probe_io *io = calloc(1, sizeof(*io));
+    if (io == NULL) return -1;
+    int64_t out = -1;
+    io->fd = private_fd(fd);
+    if (io->fd < 0) { free(io); return -1; }
+    (void) lseek(io->fd, 0, SEEK_SET);
+    io->first_data_read = -1;
+    struct archive *a = new_reader(env, NULL);
+    if (a != NULL &&
+        archive_read_set_read_callback(a, probe_read) == ARCHIVE_OK &&
+        archive_read_set_skip_callback(a, probe_skip) == ARCHIVE_OK &&
+        archive_read_set_seek_callback(a, probe_seek) == ARCHIVE_OK &&
+        archive_read_set_callback_data(a, io) == ARCHIVE_OK &&
+        archive_read_open1(a) == ARCHIVE_OK) {
+        struct archive_entry *entry;
+        jint seen = -1;
+        while (header_ok(archive_read_next_header(a, &entry))) {
+            io->data_phase = 1;
+            if (!is_ordinal_entry(entry)) continue;
+            if (++seen != target) continue;
+            char byte;
+            if (archive_entry_is_encrypted(entry) <= 0 && archive_read_data(a, &byte, 1) > 0) {
+                out = io->first_data_read;
+            }
+            break;
+        }
+    }
+    close_archive(a, io->fd);
+    free(io);
+    return out;
+}
+
+/*
+ * Is this a solid 7z whose entries cannot be reached without decoding the ones before them, and
+ * how many bytes do its regular files declare in all?
+ *
+ * Decodes the first non-empty entry and the start of the second, and everything declared before
+ * the second: when that is more than PROBE_WALK_BYTES it gives up and answers "not solid", so
+ * the synchronous open never waits on an unbounded decode. Never throws: anything unexpected answers "not solid", which is today's behaviour.
+ * [total_out][0] is the declared total, 0 for anything that is not a 7z.
+ */
+static jboolean probe_solid_impl(JNIEnv *env, int fd, jlongArray total_out) {
+    int64_t total = 0;
+    jint first = -1, second = -1;
+    int dfd = -1;
+    struct archive *a = open_fd(env, fd, &dfd, NULL);
+    if (a == NULL) { (*env)->ExceptionClear(env); return JNI_FALSE; }
+    struct archive_entry *entry;
+    jint seen = -1;
+    int seven = 0;
+    int64_t walked = 0;   /* declared bytes the probe must decode to reach [second] */
+    while (header_ok(archive_read_next_header(a, &entry))) {
+        if (!seven) {
+            if (!is_7zip(a)) break;
+            seven = 1;
+        }
+        if (!is_ordinal_entry(entry)) continue;
+        if (++seen >= MAX_ENTRIES) break;
+        la_int64_t size = archive_entry_size_is_set(entry) ? archive_entry_size(entry) : 0;
+        if (size <= 0) continue;
+        total = sat_add(total, size);
+        /* The only entry decoded before [second] is [first]. An oversized one is not skipped: the
+           probe reads through it, so it is what the bound below is for. */
+        if (first < 0) { first = seen; walked = size; } else if (second < 0) second = seen;
+    }
+    close_archive(a, dfd);
+
+    jboolean solid = JNI_FALSE;
+    if (seven && first >= 0 && second >= 0 && walked <= PROBE_WALK_BYTES) {
+        int64_t start_first = pack_start_of(env, fd, first);
+        int64_t start_second = start_first < 0 ? -1 : pack_start_of(env, fd, second);
+        solid = (start_first >= 0 && start_first == start_second) ? JNI_TRUE : JNI_FALSE;
+    }
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    jlong reported = seven ? (jlong) total : 0;
+    (*env)->SetLongArrayRegion(env, total_out, 0, 1, &reported);
+    return (*env)->ExceptionCheck(env) ? JNI_FALSE : solid;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_absolutex_source_libarchive_LibArchive_nativeProbeSolid(JNIEnv *env, jclass clazz, jint fd,
+        jlongArray totalOut) {
+    (void) clazz;
+    if (fd < 0 || totalOut == NULL || (*env)->GetArrayLength(env, totalOut) != 1) return JNI_FALSE;
+    locale_t prev = enter_utf8();
+    jboolean r = probe_solid_impl(env, fd, totalOut);
+    leave_utf8(prev);
+    return r;
+}
+
+/*
+ * ONE forward pass over the archive, handing each wanted entry to [sink] as it is decoded.
+ *
+ * [wanted] is indexed by ordinal (the numbering nativeList and nativeExtract share); entries not
+ * wanted are skipped, and the pass ends after the last wanted one rather than walking on. The
+ * sink is EntrySink.onEntry(int ordinal, byte[] data): data is null for an entry that could not
+ * be read (the per-entry verdict read_entry gives everywhere else, so one torn page costs one
+ * page), and a false return stops the pass. Exactly one entry is held in memory at a time.
+ *
+ * [max_bytes] bounds the declared size of everything walked plus what is delivered, on top of the
+ * per-entry and entry-count caps: a hostile solid block cannot keep the pass decoding forever.
+ * A Java exception from the sink propagates (nothing here runs JNI calls with one pending).
+ * Encrypted entries end the pass as PASS_FAILED: decrypted pages are never written anywhere.
+ */
+static jint stream_entries_impl(JNIEnv *env, int fd, jbooleanArray wanted, jlong max_bytes,
+                                const char *passphrase, jobject sink) {
+    jsize n = (*env)->GetArrayLength(env, wanted);
+    if (n <= 0 || n > MAX_ENTRIES || max_bytes <= 0) return PASS_FAILED;
+    jboolean *mask = malloc((size_t) n * sizeof(jboolean));
+    if (mask == NULL) return PASS_FAILED;
+    (*env)->GetBooleanArrayRegion(env, wanted, 0, n, mask);
+    jint last_wanted = -1;
+    for (jsize i = 0; i < n; i++) if (mask[i]) last_wanted = i;
+
+    jclass sink_class = (*env)->GetObjectClass(env, sink);
+    jmethodID on_entry = sink_class == NULL ? NULL
+        : (*env)->GetMethodID(env, sink_class, "onEntry", "(I[B)Z");
+    if (sink_class != NULL) (*env)->DeleteLocalRef(env, sink_class);
+    if (on_entry == NULL || (*env)->ExceptionCheck(env) || last_wanted < 0) {
+        free(mask);
+        return (*env)->ExceptionCheck(env) ? PASS_FAILED : PASS_COMPLETE;
+    }
+
+    int dfd = -1;
+    struct archive *a = open_fd(env, fd, &dfd, passphrase);
+    if (a == NULL) { free(mask); return PASS_FAILED; }
+
+    jint status = PASS_COMPLETE;
+    int64_t total = 0;
+    struct archive_entry *entry;
+    jint seen = -1;
+    int r;
+    while (header_ok(r = archive_read_next_header(a, &entry))) {
+        if (!is_ordinal_entry(entry)) continue;
+        if (++seen > last_wanted) break;
+        if (archive_entry_is_encrypted(entry) > 0) { status = PASS_FAILED; break; }
+        la_int64_t declared = archive_entry_size_is_set(entry) ? archive_entry_size(entry) : 0;
+        if (!mask[seen]) {
+            total = sat_add(total, declared > 0 ? declared : 0);
+            if (total > max_bytes) { status = PASS_LIMIT; break; }
+            continue;   /* libarchive skips the data with the next header call */
+        }
+        int over_cap = 0;
+        jbyteArray bytes = read_entry(env, a, entry, PASS_ENTRY_BYTES, &over_cap);
+        if ((*env)->ExceptionCheck(env)) break;
+        if (over_cap) { status = PASS_LIMIT; break; }   /* this page is read directly instead */
+        jsize len = bytes == NULL ? 0 : (*env)->GetArrayLength(env, bytes);
+        total = sat_add(total, bytes != NULL ? len : (declared > 0 ? declared : 0));
+        if (total > max_bytes) {
+            if (bytes != NULL) (*env)->DeleteLocalRef(env, bytes);
+            status = PASS_LIMIT;
+            break;
+        }
+        jboolean go = (*env)->CallBooleanMethod(env, sink, on_entry, seen, bytes);
+        if (bytes != NULL) (*env)->DeleteLocalRef(env, bytes);
+        if ((*env)->ExceptionCheck(env)) break;
+        if (!go) { status = PASS_STOPPED; break; }
+    }
+    if (status == PASS_COMPLETE && !(*env)->ExceptionCheck(env)) {
+        /* Ended on a header failure, or on EOF before the last wanted entry: the archive is not
+           what nativeList saw, so the entries never reached are not "complete". */
+        if ((!header_ok(r) && r != ARCHIVE_EOF) || seen < last_wanted) status = PASS_FAILED;
+    }
+    close_archive(a, dfd);
+    free(mask);
+    return (*env)->ExceptionCheck(env) ? PASS_FAILED : status;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_absolutex_source_libarchive_LibArchive_nativeStreamEntries(JNIEnv *env, jclass clazz, jint fd,
+        jbooleanArray wanted, jlong maxBytes, jbyteArray password, jobject sink) {
+    (void) clazz;
+    if (fd < 0 || wanted == NULL || sink == NULL) return PASS_FAILED;
+    char *passphrase = copy_passphrase(env, password);
+    if ((*env)->ExceptionCheck(env)) return PASS_FAILED;
+    locale_t prev = enter_utf8();
+    jint r = stream_entries_impl(env, fd, wanted, maxBytes, passphrase, sink);
     leave_utf8(prev);
     wipe_free(passphrase);
     return r;

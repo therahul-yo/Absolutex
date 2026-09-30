@@ -209,10 +209,22 @@ a long time. liblzma also allocates the LZMA dictionary size the archive declare
 so a hostile archive can ask for a large allocation per concurrent decode; it is only touched as
 data is actually decoded.
 
-None of that is fixed here, because the fix is a redesign: a stateful sequential reader that keeps
-the decoder alive between page turns (a native handle with a lifetime tied to `LibArchiveSource`),
-and a lazily read `ComicInfo.xml`. Until then a solid `.cb7` of a few hundred large pages opens but
-is slow deep into the book; a non-solid one (7-Zip's `-ms=off`) is fast, and so is any `.cbz`.
+**The reader decodes a solid 7z once.** `LibArchiveSource.open(passphrase, cache, openFd)` probes the
+archive (`nativeProbeSolid`: two entries of one solid block start reading at the same offset of the
+file, which libarchive's public API cannot say any other way) and, for a solid 7z of 32 MiB or more,
+starts ONE background pass (`nativeStreamEntries`, one forward decode) that writes each page to
+`<cacheDir>/solid-archives/<hash of uri+size+mtime>/NNNNN.bin` as it arrives, with a `complete`
+marker written last. A page turn reads its file, or waits (interruptibly, so a cancelled jump
+frees its thread) for the pass to reach it; a finished cache is reused by the next open with no
+decoding. `ComicInfo.xml` is parsed when the pass meets it instead of at open. The cache holds at
+most min(1 GiB, a quarter of free space plus its own size) across archives, evicts least recently
+used first, never evicts an open book, and is skipped (today's direct reads) for a book over the cap,
+a full disk, a failed write, a second open of the same file, and encrypted archives (decrypted pages
+never touch the disk). Only the reader opts in (`openBook(cacheSolid = true)`); covers and scans do
+not. **Not done:** solid RAR/CBR has the same cost, but libarchive exposes no solid flag for it
+(rar5.c keeps it in a private struct), so it still reads directly; the pass itself is format
+agnostic and only the probe is missing. `tools/test-archive-solid.sh` proves the native half,
+`tools/bench-solid.sh` measures before and after, and `SolidCacheTest` covers the cache logic.
 
 **Encrypted 7z** is reported as unsupported encryption, never as "no readable pages". With the
 header encrypted, libarchive fails at open with "encrypted, but currently not supported"; with only
