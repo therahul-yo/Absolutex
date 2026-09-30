@@ -2,6 +2,7 @@ package com.absolutex.feature.reader
 
 import com.absolutex.core.stats.PageSettled
 import com.absolutex.core.data.ReadingHistory
+import com.absolutex.core.data.runCatchingCancellable
 import android.content.ComponentCallbacks2
 import android.content.Context
 import android.graphics.Bitmap
@@ -407,7 +408,9 @@ class ReaderViewModel internal constructor(
                     bookId = identity
                     closeSource(old, oldWasRemote)
                     val resume = if (count > 0) {
-                        progressDao.recordOpened(bookId, count, System.currentTimeMillis()).pageIndex
+                        runCatchingCancellable {
+                            progressDao.recordOpened(bookId, count, System.currentTimeMillis()).pageIndex
+                        }.getOrDefault(0)
                     } else 0
                     // The previous book's settled page would otherwise stand in until the pager settles.
                     settledPage = resume.coerceIn(0, (count - 1).coerceAtLeast(0))

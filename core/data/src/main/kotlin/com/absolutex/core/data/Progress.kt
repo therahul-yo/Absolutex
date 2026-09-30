@@ -39,11 +39,15 @@ interface ProgressDao {
         val previous = get(bookId)
         val opened = previous?.copy(
             pageCount = if (previous.pageIndex < pageCount) pageCount else previous.pageCount,
-            updatedAt = now,
-        ) ?: ReadingProgress(bookId, 0, pageCount, now)
+        ) ?: ReadingProgress(bookId, 0, pageCount, 0)
         upsert(opened)
+        // Opening is a real view of this page, not a new position for last-write-wins sync.
+        recordOpening(PageView(bookKey = bookId, page = opened.pageIndex.coerceIn(0, pageCount - 1), atEpochMs = now))
         return opened
     }
+
+    @Insert
+    suspend fun recordOpening(view: PageView)
 
     @Query("DELETE FROM reading_progress WHERE bookId = :bookId")
     suspend fun clear(bookId: String)
@@ -76,7 +80,7 @@ interface ProgressDao {
         ReadingProgress::class, LibraryBook::class, Bookmark::class, BookPrefs::class,
         PageView::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),

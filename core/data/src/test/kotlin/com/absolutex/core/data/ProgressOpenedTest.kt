@@ -25,23 +25,23 @@ class ProgressOpenedTest {
 
     @After fun tearDown() = db.close()
 
-    @Test fun `opening records actual page zero and recency without page history`() = runTest {
+    @Test fun `opening records actual page zero with separate recency`() = runTest {
         val position = db.progressDao().recordOpened("a.cbz:100", 20, 100)
-        assertEquals(ReadingProgress("a.cbz:100", 0, 20, 100), position)
+        assertEquals(ReadingProgress("a.cbz:100", 0, 20, 0), position)
         assertEquals(position, db.progressDao().mostRecent())
-        assertEquals(0, db.pageViewDao().count())
+        assertEquals(100L, db.pageViewDao().all().single().atEpochMs)
     }
 
-    @Test fun `reopening preserves later progress and refreshes known count and recency`() = runTest {
+    @Test fun `reopening preserves the position timestamp and refreshes known count`() = runTest {
         val saved = ReadingProgress("a.cbz:100", 12, 20, 1)
         db.progressDao().upsert(saved)
-        assertEquals(saved.copy(pageCount = 21, updatedAt = 100), db.progressDao().recordOpened(saved.bookId, 21, 100))
+        assertEquals(saved.copy(pageCount = 21), db.progressDao().recordOpened(saved.bookId, 21, 100))
     }
 
     @Test fun `an opening cannot overwrite a saved position beyond the new count`() = runTest {
         val saved = ReadingProgress("a.cbz:100", 19, 20, 1)
         db.progressDao().upsert(saved)
-        assertEquals(saved.copy(updatedAt = 100), db.progressDao().recordOpened(saved.bookId, 10, 100))
+        assertEquals(saved, db.progressDao().recordOpened(saved.bookId, 10, 100))
     }
 
     @Test fun `clearing progress leaves other books and reading history alone`() = runTest {
@@ -51,6 +51,6 @@ class ProgressOpenedTest {
         db.progressDao().clear("a.cbz:100")
         assertNull(db.progressDao().get("a.cbz:100"))
         assertEquals("b.cbz:100", db.progressDao().mostRecent()?.bookId)
-        assertEquals(1, db.pageViewDao().count())
+        assertEquals(3, db.pageViewDao().count())
     }
 }

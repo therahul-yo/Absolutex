@@ -38,6 +38,8 @@ internal fun openedBookRow(path: String, fileName: String, sizeBytes: Long?, now
     val parsed = FilenameParser.parse(fileName)
     return LibraryBook(
         path = path,
+        // SAF has no File mtime: filename + provider-reported size is the existing book
+        // identity; an unknown size falls back to the Uri. Matching identity keeps learned counts.
         contentKey = BookIdentity.ofOrFallback(fileName, sizeBytes, path),
         series = parsed.series,
         title = parsed.title,

@@ -49,7 +49,9 @@ class OpenedLibraryTest {
 
     @After fun tearDown() = db.close()
 
-    private fun feed() = RoomLibraryFeed(LibraryRepository(db.libraryDao()), db.progressDao(), db.bookFactsDao(), prefs)
+    private fun feed() = RoomLibraryFeed(
+        LibraryRepository(db.libraryDao()), db.progressDao(), db.bookFactsDao(), db.pageViewDao(), prefs,
+    )
 
     private suspend fun awaitBooks(vm: LibraryViewModel, predicate: (List<LibraryBookUi>) -> Boolean): LibraryUiState =
         withContext(Dispatchers.Default) { withTimeout(10_000) { vm.ui.first { predicate(it.allBooks) } } }
@@ -66,7 +68,7 @@ class OpenedLibraryTest {
             assertEquals(listOf(ui), recent.visibleBooks)
             assertEquals(listOf(ui), listOf(ui).continueReadingBooks())
             assertEquals(100L, ui.lastReadAt)
-            assertEquals(0, db.pageViewDao().count())
+            assertEquals(if (picked) 2 else 1, db.pageViewDao().count())
         }
     }
 
@@ -107,14 +109,12 @@ class OpenedLibraryTest {
         assertEquals(42, refreshed.visibleBooks.single().pageCount)
     }
 
-    @Test fun `changed file cannot use a stale learned or progress count`() = runTest(main.dispatcher) {
+    @Test fun `a copied finished book keeps its count and finished status`() = runTest(main.dispatcher) {
         db.libraryDao().upsertAll(listOf(book.copy(pageCount = 42)))
-        db.progressDao().recordOpened(book.contentKey, 42, 100)
+        db.progressDao().upsert(com.absolutex.core.data.ReadingProgress(book.contentKey, 41, 42, 100))
         db.libraryDao().upsertPreservingAddedAt(listOf(book.copy(lastModified = 200)))
-        assertNull(feed().observeBooks().first().single().pageCount)
-        feed().setRead(setOf(book.path), false)
-        assertNull(db.libraryDao().allOnce().single().pageCount)
-        db.bookFactsDao().updatePageCount(book.path, 21)
-        assertEquals(21, feed().observeBooks().first().single().pageCount)
+        val ui = feed().observeBooks().first().single()
+        assertEquals(42, ui.pageCount)
+        assertEquals(ReadState.FINISHED, ui.readState)
     }
 }

@@ -68,6 +68,7 @@ class RoomLibraryFeedTest {
             repository = LibraryRepository(dao),
             progressDao = db.progressDao(),
             bookFacts = db.bookFactsDao(),
+            pageViews = db.pageViewDao(),
             appPrefsSource = FixedAppPrefs(prefs),
         )
 

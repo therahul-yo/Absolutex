@@ -8,6 +8,7 @@ import androidx.room.Insert
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import com.absolutex.core.stats.PageSettled
+import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -56,8 +57,13 @@ data class PageView(
  * write would have to preserve. What *would* have hit it is the obvious optimisation: a
  * per-book totals row updated on every event. That is also the reason not to add one.
  */
+data class BookLastRead(val bookKey: String, val atEpochMs: Long)
+
 @Dao
 interface PageViewDao {
+    @Query("SELECT bookKey, MAX(atEpochMs) AS atEpochMs FROM page_view GROUP BY bookKey")
+    fun observeLastRead(): Flow<List<BookLastRead>>
+
 
     /** Inserts a batch. Suspend, so Room runs it on its own executor rather than the caller's. */
     @Insert

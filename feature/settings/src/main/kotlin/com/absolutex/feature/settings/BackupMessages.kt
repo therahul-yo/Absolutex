@@ -23,3 +23,12 @@ internal fun ExportResult.toBackupState(): BackupState = BackupState(
         else R.string.backup_exported_with_omissions,
     arguments = listOf(books, bookmarks, favourites, omittedHistory, skippedItems),
 )
+
+/** Resolve each count independently: a backup can contain one book and many bookmarks. */
+internal fun BackupState.messageArguments(quantityText: (Int, Int) -> String): List<Any> {
+    if (message != R.string.backup_exported && message != R.string.backup_exported_with_omissions) return arguments
+    val resources = listOf(R.plurals.backup_export_books, R.plurals.backup_export_bookmarks,
+        R.plurals.backup_export_favourites)
+    return resources.mapIndexed { index, resource -> quantityText(resource, arguments[index] as Int) } +
+        arguments.drop(resources.size)
+}

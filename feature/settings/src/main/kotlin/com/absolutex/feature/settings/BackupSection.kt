@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -50,7 +51,9 @@ fun BackupSection(vm: BackupViewModel = hiltViewModel()) {
         if (state.busy) LinearProgressIndicator(Modifier.semantics { contentDescription = progressDescription })
         Column(Modifier.semantics { liveRegion = LiveRegionMode.Polite }) {
             state.message?.let {
-                Text(stringResource(it, *state.arguments.toTypedArray()), style = MaterialTheme.typography.bodyMedium)
+                val resources = LocalContext.current.resources
+                val arguments = state.messageArguments { id, count -> resources.getQuantityString(id, count, count) }
+                Text(stringResource(it, *arguments.toTypedArray()), style = MaterialTheme.typography.bodyMedium)
             }
             if (state.pendingDropped > 0) {
                 Text(stringResource(R.string.backup_pending_dropped, state.pendingDropped),

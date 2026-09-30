@@ -37,16 +37,18 @@ class LibraryLearnedCountTest {
         assertEquals(42, db.libraryDao().allOnce().single().pageCount)
     }
 
-    @Test fun `a replaced file or changed modification time discards the learned count`() = runTest {
-        for (changed in listOf(book.copy(contentKey = "a.cbz:200", sizeBytes = 200), book.copy(lastModified = 2))) {
-            db.libraryDao().upsertAll(listOf(book.copy(pageCount = 42)))
-            db.libraryDao().upsertPreservingAddedAt(listOf(changed))
-            assertNull(db.libraryDao().allOnce().single().pageCount)
-        }
+    @Test fun `a replaced identity drops the count after an unchanged rescan preserves it`() = runTest {
+        db.libraryDao().upsertAll(listOf(book.copy(pageCount = 42)))
+        db.libraryDao().upsertPreservingAddedAt(listOf(book))
+        assertEquals(42, db.libraryDao().allOnce().single().pageCount)
+        db.libraryDao().upsertPreservingAddedAt(listOf(book.copy(contentKey = "a.cbz:200", sizeBytes = 200)))
+        assertNull(db.libraryDao().allOnce().single().pageCount)
     }
 
-    @Test fun `a fresh scanner count takes precedence over a learned count`() = runTest {
+    @Test fun `a fresh count overrides the count retained by an earlier rescan`() = runTest {
         db.libraryDao().upsertAll(listOf(book.copy(pageCount = 42)))
+        db.libraryDao().upsertPreservingAddedAt(listOf(book))
+        assertEquals(42, db.libraryDao().allOnce().single().pageCount)
         db.libraryDao().upsertPreservingAddedAt(listOf(book.copy(pageCount = 43)))
         assertEquals(43, db.libraryDao().allOnce().single().pageCount)
     }
