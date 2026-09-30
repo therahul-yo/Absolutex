@@ -44,7 +44,7 @@ private val Context.settingsStore by preferencesDataStore(
  */
 @Singleton
 class DataStoreSettings internal constructor(
-    private val store: DataStore<Preferences>,
+    internal val store: DataStore<Preferences>,
 ) : ReaderPrefsSource, AppPrefsSource, RenderingPrefsSource, SettingsWriter {
 
     @Inject constructor(@ApplicationContext context: Context) : this(context.settingsStore)
@@ -91,7 +91,7 @@ class DataStoreSettings internal constructor(
     }
 }
 
-private fun Preferences.toBag() = MapPrefBag(asMap().entries.associate { (key, value) -> key.name to value })
+internal fun Preferences.toBag() = MapPrefBag(asMap().entries.associate { (key, value) -> key.name to value })
 
 /**
  * Keys compare by name alone, so a typed put also replaces an entry stored under another type.
@@ -101,7 +101,7 @@ private fun Preferences.toBag() = MapPrefBag(asMap().entries.associate { (key, v
  * to empty, most notably — and only dropping it here, not just skipping its write, makes that
  * removal reach disk: setting what changed was never the same as forgetting what did.
  */
-private fun MutablePreferences.putAll(bag: MapPrefBag) {
+internal fun MutablePreferences.putAll(bag: MapPrefBag) {
     val kept = bag.snapshot()
     asMap().keys.filter { it.name !in kept }.forEach { remove(it) }
     for ((name, value) in kept) {

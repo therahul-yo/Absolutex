@@ -138,6 +138,9 @@ fun SettingsContent(
             GroupHeader(R.string.settings_group_remote)
             SettingsCard { RemoteServersRow(onOpen = onOpenRemote) }
 
+            GroupHeader(R.string.backup_title)
+            SettingsCard { BackupSection() }
+
             GroupHeader(R.string.settings_group_about)
             SettingsCard {
                 AboutRow()

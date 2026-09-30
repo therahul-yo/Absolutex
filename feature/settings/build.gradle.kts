@@ -20,6 +20,7 @@ dependencies {
     implementation(project(":core:data"))
     implementation(project(":core:gpu"))
     implementation(platform(libs.compose.bom))
+    implementation(libs.androidx.activity.compose)
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons.extended)
     implementation(libs.androidx.lifecycle.runtime.compose)
