@@ -32,9 +32,9 @@ class LegacyUnreadMigrationTest {
                 val entity = entities.getJSONObject(i)
                 val name = entity.getString("tableName")
                 db.execSQL(entity.getString("createSql").replace("\${TABLE_NAME}", name))
-                val indices = entity.getJSONArray("indices")
-                for (j in 0 until indices.length()) {
-                    db.execSQL(indices.getJSONObject(j).getString("createSql").replace("\${TABLE_NAME}", name))
+                val indices = entity.optJSONArray("indices")
+                for (j in 0 until (indices?.length() ?: 0)) {
+                    db.execSQL(indices!!.getJSONObject(j).getString("createSql").replace("\${TABLE_NAME}", name))
                 }
             }
             val setup = schema.getJSONArray("setupQueries")
