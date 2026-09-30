@@ -74,7 +74,8 @@ class LibraryRepository internal constructor(
         var found = 0
         val batch = ArrayList<LibraryBook>(BATCH)
 
-        scanner.scan(listOf(root)).collect { book ->
+        val failures = ReadFailures()
+        scanner.scan(listOf(root), onUnreadable = failures::record).collect { book ->
             batch += book.toEntity(scanId)
             found++
             if (batch.size >= BATCH) {
@@ -86,8 +87,9 @@ class LibraryRepository internal constructor(
 
         // Only after the walk completes: deleting on a cancelled scan would remove books whose
         // files are still there, simply because the walk never reached them.
-        val removed = dao.deleteStaleIn(root.path, scanId)
-        return ScanResult(found = found, removed = removed)
+        val incomplete = failures.any
+        val removed = if (incomplete) 0 else dao.deleteStaleIn(root.path, scanId)
+        return ScanResult(found = found, removed = removed, incomplete = incomplete)
     }
 
     /**
