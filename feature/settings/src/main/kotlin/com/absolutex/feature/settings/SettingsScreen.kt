@@ -1,5 +1,7 @@
 package com.absolutex.feature.settings
 
+import com.absolutex.core.data.settings.withUpscaler
+import com.absolutex.core.data.settings.withColour
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.material3.Surface

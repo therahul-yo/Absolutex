@@ -1,6 +1,5 @@
-package com.absolutex.feature.settings
+package com.absolutex.core.data.settings
 
-import com.absolutex.core.data.settings.RenderingPrefs
 import com.absolutex.core.gpu.ColourParams
 import com.absolutex.core.gpu.Upscaler
 
