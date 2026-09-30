@@ -7,7 +7,6 @@
 <p align="center">
   <img src="docs/screenshots/onboarding-welcome.jpg" width="180" alt="Onboarding: the pixel-block ABSOLUTEX over a drifting field of halftone characters, and the tagline Every panel, pin-sharp">
   <img src="docs/screenshots/library.jpg" width="180" alt="The library: pixel-block title, the Continue reading wheel with the current book centred, and a grid of comic covers under a floating section bar">
-  <img src="docs/screenshots/reader.jpg" width="180" alt="A full-page splash of Batman under the bat-signal, edge to edge on true black">
   <img src="docs/screenshots/reader-controls.jpg" width="180" alt="The reader's controls: page thumbnails, a seek slider and a bookmark">
 </p>
 <p align="center">
