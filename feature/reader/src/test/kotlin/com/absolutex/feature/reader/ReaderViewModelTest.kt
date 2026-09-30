@@ -53,6 +53,7 @@ import java.io.File
 import java.io.Closeable
 import java.io.IOException
 import java.io.InputStream
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * ReaderViewModel.open()'s races, against a [FakeBookOpener] instead of a real archive or PDF:
@@ -505,12 +506,13 @@ class ReaderViewModelTest {
         // the ViewModel's OWN wiring reaches the batch supplier with the whole window as ONE
         // request, not that this particular fake could serve it.
         val pageRead = CompletableDeferred<Unit>()
+        val awaitingWindow = AtomicBoolean(false)
         val opener = object : BookOpener {
             override suspend fun open(uri: Uri, password: String?): Pair<Closeable, String> {
                 val src = object : ComicSource {
                     override val pages = (0 until 20).map { Page(it, "p$it.jpg") }
                     override fun openPage(index: Int): InputStream {
-                        pageRead.complete(Unit)
+                        if (awaitingWindow.get() && index > 1) pageRead.complete(Unit)
                         return ByteArrayInputStream(ByteArray(0))
                     }
                     override fun close() = Unit
@@ -523,10 +525,12 @@ class ReaderViewModelTest {
         advanceUntilIdle()
         assertEquals("book must open", 20, vm.ui.value.pageCount)
         vm.batchRequests.clear()
+        awaitingWindow.set(true)
 
         vm.onPageChanged(1)
-        // The real decode pool is not driven by Main's virtual test scheduler. pageImage
-        // awaits the window stage before openPage, so this also waits for the batch supplier.
+        // open() does not prefetch. Signal only an armed, ahead-of-settle page, never page 0/1.
+        // The real decode pool is not driven by Main's virtual scheduler. pageImage awaits
+        // this window's stage before openPage, so this also waits for the batch supplier.
         withContext(Dispatchers.Default) { withTimeout(10_000) { pageRead.await() } }
         advanceUntilIdle()
 
