@@ -45,7 +45,7 @@ class ReaderOpenedTest {
 
     @After fun tearDown() = db.close()
 
-    private fun vm(fail: Boolean = false): ReaderViewModel {
+    private fun vm(fail: Boolean = false, count: Int = 20): ReaderViewModel {
         val prefs = InMemorySettings()
         return ReaderViewModel(
             ApplicationProvider.getApplicationContext(), db.progressDao(), 8L * 1024 * 1024 * 1024,
@@ -53,7 +53,7 @@ class ReaderOpenedTest {
             BookOpener { _, _ ->
                 if (fail) throw IOException("unreadable")
                 object : ComicSource {
-                    override val pages = (0..19).map { Page(it, "page-$it.jpg") }
+                    override val pages = (0 until count).map { Page(it, "page-$it.jpg") }
                     override fun openPage(index: Int) = ByteArrayInputStream(byteArrayOf())
                     override fun close() = Unit
                 } to id
@@ -71,7 +71,7 @@ class ReaderOpenedTest {
         assertEquals(0, vm.ui.value.currentPage)
         assertEquals(0, db.progressDao().get(id)?.pageIndex)
         assertEquals(20, db.progressDao().get(id)?.pageCount)
-        assertEquals(1, db.pageViewDao().count())
+        assertEquals(0, db.pageViewDao().count())
     }
 
     @Test fun `open resumes and preserves a real later position`() = runTest(main.dispatcher) {
@@ -99,4 +99,22 @@ class ReaderOpenedTest {
         advanceUntilIdle()
         assertNull(db.progressDao().get(id))
     }
+
+    @Test fun `failed opening write resumes saved page eighty and preserves next turn`() = runTest(main.dispatcher) {
+        val saved = ReadingProgress(id, 80, 100, 1)
+        db.progressDao().upsert(saved)
+        db.openHelper.writableDatabase.execSQL(
+            "CREATE TRIGGER fail_open BEFORE INSERT ON page_view BEGIN SELECT RAISE(ABORT, 'test'); END",
+        )
+        val vm = vm(count = 100)
+        vm.open(uri)
+        advanceUntilIdle()
+        assertFalse(vm.ui.value.loading)
+        assertEquals(80, vm.ui.value.currentPage)
+        assertEquals(saved, db.progressDao().get(id))
+        vm.onPageChanged(81)
+        advanceUntilIdle()
+        assertEquals(81, db.progressDao().get(id)?.pageIndex)
+    }
+
 }

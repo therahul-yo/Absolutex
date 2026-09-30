@@ -3,7 +3,7 @@ package com.absolutex.feature.library
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.FOLDER_FORMAT
 import com.absolutex.core.data.BookPath
-import com.absolutex.core.data.BookFactsDao
+import com.absolutex.core.data.LibraryReading
 import com.absolutex.core.data.LibraryBook
 import com.absolutex.core.data.LibraryRepository
 import com.absolutex.core.data.ProgressDao
@@ -38,7 +38,7 @@ import javax.inject.Singleton
 internal class RoomLibraryFeed @Inject constructor(
     private val repository: LibraryRepository,
     private val progressDao: ProgressDao,
-    private val bookFacts: BookFactsDao,
+    private val reading: LibraryReading,
     private val pageViews: PageViewDao,
     private val appPrefsSource: AppPrefsSource,
 ) : LibraryFeed {
@@ -121,15 +121,11 @@ internal class RoomLibraryFeed @Inject constructor(
             read = read,
         )
         val stamp = System.currentTimeMillis()
-        val pathsByIdentity = known.groupBy { it.contentKey }
         for (write in plan.writes) {
             if (read) {
                 progressDao.upsert(ReadingProgress(write.bookId, write.pageIndex, write.pageCount, stamp))
             } else {
-                pathsByIdentity[write.bookId].orEmpty().forEach {
-                    if (write.pageCount > 0) bookFacts.updatePageCount(it.path, write.pageCount)
-                }
-                progressDao.clear(write.bookId)
+                reading.markUnread(write.bookId, write.pageCount)
             }
         }
         // A path the library no longer holds is reported, not silently dropped from the count.

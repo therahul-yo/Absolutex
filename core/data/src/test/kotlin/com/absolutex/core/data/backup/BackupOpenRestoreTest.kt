@@ -3,6 +3,7 @@ package com.absolutex.core.data.backup
 import com.absolutex.core.data.ReadingProgress
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -40,4 +41,25 @@ class BackupOpenRestoreTest : BackupFixture() {
         repository.restore(BackupWriter.write(BackupData("test", progress = listOf(saved))).inputStream())
         assertEquals(saved, db.progressDao().get(id))
     }
+
+    @Test fun `legacy first-page backups cannot turn an unread book into started`() = runTest {
+        val id = "legacy.cbz:100"
+        val data = BackupData("old", progress = listOf(ReadingProgress(id, 0, 100, 500)))
+        val bytes = BackupWriter.write(data)
+        repeat(2) {
+            assertEquals(RestoreResult.Complete(0), repository.restore(bytes.inputStream()))
+            assertNull(db.progressDao().get(id))
+        }
+    }
+
+    @Test fun `first-page backups still merge when a local opening exists`() = runTest {
+        val id = "opened.cbz:100"
+        db.progressDao().recordOpened(id, 100, 1000)
+        val saved = ReadingProgress(id, 0, 100, 500)
+        val bytes = BackupWriter.write(BackupData("old", progress = listOf(saved)))
+        assertEquals(RestoreResult.Complete(1, progress = 1), repository.restore(bytes.inputStream()))
+        assertEquals(saved, db.progressDao().get(id))
+        assertEquals(RestoreResult.Complete(0), repository.restore(bytes.inputStream()))
+    }
+
 }

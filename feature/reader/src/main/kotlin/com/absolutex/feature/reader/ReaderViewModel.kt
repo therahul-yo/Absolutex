@@ -410,7 +410,9 @@ class ReaderViewModel internal constructor(
                     val resume = if (count > 0) {
                         runCatchingCancellable {
                             progressDao.recordOpened(bookId, count, System.currentTimeMillis()).pageIndex
-                        }.getOrDefault(0)
+                        }.getOrElse {
+                            runCatchingCancellable { progressDao.get(bookId)?.pageIndex ?: 0 }.getOrDefault(0)
+                        }
                     } else 0
                     // The previous book's settled page would otherwise stand in until the pager settles.
                     settledPage = resume.coerceIn(0, (count - 1).coerceAtLeast(0))

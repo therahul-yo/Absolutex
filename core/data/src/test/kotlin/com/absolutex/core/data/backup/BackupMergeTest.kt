@@ -52,7 +52,7 @@ class BackupMergeTest : BackupFixture() {
         db.openHelper.writableDatabase.execSQL(
             "CREATE TRIGGER fail_view BEFORE INSERT ON page_view BEGIN SELECT RAISE(ABORT, 'test'); END",
         )
-        val data = BackupData("test", listOf(ReadingProgress("a:1", 0, 1, 1)),
+        val data = BackupData("test", listOf(ReadingProgress("a:1", 1, 2, 1)),
             listOf(PageView(bookKey = "a:1", page = 0, atEpochMs = 1)))
         assertThrows(Exception::class.java) {
             kotlinx.coroutines.runBlocking { repository.restore(BackupWriter.write(data).inputStream()) }
@@ -62,7 +62,7 @@ class BackupMergeTest : BackupFixture() {
     }
 
     @Test fun `datastore failure reports partial restore and retry is idempotent`() = runTest {
-        val data = BackupData("test", listOf(ReadingProgress("a:1", 0, 1, 1)),
+        val data = BackupData("test", listOf(ReadingProgress("a:1", 1, 2, 1)),
             listOf(PageView(bookKey = "a:1", page = 0, atEpochMs = 1)), favourites = setOf("a:1"),
             preferences = mapOf("true_black" to false))
         val bytes = BackupWriter.write(data)
@@ -79,17 +79,17 @@ class BackupMergeTest : BackupFixture() {
     }
     @Test fun `far future timestamps clamp to now and later local progress can win`() = runTest {
         val now = 100_000L
-        val data = BackupData("test", listOf(ReadingProgress("a:1", 0, 2, Long.MAX_VALUE)),
+        val data = BackupData("test", listOf(ReadingProgress("a:1", 1, 3, Long.MAX_VALUE)),
             listOf(PageView(bookKey = "a:1", page = 0, atEpochMs = Long.MAX_VALUE)),
             listOf(Bookmark("a:1", 0, Long.MAX_VALUE)))
         repository.restore(BackupWriter.write(data).inputStream(), now)
         assertEquals(now, db.progressDao().get("a:1")?.updatedAt)
         assertEquals(now, db.pageViewDao().all().single().atEpochMs)
         assertEquals(now, db.backupDao().bookmarks().single().createdAt)
-        val later = data.copy(progress = listOf(ReadingProgress("a:1", 1, 2, now + 1)),
+        val later = data.copy(progress = listOf(ReadingProgress("a:1", 2, 3, now + 1)),
             history = emptyList(), bookmarks = emptyList())
         repository.restore(BackupWriter.write(later).inputStream(), now + 1)
-        assertEquals(1, db.progressDao().get("a:1")?.pageIndex)
+        assertEquals(2, db.progressDao().get("a:1")?.pageIndex)
         assertEquals(now + ONE_DAY_MS, BackupCodec.read(BackupWriter.write(later.copy(
             progress = listOf(ReadingProgress("a:1", 1, 2, now + ONE_DAY_MS)),
         )).inputStream(), now).progress.single().updatedAt)

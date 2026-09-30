@@ -41,10 +41,14 @@ interface ProgressDao {
             pageCount = if (previous.pageIndex < pageCount) pageCount else previous.pageCount,
         ) ?: ReadingProgress(bookId, 0, pageCount, 0)
         upsert(opened)
-        // Opening is a real view of this page, not a new position for last-write-wins sync.
-        recordOpening(PageView(bookKey = bookId, page = opened.pageIndex.coerceIn(0, pageCount - 1), atEpochMs = now))
+        // One private recency marker, never a settled page or a last-write-wins position.
+        clearOpening(bookId)
+        recordOpening(PageView(bookKey = bookId, page = OPENING_PAGE_MARKER, atEpochMs = now))
         return opened
     }
+
+    @Query("DELETE FROM page_view WHERE bookKey = :bookId AND page = $OPENING_PAGE_MARKER")
+    suspend fun clearOpening(bookId: String)
 
     @Insert
     suspend fun recordOpening(view: PageView)

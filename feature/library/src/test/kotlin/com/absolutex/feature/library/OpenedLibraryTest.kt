@@ -4,6 +4,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.absolutex.core.data.AbsolutexDatabase
 import com.absolutex.core.data.LibraryBook
+import com.absolutex.core.data.LibraryReading
 import com.absolutex.core.data.LibraryRepository
 import com.absolutex.core.data.OpenedBooks
 import com.absolutex.core.data.settings.InMemorySettings
@@ -18,6 +19,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -50,7 +52,7 @@ class OpenedLibraryTest {
     @After fun tearDown() = db.close()
 
     private fun feed() = RoomLibraryFeed(
-        LibraryRepository(db.libraryDao()), db.progressDao(), db.bookFactsDao(), db.pageViewDao(), prefs,
+        LibraryRepository(db.libraryDao()), db.progressDao(), LibraryReading(db), db.pageViewDao(), prefs,
     )
 
     private suspend fun awaitBooks(vm: LibraryViewModel, predicate: (List<LibraryBookUi>) -> Boolean): LibraryUiState =
@@ -68,7 +70,7 @@ class OpenedLibraryTest {
             assertEquals(listOf(ui), recent.visibleBooks)
             assertEquals(listOf(ui), listOf(ui).continueReadingBooks())
             assertEquals(100L, ui.lastReadAt)
-            assertEquals(if (picked) 2 else 1, db.pageViewDao().count())
+            assertEquals(0, db.pageViewDao().count())
         }
     }
 
@@ -117,4 +119,17 @@ class OpenedLibraryTest {
         assertEquals(42, ui.pageCount)
         assertEquals(ReadState.FINISHED, ui.readState)
     }
+
+    @Test fun `Mark unread rolls back its count update when clearing progress fails`() = runTest(main.dispatcher) {
+        db.libraryDao().upsertAll(listOf(book))
+        val saved = db.progressDao().recordOpened(book.contentKey, 20, 100)
+        db.openHelper.writableDatabase.execSQL(
+            "CREATE TRIGGER fail_clear BEFORE DELETE ON reading_progress BEGIN SELECT RAISE(ABORT, 'test'); END",
+        )
+        val failure = runCatching { feed().setRead(setOf(book.path), false) }
+        assertTrue(failure.isFailure)
+        assertEquals(saved, db.progressDao().get(book.contentKey))
+        assertNull(db.libraryDao().allOnce().single().pageCount)
+    }
+
 }

@@ -52,5 +52,9 @@ private suspend fun AbsolutexDatabase.lastBackupRead(identity: String): Long =
 
 private fun ReadingProgress?.isOpeningOnly(): Boolean = this != null && pageIndex == 0 && updatedAt == 0L
 
-private fun ReadingProgress.shouldReplace(existing: ReadingProgress?): Boolean =
-    this != existing && (existing.isOpeningOnly() || updatedAt > (existing?.updatedAt ?: -1))
+private fun ReadingProgress.shouldReplace(existing: ReadingProgress?): Boolean {
+    // Pre-upgrade page 0 meant Mark unread. With no local row, do not resurrect that state.
+    // This also skips genuine text-EPUB chapter-0 backups: the old format cannot distinguish them.
+    if (existing == null && pageIndex == 0) return false
+    return this != existing && (existing.isOpeningOnly() || updatedAt > (existing?.updatedAt ?: -1))
+}

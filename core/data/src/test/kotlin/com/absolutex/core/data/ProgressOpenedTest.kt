@@ -2,6 +2,7 @@ package com.absolutex.core.data
 
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -29,7 +30,7 @@ class ProgressOpenedTest {
         val position = db.progressDao().recordOpened("a.cbz:100", 20, 100)
         assertEquals(ReadingProgress("a.cbz:100", 0, 20, 0), position)
         assertEquals(position, db.progressDao().mostRecent())
-        assertEquals(100L, db.pageViewDao().all().single().atEpochMs)
+        assertEquals(100L, db.pageViewDao().observeLastRead().first().single().atEpochMs)
     }
 
     @Test fun `reopening preserves the position timestamp and refreshes known count`() = runTest {
@@ -51,6 +52,6 @@ class ProgressOpenedTest {
         db.progressDao().clear("a.cbz:100")
         assertNull(db.progressDao().get("a.cbz:100"))
         assertEquals("b.cbz:100", db.progressDao().mostRecent()?.bookId)
-        assertEquals(3, db.pageViewDao().count())
+        assertEquals(1, db.pageViewDao().count())
     }
 }
