@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.launch
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -59,8 +60,9 @@ class LibraryScanner(
     /**
      * @param roots directories to walk. Overlapping roots are fine: a book reached twice is
      *   emitted once, keyed by canonical path — §5.1 deduplicates files shared between locations.
+     * @param onUnreadable called once per failed folder listing; other folders are still walked.
      */
-    fun scan(roots: List<File>): Flow<ScannedBook> = channelFlow {
+    fun scan(roots: List<File>, onUnreadable: () -> Unit = {}): Flow<ScannedBook> = channelFlow {
         val candidates = Channel<Candidate>(CHANNEL_CAPACITY)
         val emitted = ConcurrentHashMap.newKeySet<String>()
 
@@ -76,7 +78,7 @@ class LibraryScanner(
 
         // Walking runs on this coroutine; workers drain the channel as it fills.
         val seenDirs = HashSet<String>()
-        for (root in roots) walk(root, candidates, seenDirs)
+        for (root in roots) walk(root, candidates, seenDirs, onUnreadable)
         candidates.close()
         workers.forEach { it.join() }
     }
@@ -106,9 +108,14 @@ class LibraryScanner(
      * into a cycle, and a walk without it recurses until the stack runs out. External drives and
      * network mounts really do contain such links.
      */
-    private suspend fun walk(dir: File, out: Channel<Candidate>, seenDirs: HashSet<String>) {
+    private suspend fun walk(
+        dir: File,
+        out: Channel<Candidate>,
+        seenDirs: HashSet<String>,
+        onUnreadable: () -> Unit,
+    ) {
         if (!seenDirs.add(canonicalOf(dir))) return
-        val children = dir.listFiles()?.filterNot { shouldSkip(it, includeHidden) } ?: return
+        val children = listChildren(dir, onUnreadable)?.filterNot { shouldSkip(it, includeHidden) } ?: return
         val (subdirs, files) = children.partition { it.isDirectory }
 
         for (file in files) {
@@ -123,7 +130,18 @@ class LibraryScanner(
             out.send(Candidate.ImageFolder(dir, images.size, images.sumOf { it.length() }))
         }
 
-        for (sub in subdirs) walk(sub, out, seenDirs)
+        for (sub in subdirs) walk(sub, out, seenDirs, onUnreadable)
+    }
+
+    /** Empty is readable; a null listing of a directory is not. Never retain or log its path. */
+    private fun listChildren(dir: File, onUnreadable: () -> Unit): Array<File>? = try {
+        dir.listFiles().also { if (it == null && dir.isDirectory) onUnreadable() }
+    } catch (_: SecurityException) {
+        onUnreadable()
+        null
+    } catch (_: IOException) {
+        onUnreadable()
+        null
     }
 
     private fun canonicalOf(file: File): String =
