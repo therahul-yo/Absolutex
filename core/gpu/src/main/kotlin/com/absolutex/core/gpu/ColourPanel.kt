@@ -25,27 +25,15 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 
 /**
- * The colour-correction chrome (§4, §5.2): one slider per [ColourParams] field, with a live
- * preview while dragging.
- *
- * Previewing at 120 fps works because the page never recomposes under a drag: the holder keeps
- * the params in snapshot state, passes that state to the page (see PageCanvas's `colour`), and
- * the page reads it in its draw scope — a drag repaints, nothing recomposes. This panel itself
- * is ordinary chrome and recomposes freely; keep it out of the page subtree.
- *
- * Each slider keeps its dragged value in local state so the store sees one write per gesture,
- * not one per frame — the dragged value drives the live preview; [onChange] commits it on
- * release, following the [CacheSizeRow] precedent in the settings surface. The coalescing
- * logic is shared with its test via [coalesceSlider].
- *
- * TODO(lead): host this in the reader chrome (§5.2 tap-center sheet) fed by RenderingPrefs, next
- * to the settings Rendering group which already hosts it. One host, one state object, no copies.
+ * Shared colour controls. Settings commits on release; reader hosts opt into [liveUpdates]
+ * so the visible page observes the same persisted preferences throughout a drag.
  */
 @Composable
 fun ColourPanel(
     state: ColourParams,
     onChange: (ColourParams) -> Unit,
     modifier: Modifier = Modifier,
+    liveUpdates: Boolean = false,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         Text(
@@ -53,15 +41,16 @@ fun ColourPanel(
             style = MaterialTheme.typography.titleMedium,
         )
         Spacer(Modifier.height(4.dp))
-        ToneControls(state, onChange)
-        WhiteBalanceControls(state, onChange)
+        ToneControls(state, onChange, liveUpdates = liveUpdates)
+        WhiteBalanceControls(state, onChange, liveUpdates = liveUpdates)
         GradeRow(
             label = R.string.gpu_vibrance,
             value = state.vibrance,
             range = ColourParams.VIBRANCE_RANGE,
             onChange = { onChange(state.copy(vibrance = it)) },
+            liveUpdates = liveUpdates,
         )
-        GammaControls(state, onChange)
+        GammaControls(state, onChange, liveUpdates = liveUpdates)
         TextButton(
             onClick = { onChange(ColourParams.NEUTRAL) },
             modifier = Modifier.align(Alignment.End),
@@ -77,6 +66,7 @@ private fun ToneControls(
     state: ColourParams,
     onChange: (ColourParams) -> Unit,
     modifier: Modifier = Modifier,
+    liveUpdates: Boolean = false,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         GradeRow(
@@ -84,18 +74,21 @@ private fun ToneControls(
             value = state.brightness,
             range = ColourParams.BRIGHTNESS_RANGE,
             onChange = { onChange(state.copy(brightness = it)) },
+            liveUpdates = liveUpdates,
         )
         GradeRow(
             label = R.string.gpu_contrast,
             value = state.contrast,
             range = ColourParams.CONTRAST_RANGE,
             onChange = { onChange(state.copy(contrast = it)) },
+            liveUpdates = liveUpdates,
         )
         GradeRow(
             label = R.string.gpu_saturation,
             value = state.saturation,
             range = ColourParams.SATURATION_RANGE,
             onChange = { onChange(state.copy(saturation = it)) },
+            liveUpdates = liveUpdates,
         )
     }
 }
@@ -106,6 +99,7 @@ private fun WhiteBalanceControls(
     state: ColourParams,
     onChange: (ColourParams) -> Unit,
     modifier: Modifier = Modifier,
+    liveUpdates: Boolean = false,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         GradeRow(
@@ -113,12 +107,14 @@ private fun WhiteBalanceControls(
             value = state.temperature,
             range = ColourParams.TEMPERATURE_RANGE,
             onChange = { onChange(state.copy(temperature = it)) },
+            liveUpdates = liveUpdates,
         )
         GradeRow(
             label = R.string.gpu_aggression,
             value = state.wbAggression,
             range = ColourParams.AGGRESSION_RANGE,
             onChange = { onChange(state.copy(wbAggression = it)) },
+            liveUpdates = liveUpdates,
         )
     }
 }
@@ -129,6 +125,7 @@ private fun GammaControls(
     state: ColourParams,
     onChange: (ColourParams) -> Unit,
     modifier: Modifier = Modifier,
+    liveUpdates: Boolean = false,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         GradeRow(
@@ -136,24 +133,28 @@ private fun GammaControls(
             value = state.gamma,
             range = ColourParams.GAMMA_RANGE,
             onChange = { onChange(state.copy(gamma = it)) },
+            liveUpdates = liveUpdates,
         )
         GradeRow(
             label = R.string.gpu_gamma_r,
             value = state.gammaR,
             range = ColourParams.GAMMA_CHANNEL_RANGE,
             onChange = { onChange(state.copy(gammaR = it)) },
+            liveUpdates = liveUpdates,
         )
         GradeRow(
             label = R.string.gpu_gamma_g,
             value = state.gammaG,
             range = ColourParams.GAMMA_CHANNEL_RANGE,
             onChange = { onChange(state.copy(gammaG = it)) },
+            liveUpdates = liveUpdates,
         )
         GradeRow(
             label = R.string.gpu_gamma_b,
             value = state.gammaB,
             range = ColourParams.GAMMA_CHANNEL_RANGE,
             onChange = { onChange(state.copy(gammaB = it)) },
+            liveUpdates = liveUpdates,
         )
     }
 }
@@ -214,8 +215,7 @@ internal sealed interface SliderEvent {
 }
 
 /**
- * One labelled slider. Keeps the dragged value in local state for live preview and commits it to
- * the store only on release — one write per gesture, not one per frame.
+ * One labelled slider. Reader hosts propagate changes during dragging; Settings commits on release.
  *
  * Keyed on [value] so an external change (e.g. restoring a saved value) still overrides an
  * unmoved thumb.
@@ -228,6 +228,7 @@ private fun GradeRow(
     range: ClosedFloatingPointRange<Float>,
     onChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
+    liveUpdates: Boolean = false,
 ) {
     var pending by remember(value) { mutableFloatStateOf(value) }
     val name = stringResource(label)
@@ -253,8 +254,8 @@ private fun GradeRow(
             // No stop-indicator dot at the track's end: it marks nothing here.
             track = { SliderDefaults.Track(it, drawStopIndicator = null) },
             value = pending,
-            onValueChange = { pending = it },
-            onValueChangeFinished = { onChange(pending) },
+            onValueChange = { pending = it; if (liveUpdates) onChange(it) },
+            onValueChangeFinished = { if (!liveUpdates) onChange(pending) },
             valueRange = range,
             modifier = Modifier.weight(SLIDER_WEIGHT),
         )
