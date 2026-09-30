@@ -33,4 +33,11 @@ data class RenderingPrefs(
      * uncropped (see `cropApplies` in the reader module).
      */
     val cropEnabled: Boolean = true,
-)
+    /** Global preset overlay; stored custom colour/upscaler values remain untouched. */
+    val enhanceEnabled: Boolean = false,
+) {
+    val effectiveColour: ColourParams get() = if (enhanceEnabled) ENHANCE_COLOUR else colour
+    val effectiveUpscaler: Upscaler get() = if (enhanceEnabled) Upscaler.MITCHELL else upscaler
+}
+
+private val ENHANCE_COLOUR = ColourParams(contrast = 1.05f, vibrance = 0.05f)

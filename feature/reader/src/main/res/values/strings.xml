@@ -28,6 +28,9 @@
     <string name="reader_seek_desc">Jump to a page</string>
     <string name="reader_close">Close</string>
     <string name="reader_settings">Settings</string>
+    <string name="reader_enhance">Enhance</string>
+    <string name="reader_enhance_on">On</string>
+    <string name="reader_enhance_off">Off</string>
     <string name="reader_contents">Contents</string>
     <string name="reader_options">Options</string>
     <string name="reader_flow_ltr">L to R</string>

@@ -80,6 +80,7 @@ internal fun ReaderChrome(
     /** Null in a layout whose fit is fixed, such as the continuous strip. */
     fitFor: FitContext?,
     prefs: ReaderPrefs,
+    enhanceEnabled: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     if (pageCount <= 0) return
@@ -90,7 +91,13 @@ internal fun ReaderChrome(
             enter = slideInVertically(Motion.enter()) { -it } + fadeIn(Motion.enter()),
             exit = slideOutVertically(Motion.exit()) { -it } + fadeOut(Motion.exit()),
             modifier = Modifier.align(Alignment.TopCenter),
-        ) { ReaderTopBar(title, onSettings, bookId = bookId) }
+        ) {
+            ReaderTopBar(
+                title, onSettings, bookId = bookId,
+                showEnhance = readerShowsEnhance(isTextEpub = false),
+                enhanceEnabled = enhanceEnabled,
+            )
+        }
     AnimatedVisibility(
         visible,
         enter = slideInVertically(Motion.enter()) { it } + fadeIn(Motion.enter()),
