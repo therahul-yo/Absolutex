@@ -1,5 +1,6 @@
 package com.absolutex.feature.settings
 
+import com.absolutex.core.data.backup.ExportResult
 import com.absolutex.core.data.backup.RestoreResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -24,9 +25,15 @@ class BackupMessagesTest {
     }
 
     @Test fun `export result reports omitted history and skipped items`() {
-        val state = com.absolutex.core.data.backup.ExportResult(byteArrayOf(), 3, 500).toBackupState()
+        val state = ExportResult(byteArrayOf(), 3, 500, books = 10, bookmarks = 4, favourites = 2).toBackupState()
         assertEquals(R.string.backup_exported_with_omissions, state.message)
-        assertEquals(listOf(500L, 3L), state.arguments)
+        assertEquals(listOf(10, 4, 2, 500L, 3L), state.arguments)
+    }
+    @Test fun `complete export reports the counts including an empty backup`() {
+        val state = ExportResult(byteArrayOf(), 0, 0, books = 5, bookmarks = 3, favourites = 1).toBackupState()
+        assertEquals(R.string.backup_exported, state.message)
+        assertEquals(listOf(5, 3, 1, 0L, 0L), state.arguments)
+        assertEquals(listOf(0, 0, 0, 0L, 0L), ExportResult(byteArrayOf(), 0, 0).toBackupState().arguments)
     }
 
 }

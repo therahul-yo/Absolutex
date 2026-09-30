@@ -18,6 +18,21 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class BackupExportTest : BackupFixture() {
+    @Test fun `counts describe serialized unique books and retained entries`() = runTest {
+        db.progressDao().upsert(ReadingProgress("a:1", 0, 10, 1))
+        db.bookmarkDao().add(Bookmark("a:1", 0, 1))
+        db.bookmarkDao().add(Bookmark("a:1", 2, 2))
+        db.bookPrefsDao().upsert(BookPrefs("b:1"))
+        val export = db.buildExport("test", mapOf("a:1" to 1L, "bad\n:1" to 1L), emptyMap())
+        assertEquals(2, export.books)
+        assertEquals(2, export.bookmarks)
+        assertEquals(1, export.favourites)
+        val data = BackupCodec.read(export.bytes.inputStream())
+        assertEquals(data.bookIds.size, export.books)
+        assertEquals(data.bookmarks.size, export.bookmarks)
+        assertEquals(data.favourites.size, export.favourites)
+    }
+
     @Test fun `history beyond the import cap exports the most recent bounded rows`() = runTest {
         val count = MAX_ENTRIES + 100
         db.pageViewDao().record((1..count).map { PageView(bookKey = "a:1", page = 0, atEpochMs = it.toLong()) })
@@ -60,6 +75,7 @@ class BackupExportTest : BackupFixture() {
         val export = repository.export("test")
         val data = BackupCodec.read(export.bytes.inputStream())
         assertEquals(8000, data.progress.size)
+        assertEquals(8000, export.books)
         assertEquals(0L, export.skippedItems)
         assertEquals(0L, export.omittedHistory)
         assertEquals(RestoreResult.Complete(0), repository.restore(export.bytes.inputStream()))
@@ -79,6 +95,9 @@ class BackupExportTest : BackupFixture() {
         val export = repository.export("test")
         val data = BackupCodec.read(export.bytes.inputStream())
         assertEquals(2000, data.progress.size)
+        assertEquals(data.bookIds.size, export.books)
+        assertEquals(data.bookmarks.size, export.bookmarks)
+        assertEquals(data.favourites.size, export.favourites)
         assertEquals(1, data.bookmarks.size)
         assertTrue(data.history.isNotEmpty() && data.history.size < EXPORT_HISTORY)
         assertEquals((EXPORT_HISTORY - data.history.size).toLong(), export.omittedHistory)

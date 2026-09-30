@@ -21,5 +21,5 @@ internal fun RestoreResult.toBackupState(): BackupState = when (this) {
 internal fun ExportResult.toBackupState(): BackupState = BackupState(
     message = if (skippedItems == 0L && omittedHistory == 0L) R.string.backup_exported
         else R.string.backup_exported_with_omissions,
-    arguments = listOf(omittedHistory, skippedItems),
+    arguments = listOf(books, bookmarks, favourites, omittedHistory, skippedItems),
 )

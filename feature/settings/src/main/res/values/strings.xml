@@ -98,14 +98,14 @@
     <string name="backup_description">Save reading data and settings. The backup file contains the names of your books. Server details and folder access are excluded; add your folders again after restoring.</string>
     <string name="backup_export">Export</string>
     <string name="backup_import">Import</string>
-    <string name="backup_exported">Backup exported</string>
+    <string name="backup_exported">Backup exported: %1$d books, %2$d bookmarks, %3$d favourites.</string>
     <string name="backup_restored">Restored changes for %1$d books: %2$d reading positions and %3$d favourites applied or saved for later.</string>
     <string name="backup_partial">Restored reading changes for %1$d books: %2$d reading positions and %3$d favourites applied. Settings and pending favourites could not be saved. Import again to retry the rest.</string>
     <string name="backup_nothing_new">Nothing new to restore</string>
     <string name="backup_settings_restored">Settings restored</string>
     <string name="backup_in_progress">Backup operation in progress</string>
     <string name="backup_pending_dropped">Left out %1$d oldest favourites for books not in your library because the pending set is full.</string>
-    <string name="backup_exported_with_omissions">Backup exported. %1$d older history entries were left out. %2$d other items could not be included.</string>
+    <string name="backup_exported_with_omissions">Backup exported: %1$d books, %2$d bookmarks, %3$d favourites. %4$d older history entries were left out. %5$d other items could not be included.</string>
     <string name="backup_future_version">This backup was created with a newer backup format. Update Absolutex before importing.</string>
     <string name="backup_failed">Backup could not be completed. Check that the file is a valid Absolutex backup, is within the supported limits, and its location is available. A failed export may leave an incomplete file; export again before using it.</string>
 </resources>

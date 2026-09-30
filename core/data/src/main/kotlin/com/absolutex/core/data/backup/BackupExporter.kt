@@ -48,7 +48,10 @@ internal suspend fun AbsolutexDatabase.buildExport(
     val (bytes, kept) = data.writeSizedExport()
     val dropped = progress.size - kept.progress.size + bookmarks.size - kept.bookmarks.size +
         prefs.size - kept.bookPrefs.size + favourites.size - kept.favourites.size
-    return ExportResult(bytes, skipped + dropped, counts.history - kept.history.size - invalidHistory)
+    return ExportResult(
+        bytes, skipped + dropped, counts.history - kept.history.size - invalidHistory,
+        books = kept.bookIds.size, bookmarks = kept.bookmarks.size, favourites = kept.favourites.size,
+    )
 }
 
 private fun knownBookPrefs(value: BookPrefs): BookPrefs = value.copy(

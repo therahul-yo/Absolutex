@@ -32,7 +32,14 @@ open class InvalidBackup : IllegalArgumentException()
 
 class FutureBackupVersion : IllegalArgumentException()
 
-data class ExportResult(val bytes: ByteArray, val skippedItems: Long, val omittedHistory: Long)
+data class ExportResult(
+    val bytes: ByteArray,
+    val skippedItems: Long,
+    val omittedHistory: Long,
+    val books: Int = 0,
+    val bookmarks: Int = 0,
+    val favourites: Int = 0,
+)
 
 sealed interface RestoreResult {
     data class Complete(
