@@ -17,14 +17,14 @@
   <img src="docs/screenshots/settings.jpg" width="180" alt="Settings: night mode, true black, and the library's folders">
 </p>
 
-The current download is **v0.1.3**. Open comics, manga, PDFs and EPUBs from your phone or an
+The current download is **v0.1.4**. Open comics, manga, PDFs and EPUBs from your phone or an
 SMB/FTP share and read them on a true-black screen. Comic and PDF pages use tiled GPU rendering.
 Performance has been measured only on a OnePlus 11R; there is no frame-rate guarantee.
 
 ## Features
 
 **Reads what you have**
-- Comic archives: CBZ, CBR (RAR4/RAR5) and CBT; folders of loose images
+- Comic archives: CBZ, CBR (RAR4/RAR5), CBT and CB7 (LZMA/LZMA2; encrypted 7z is unsupported); folders of loose images
 - PDF, including password-protected files
 - EPUB: fixed-layout comic EPUBs as pages, novels and web novels as reflowable text
 - Opens from any folder you pick, from the file manager, or from SMB and FTP/FTPS shares
@@ -46,7 +46,7 @@ and off by default. The default sampler is the platform filter.
 - Colour correction: brightness, contrast, saturation, vibrance, warmth and gamma
 - Smart border crop, on by default with a switch to turn it off; PDFs are never cropped
 - Mitchell and Lanczos upscaling for sharp text when zoomed
-- Optional background matching; in v0.1.3 it has no effect when margin trimming is off
+- Optional background matching, which keeps working when margin trimming is off
 
 **Reading novels**
 - Pages that turn like a book, or one continuous scroll per chapter, with adjustable text size
@@ -70,7 +70,8 @@ and off by default. The default sampler is the platform filter.
 
 Download the APK from the [latest release](https://github.com/therahul-yo/Absolutex/releases/latest)
 and open it on your phone (allow installs from your browser or file manager when Android asks).
-Updates install over it with your library and reading positions kept.
+Updates install over it with your library and reading positions kept. Version 0.1.3 updates to
+0.1.4 in place with the same signing key; downgrading from 0.1.4 to 0.1.3 is not supported.
 
 **Requirements:** Android 13 or newer on a 64-bit flagship-class phone (Snapdragon 8 Gen 1-class
 or better). Developed and measured on a OnePlus 11R.
@@ -80,7 +81,7 @@ covered only a OnePlus 11R; other phones and providers are unverified.
 
 ## Known limitations
 
-- CB7/7z does not open in the current v0.1.3 download.
+- Encrypted CB7/7z is unsupported. Large-archive CB7 paging was checked on one phone only.
 - Classic ZIP encryption (ZipCrypto) prompts for a password. AES-encrypted ZIP and encrypted
   7z are unsupported; password-protected RAR/CBR is untested.
 - Komga/Kavita sync is not wired and those server types are hidden. Cloud sources and offline
@@ -88,9 +89,7 @@ covered only a OnePlus 11R; other phones and providers are unverified.
 - The OnePlus 11R benchmark recorded 2 missed deadlines in 1,387 frames and a median tap-to-first-page
   time of 329.8 ms, above the 250 ms target. See the [measurements](docs/DEVELOPMENT.md#measured-on-the-reference-device).
 
-## Next release — not in the current download yet
-
-v0.1.4 is being prepared from merged `main`; the download above remains v0.1.3 until publication.
+## What's new in v0.1.4
 
 - CB7/7z with LZMA/LZMA2 opens. Large solid 7z uses a single background decode and cached pages
   when eligible, avoiding repeated decoding on each turn; encrypted 7z remains unsupported.
@@ -114,7 +113,7 @@ about 0.5 seconds and passed jump checks. Enhance strengths were judged by eye o
 One measurement on 30 September 2026 on a OnePlus 11R after paging and jumping through a
 564 MB CBR: about 171 MB process PSS (183 MB right after seek jumps); the project budget is
 150 MB. This differs from the older 12-page-turn measurement in DEVELOPMENT.md. See the
-[draft v0.1.4 notes](docs/releases/0.1.4.md) for test scope and limitations.
+[v0.1.4 release notes](https://github.com/therahul-yo/Absolutex/releases/tag/v0.1.4) for test scope and limitations.
 
 ## Updates
 
@@ -139,7 +138,7 @@ libarchive's clean-room readers, never RARLAB's UnRAR. Details are in the
 |---|---|---|
 | libarchive | New BSD | RAR4/RAR5 readers |
 | PDFium | BSD-3-Clause | Bundled permissive dependencies |
-| xz / liblzma | 0BSD | Next release: statically linked, decoder only |
+| xz / liblzma | 0BSD | Statically linked, decoder only |
 
 ## Contributing
 
