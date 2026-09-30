@@ -33,6 +33,11 @@ a failed folder read and counts it (`ReadFailures`) instead of returning an empt
 app shell publishes that through `ScanStatus`. The manifest's VIEW filter also declares the CB7, CBT,
 7z, RAR and tar types, so a file manager offers Absolutex for them.
 
+**Scan safety.** A SAF scan that could not read any folder keeps the books it found and skips
+stale-row deletion for the whole location; cancellation also skips deletion. Forgetting a location
+still deliberately removes its rows. Device check: make a subfolder unreadable, rescan, and confirm
+its favourites survive while the library reports that the folder could not be read.
+
 **Built but not yet connected.** Four features are merged, tested and unreachable, which is
 worth stating plainly rather than leaving for someone to discover:
 

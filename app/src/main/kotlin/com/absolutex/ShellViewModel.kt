@@ -110,7 +110,9 @@ class ShellViewModel @Inject constructor(
         // CancellationException: a cancelled scan would log "scan failed" and return normally,
         // leaving the caller's job completed instead of cancelled. runCatchingCancellable
         // rethrows cancellation before it can be captured (see its KDoc and test in :core:data).
-        val result = runCatchingCancellable { library.scanTree(root, tree.reporting(failures)) }
+        val result = runCatchingCancellable {
+            library.scanTree(root, tree.reporting(failures), failures = failures)
+        }
             // The class only: an exception's message can carry the folder's Uri.
             .onFailure { Log.w(TAG, "scan failed: ${it.javaClass.name}") }
             .getOrNull()

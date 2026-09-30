@@ -103,7 +103,12 @@ class LibraryRepository internal constructor(
      * collecting throw — cancellation included — the lines below never run, so a cancelled walk
      * cannot delete books it simply never reached.
      */
-    suspend fun scanTree(root: TreeEntry, tree: DocumentTree, includeHidden: Boolean = false): ScanResult {
+    suspend fun scanTree(
+        root: TreeEntry,
+        tree: DocumentTree,
+        includeHidden: Boolean = false,
+        failures: ReadFailures? = null,
+    ): ScanResult {
         val scanId = now()
         var found = 0
         val batch = ArrayList<LibraryBook>(BATCH)
@@ -122,8 +127,9 @@ class LibraryRepository internal constructor(
 
         // Only after the walk completes, as in scanLocation: a cancelled walk must not delete the
         // books it simply never reached.
-        val removed = dao.deleteStaleIn(root.uri, scanId)
-        return ScanResult(found = found, removed = removed)
+        val incomplete = failures?.any == true
+        val removed = if (incomplete) 0 else dao.deleteStaleIn(root.uri, scanId)
+        return ScanResult(found = found, removed = removed, incomplete = incomplete)
     }
 
     /**
@@ -217,7 +223,7 @@ class LibraryRepository internal constructor(
     }
 }
 
-data class ScanResult(val found: Int, val removed: Int)
+data class ScanResult(val found: Int, val removed: Int, val incomplete: Boolean = false)
 
 /**
  * What applying one [LibraryChange] did.
