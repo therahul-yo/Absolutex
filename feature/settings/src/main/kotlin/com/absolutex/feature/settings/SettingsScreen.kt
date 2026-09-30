@@ -182,10 +182,18 @@ private fun RenderingGroup(app: AppPrefs, rendering: RenderingPrefs, actions: Se
     SegmentedSettingRow(
         options = Upscaler.entries,
         selected = rendering.upscaler,
-        onSelect = { actions.onRendering { current -> current.copy(upscaler = it) } },
+        onSelect = { actions.onRendering { current -> current.withUpscaler(it) } },
         labelRes = ::upscalerLabelRes,
         descriptionRes = R.string.settings_upscaler_desc,
     )
+    if (rendering.enhanceEnabled) {
+        Text(
+            stringResource(R.string.settings_enhance_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        )
+    }
     SwitchSettingRow(
         titleRes = R.string.settings_auto_background,
         checked = rendering.autoBackground,

@@ -33,6 +33,7 @@ internal fun ReaderTopBar(
     onSettings: (() -> Unit)?,
     modifier: Modifier = Modifier,
     bookId: String = "",
+    showEnhance: Boolean = false,
 ) {
     val back = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     Surface(
@@ -61,6 +62,7 @@ internal fun ReaderTopBar(
                 modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
             )
             FavouriteButton(bookId)
+            if (showEnhance) EnhanceButton()
             onSettings?.let {
                 IconButton(onClick = it) {
                     Icon(Icons.Outlined.Settings, contentDescription = stringResource(R.string.reader_settings))

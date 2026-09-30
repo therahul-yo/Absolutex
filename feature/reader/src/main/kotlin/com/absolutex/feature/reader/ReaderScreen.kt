@@ -646,10 +646,10 @@ private fun PageSlotContent(
     // Seeded from the StateFlow's current value, not NEUTRAL: the collector only runs after
     // the first composition, so a neutral seed shows uncorrected → graded on every first
     // frame for anyone with a colour grade (lead follow-up on #46).
-    val colourState = remember(vm) { mutableStateOf(vm.renderingPrefs.value.colour) }
+    val colourState = remember(vm) { mutableStateOf(vm.renderingPrefs.value.effectiveColour) }
     LaunchedEffect(vm) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            vm.renderingPrefs.collect { colourState.value = it.colour }
+            vm.renderingPrefs.collect { colourState.value = it.effectiveColour }
         }
     }
     val upscaler = rememberUpscaler(vm)

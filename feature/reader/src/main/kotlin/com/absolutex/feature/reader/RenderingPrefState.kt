@@ -28,7 +28,8 @@ internal fun rememberAutoBackground(vm: ReaderViewModel): Boolean {
  */
 @Composable
 internal fun rememberUpscaler(vm: ReaderViewModel): Upscaler {
-    val flow = remember(vm) { vm.renderingPrefs.map { it.upscaler }.distinctUntilChanged() }
-    val upscaler by flow.collectAsStateWithLifecycle(initialValue = Upscaler.PLATFORM)
+    val flow = remember(vm) { vm.renderingPrefs.map { it.effectiveUpscaler }.distinctUntilChanged() }
+    val seed = remember(vm) { vm.renderingPrefs.value.effectiveUpscaler }
+    val upscaler by flow.collectAsStateWithLifecycle(initialValue = seed)
     return upscaler
 }
