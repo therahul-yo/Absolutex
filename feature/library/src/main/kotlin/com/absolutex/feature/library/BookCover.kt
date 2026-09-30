@@ -10,9 +10,8 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
@@ -28,6 +27,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
@@ -73,7 +74,7 @@ internal fun BookCover(
     ) {
         // Drawn first and always: the art fades in over it when it arrives, and a book with no
         // art (a text ebook, a hidden document cover, a failed decode) keeps it.
-        CoverPlaceholder(book, showTitle = widthPx >= TITLE_MIN_WIDTH_PX)
+        CoverPlaceholder(book, showTitle = placeholderCaptionVisible(widthPx))
         if (!book.showCover) return@Box
         // The key changes when the file does, so a replaced book never keeps its old cover.
         val key = "${book.path}|${book.sizeBytes}|${book.lastModified}"
@@ -99,32 +100,52 @@ internal fun BookCover(
 @Composable
 private fun CoverPlaceholder(book: LibraryBookUi, showTitle: Boolean) {
     val missing = stringResource(R.string.library_cover_placeholder)
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(12.dp)
-            .clearAndSetSemantics { contentDescription = missing },
-        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally,
+    Box(
+        modifier = Modifier.fillMaxSize().clearAndSetSemantics { contentDescription = missing },
     ) {
-        Icon(
-            if (book.isBook) Icons.Outlined.Description else Icons.Outlined.AutoStories,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(if (showTitle) 36.dp else 20.dp),
-        )
-        if (showTitle) {
-            Text(
-                book.displayName,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Center,
-                maxLines = 4,
-                overflow = TextOverflow.Ellipsis,
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(bottom = if (showTitle) PLACEHOLDER_CAPTION_HEIGHT else 0.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (book.isBook) Icons.Outlined.Description else Icons.Outlined.AutoStories,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(if (showTitle) 36.dp else 20.dp),
             )
+        }
+        if (showTitle) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(PLACEHOLDER_CAPTION_HEIGHT)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, MaterialTheme.colorScheme.scrim.copy(alpha = 0.86f)),
+                        ),
+                    )
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                contentAlignment = Alignment.BottomCenter,
+            ) {
+                Text(
+                    book.displayName,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = Color.White,
+                    textAlign = TextAlign.Center,
+                    maxLines = PLACEHOLDER_CAPTION_MAX_LINES,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
 
 /** Narrower than this (a list row's thumbnail), the placeholder is the icon alone. */
-private const val TITLE_MIN_WIDTH_PX = 240
+internal const val TITLE_MIN_WIDTH_PX = 240
+internal const val PLACEHOLDER_CAPTION_MAX_LINES = 2
+private val PLACEHOLDER_CAPTION_HEIGHT = 64.dp
+
+internal fun placeholderCaptionVisible(widthPx: Int): Boolean = widthPx >= TITLE_MIN_WIDTH_PX

@@ -1,6 +1,8 @@
 package com.absolutex.feature.settings
 
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
@@ -19,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import com.absolutex.core.ui.A11y
 
 /**
@@ -29,11 +32,19 @@ import com.absolutex.core.ui.A11y
 internal fun LocationRow(location: StorageLocation, onRemove: (String) -> Unit) {
     var confirming by remember { mutableStateOf(false) }
     ListItem(
-        headlineContent = { Text(location.label) },
+        headlineContent = {
+            Text(location.label, maxLines = LOCATION_LABEL_MAX_LINES, overflow = TextOverflow.Ellipsis)
+        },
         // The confirmation is inline — the row itself asks — rather than a dialog: a dialog pulls
         // in a component the APK's size ceiling has no room for.
         supportingContent = if (confirming) {
-            { Text(stringResource(R.string.settings_location_remove_body)) }
+            {
+                Text(
+                    stringResource(R.string.settings_location_remove_body),
+                    maxLines = LOCATION_LABEL_MAX_LINES,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         } else {
             null
         },
@@ -59,5 +70,8 @@ internal fun LocationRow(location: StorageLocation, onRemove: (String) -> Unit) 
             }
         },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = A11y.MinTouchTarget),
     )
 }
+
+private const val LOCATION_LABEL_MAX_LINES = 2
