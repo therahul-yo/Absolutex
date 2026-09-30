@@ -224,7 +224,12 @@ private fun BoxScope.TextChrome(
         enter = slideInVertically(Motion.enter()) { -it } + fadeIn(Motion.enter()),
         exit = slideOutVertically(Motion.exit()) { -it } + fadeOut(Motion.exit()),
         modifier = Modifier.align(Alignment.TopCenter),
-    ) { ReaderTopBar(title, onSettings, bookId = bookId) }
+    ) {
+        ReaderTopBar(
+            title, onSettings, bookId = bookId,
+            showEnhance = readerShowsEnhance(isTextEpub = true),
+        )
+    }
     AnimatedVisibility(
         shown,
         enter = slideInVertically(Motion.enter()) { it } + fadeIn(Motion.enter()),

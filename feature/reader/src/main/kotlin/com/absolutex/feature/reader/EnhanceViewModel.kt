@@ -6,8 +6,11 @@ import com.absolutex.core.data.settings.RenderingPrefsSource
 import com.absolutex.core.data.settings.SettingsWriter
 import com.absolutex.core.data.settings.toggleEnhance
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -17,7 +20,10 @@ class EnhanceViewModel @Inject constructor(
     rendering: RenderingPrefsSource,
     private val writer: SettingsWriter,
 ) : ViewModel() {
-    val enabled = rendering.renderingPrefs.map { it.enhanceEnabled }.distinctUntilChanged()
+    val enabled: StateFlow<Boolean> = rendering.renderingPrefs
+        .map { it.enhanceEnabled }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     fun toggle() {
         viewModelScope.launch { writer.toggleEnhance() }

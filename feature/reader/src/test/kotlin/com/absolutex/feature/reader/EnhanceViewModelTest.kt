@@ -21,6 +21,7 @@ class EnhanceViewModelTest {
         val custom = RenderingPrefs(colour = ColourParams(brightness = 0.2f), upscaler = Upscaler.LANCZOS)
         settings.updateRendering { custom }
         val vm = EnhanceViewModel(settings, settings)
+        advanceUntilIdle()
         repeat(3) { vm.toggle() }
         advanceUntilIdle()
         assertEquals(true, vm.enabled.first())
@@ -35,8 +36,17 @@ class EnhanceViewModelTest {
         val settings = InMemorySettings()
         settings.updateRendering { it.copy(enhanceEnabled = true) }
         val vm = EnhanceViewModel(settings, settings)
+        advanceUntilIdle()
         assertEquals(true, vm.enabled.first())
         settings.updateRendering { it.copy(enhanceEnabled = false, upscaler = Upscaler.LANCZOS) }
         assertEquals(false, vm.enabled.first())
+    }
+
+    @Test fun `state flow retains the current flag for a recreated button`() = runTest(main.dispatcher) {
+        val settings = InMemorySettings()
+        settings.updateRendering { it.copy(enhanceEnabled = true) }
+        val vm = EnhanceViewModel(settings, settings)
+        advanceUntilIdle()
+        assertEquals(true, vm.enabled.value)
     }
 }

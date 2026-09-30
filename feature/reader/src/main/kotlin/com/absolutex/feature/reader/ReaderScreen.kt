@@ -130,6 +130,7 @@ fun ReaderScreen(
     val ui by vm.ui.collectAsStateWithLifecycle()
     val global by vm.readerPrefs.collectAsStateWithLifecycle()
     val rendering by vm.renderingPrefs.collectAsStateWithLifecycle()
+    val readerRendering = readerRenderingState(rendering)
     // A book's own choices win over the global ones (§5.2), and only for this book.
     val options: ReaderOptionsViewModel = hiltViewModel()
     val book by remember(ui.bookId) { options.bookPrefs(ui.bookId) }.collectAsStateWithLifecycle(null)
@@ -180,12 +181,12 @@ fun ReaderScreen(
             prefs.pageLayout == PageLayout.CONTINUOUS_VERTICAL ->
                 Strip(
                     ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, onFinished,
-                    chromeState, pageBackgrounds, backgroundPage,
+                    chromeState, pageBackgrounds, backgroundPage, readerRendering.enhanceEnabled,
                 )
             else ->
                 Pages(
                     ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, onFinished,
-                    chromeState, pageBackgrounds, backgroundPage,
+                    chromeState, pageBackgrounds, backgroundPage, readerRendering.enhanceEnabled,
                 )
         }
         // Visible on open, also in the empty recovery case. Chrome has its own top bar; do not
@@ -248,6 +249,7 @@ private fun Pages(
     pageBackgrounds: MutableMap<Int, Color>,
     /** Which page's colour the letterbox is crossfading toward. */
     backgroundPage: MutableState<Int>,
+    enhanceEnabled: Boolean,
 ) {
     val flow = prefs.readingFlow
     // The pager counts screens; everything else (progress, seeking, keys) speaks book pages.
@@ -330,7 +332,7 @@ private fun Pages(
             title = title, onSettings = onSettings, onSeek = jump, onDismiss = { chrome = false },
             bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip }, toc = toc,
             onExport = { vm.exportPage(Spreads.at(spreads, pagerState.currentPage).first) },
-            fitFor = fitContext, prefs = prefs,
+            fitFor = fitContext, prefs = prefs, enhanceEnabled = enhanceEnabled,
         )
     }
 }
@@ -358,6 +360,7 @@ private fun Strip(
     pageBackgrounds: MutableMap<Int, Color>,
     /** Which page's colour the letterbox is crossfading toward. */
     backgroundPage: MutableState<Int>,
+    enhanceEnabled: Boolean,
 ) {
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = startPage)
     val scope = rememberCoroutineScope()
@@ -412,7 +415,7 @@ private fun Strip(
             title = title, onSettings = onSettings, onSeek = jump, onDismiss = { chrome = false },
             bookId = bookId, strip = vm::thumbnail.takeIf { prefs.thumbnailStrip }, toc = toc,
             onExport = { vm.exportPage(listState.firstVisibleItemIndex) },
-            fitFor = null, prefs = prefs,
+            fitFor = null, prefs = prefs, enhanceEnabled = enhanceEnabled,
         )
     }
 }
@@ -646,10 +649,12 @@ private fun PageSlotContent(
     // Seeded from the StateFlow's current value, not NEUTRAL: the collector only runs after
     // the first composition, so a neutral seed shows uncorrected → graded on every first
     // frame for anyone with a colour grade (lead follow-up on #46).
-    val colourState = remember(vm) { mutableStateOf(vm.renderingPrefs.value.effectiveColour) }
+    val colourState = remember(vm) {
+        mutableStateOf(readerRenderingState(vm.renderingPrefs.value).colour)
+    }
     LaunchedEffect(vm) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            vm.renderingPrefs.collect { colourState.value = it.effectiveColour }
+            vm.renderingPrefs.collect { colourState.value = readerRenderingState(it).colour }
         }
     }
     val upscaler = rememberUpscaler(vm)

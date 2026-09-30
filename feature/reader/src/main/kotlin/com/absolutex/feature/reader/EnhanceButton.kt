@@ -32,8 +32,11 @@ import com.absolutex.core.ui.rememberHaptics
 /** Bitmap/PDF chrome only; the text EPUB bar never supplies this control. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun EnhanceButton(vm: EnhanceViewModel = hiltViewModel()) {
-    val on by vm.enabled.collectAsStateWithLifecycle(false)
+internal fun EnhanceButton(
+    initialEnabled: Boolean = false,
+    vm: EnhanceViewModel = hiltViewModel(),
+) {
+    val on by vm.enabled.collectAsStateWithLifecycle(initialEnabled)
     val label = stringResource(R.string.reader_enhance)
     val state = stringResource(if (on) R.string.reader_enhance_on else R.string.reader_enhance_off)
     val ink = MaterialTheme.colorScheme.onSurface
