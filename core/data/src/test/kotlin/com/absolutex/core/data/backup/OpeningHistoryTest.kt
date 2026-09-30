@@ -44,7 +44,7 @@ class OpeningHistoryTest : BackupFixture() {
         val exported = repository.export("test")
         assertEquals(0L, exported.skippedItems)
         assertEquals(0L, exported.omittedHistory)
-        assertEquals(views, BackupCodec.read(exported.bytes.inputStream()).history.map { it.copy(id = 0) })
+        assertEquals(views.reversed(), BackupCodec.read(exported.bytes.inputStream()).history.map { it.copy(id = 0) })
     }
 
     @Test fun `opening markers cannot make local book preferences beat newer backup preferences`() = runTest {

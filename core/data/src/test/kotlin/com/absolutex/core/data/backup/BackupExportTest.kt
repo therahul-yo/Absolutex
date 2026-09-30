@@ -110,7 +110,7 @@ class BackupExportTest : BackupFixture() {
     }
 
     @Test fun `progress shrinks only after every other tier is empty`() = runTest {
-        val rows = (1..5000).map { ReadingProgress("x".repeat(1000) + "$it:1", 0, 1, it.toLong()) }
+        val rows = (1..5000).map { ReadingProgress("x".repeat(1000) + "$it:1", 1, 2, it.toLong()) }
         val id = rows.first().bookId
         val original = BackupData("test", rows.sortedByDescending { it.updatedAt },
             listOf(PageView(bookKey = id, page = 0, atEpochMs = 1)), listOf(Bookmark(id, 0, 1)),
