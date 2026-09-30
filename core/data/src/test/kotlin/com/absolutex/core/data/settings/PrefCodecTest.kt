@@ -243,6 +243,7 @@ class PrefCodecTest {
                 PrefCodec.KEY_UPSCALER,
                 PrefCodec.KEY_AUTO_BACKGROUND,
                 PrefCodec.KEY_CROP_ENABLED,
+                PrefCodec.KEY_ENHANCE_ENABLED,
             ),
             bag.snapshot().keys,
         )
