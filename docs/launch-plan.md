@@ -1,7 +1,7 @@
 # Public launch plan: current status and remaining checks
 
-Rechecked against `main` @ `e2b37f9` (30 Sep 2026) and the public v0.1.3 release.
-The public README and website describe v0.1.3; changes on main are labelled **Next release**.
+Rechecked against `main` @ `713eebc` (30 Sep 2026) and the public v0.1.4 release.
+The public README and website describe v0.1.4; changes merged after it would be labelled unreleased.
 A merged feature is not evidence that the downloadable APK contains it.
 
 The goal is a public beta recommendation with accurate feature descriptions, install steps and
@@ -10,33 +10,33 @@ promotional assets and signing-key backup remain owner checks.
 
 ## Where things stand
 
-v0.1.3 is a public release with an APK and SHA-256 asset. It reads CBZ, CBR (RAR4/RAR5), CBT,
+v0.1.4 is a public release with an APK and SHA-256 asset. It reads CBZ, CBR (RAR4/RAR5), CBT, CB7,
 PDF, EPUB and image folders, including SMB/FTP browsing. Classic ZIP encryption prompts for a
 password. Cropping has a switch and leaves PDFs uncropped; colour correction, advanced upscaling
 and background matching are optional and off by default. Komga/Kavita setup is hidden because
 sync is not wired. Cloud sources and offline copies are not connected.
 
-Main additionally has CB7/LZMA decoding, an Open-file button, reading-data JSON backup, clearer
-empty states, scan safety and four reader fixes. These are **not in the v0.1.3 download**.
-Large solid CB7 archives can page slowly; encrypted 7z remains unsupported.
+v0.1.4 added CB7/LZMA decoding, an Open-file button, reading-data JSON backup, clearer
+empty states, scan safety and four reader fixes. Large solid CB7 paging was checked on one phone
+only; encrypted 7z remains unsupported.
 
 ## Findings
 
 | # | Current status | Evidence | Still needed |
 |---|---|---|---|
-| F1 | Resolved: v0.1.3 is public, not draft or prerelease, with APK and checksum assets. | [Public release](https://github.com/therahul-yo/Absolutex/releases/tag/v0.1.3); GitHub releases/latest API checked 30 Sep 2026 | Repeat the download smoke check in a private browser before posting. |
+| F1 | Resolved: v0.1.4 is public with an APK asset; its download link returned 200 on 30 Sep 2026. | [Public release](https://github.com/therahul-yo/Absolutex/releases/tag/v0.1.4) | Repeat the download smoke check in a private browser before posting. |
 | F2 | Resolved for launch copy: Komga/Kavita are not offered; sync is still inert. | `feature/remote/.../ServerKindOptions.kt:13`; `remote/sync/.../SyncController.kt:50-55` | Wire reader lifecycle calls before offering sync. |
 | F3 | Partly resolved: Bug and File won't open issue forms exist. Settings About has no report link; a local crash-report flow is not verified. | `.github/ISSUE_TEMPLATE/bug.yml`, `file-wont-open.yml`; `feature/settings/.../SettingsControls.kt` | A Settings report link and any local crash-log design are separate work. |
-| F4 | Partly resolved: README links to Obtainium and GitHub release notifications; no in-app update check. | README Updates; v0.1.3 release limitations | Store distribution and any in-app update UI are future work, not promises. |
+| F4 | Partly resolved: README links to Obtainium and GitHub release notifications; no in-app update check. | README Updates; v0.1.4 release limitations | Store distribution and any in-app update UI are future work, not promises. |
 | F5 | Open: README still contains copyrighted comic screenshots. | README screenshot block; `docs/screenshots/` | Lead replaces promotional assets with licensed material and checks them on a device. |
-| F6 | Partly resolved: onboarding is merged; main adds Open file and honest empty states. A licensed sample comic is not attached to v0.1.3. | `app/.../MainActivity.kt:213-239`; v0.1.3 release assets | Obtain and credit a sample asset; do not claim main-only first-run UI in the current download. |
-| F7 | Open: documented testing is only on OnePlus 11R. | DEVELOPMENT: Platform floor and Measured on the reference device; v0.1.3 release | Samsung, Pixel and other providers/devices remain unverified. The supported floor remains Android 13+, arm64, flagship-class Snapdragon. |
+| F6 | Partly resolved: onboarding is merged; main adds Open file and honest empty states. A licensed sample comic is not attached to v0.1.4. | `app/.../MainActivity.kt:213-239`; v0.1.4 release assets | Obtain and credit a sample asset. |
+| F7 | Open: documented testing is only on OnePlus 11R. | DEVELOPMENT: Platform floor and Measured on the reference device; v0.1.4 release | Samsung, Pixel and other providers/devices remain unverified. The supported floor remains Android 13+, arm64, flagship-class Snapdragon. |
 | F8 | Open: site uses ASCII artwork, with no separate install/privacy page or real app screenshots. | `site/index.html` | Any redesign and licensed image pass are separate work; current copy stays plain. |
 | F9 | Addressed in this pass: README is user-facing; developer status/module map/roadmap now distinguish connected features from unfinished engines. | `docs/DEVELOPMENT.md`; `feature/reader/.../OpenBook.kt:41-89`; `feature/remote/.../BrowseViewModel.kt:167-181` | Recheck docs when the next release ships. |
-| F10 | Resolved for the latest release: v0.1.3 has user-facing release notes. | [v0.1.3 notes](https://github.com/therahul-yo/Absolutex/releases/tag/v0.1.3) | Lead writes next-release notes; this docs PR changes no release records. |
+| F10 | Resolved for the latest release: v0.1.4 has user-facing release notes. | [v0.1.4 notes](https://github.com/therahul-yo/Absolutex/releases/tag/v0.1.4) | Lead writes next-release notes; this docs PR changes no release records. |
 | F11 | Resolved: crop can be disabled, defaults on, and never crops PDFs. | `core/data/.../settings/RenderingPrefs.kt:30-35`; v0.1.3 notes | Check problematic pages with crop on/off; no accuracy guarantee. |
-| F12 | Partly resolved: classic ZIP encryption prompts; AES ZIP and encrypted 7z report unsupported encryption. Password-protected RAR/CBR remains untested. | `feature/reader/.../ReaderViewModel.kt:831-861`; v0.1.3 limitations | Ordinary CBR was used in the OnePlus benchmark; that does not verify encrypted CBR. |
-| F13 | Open owner check: signing-key backup is not verified. Main now has manual reading-data backup; it excludes credentials, folder grants, text-EPUB within-chapter position and tap-guide state. | `app/src/main/AndroidManifest.xml` (`allowBackup=false`); DEVELOPMENT: Reading-data backup | Owner confirms offline signing-key backups. Publish a release containing JSON backup before recommending it to v0.1.3 users. |
+| F12 | Partly resolved: classic ZIP encryption prompts; AES ZIP and encrypted 7z report unsupported encryption. Password-protected RAR/CBR remains untested. | `feature/reader/.../ReaderViewModel.kt:831-861`; v0.1.4 limitations | Ordinary CBR was used in the OnePlus benchmark; that does not verify encrypted CBR. |
+| F13 | Open owner check: signing-key backup is not verified. v0.1.4 has manual reading-data backup; it excludes credentials, folder grants, text-EPUB within-chapter position and tap-guide state. | `app/src/main/AndroidManifest.xml` (`allowBackup=false`); DEVELOPMENT: Reading-data backup | Owner confirms offline signing-key backups. Backup shipped in v0.1.4; it is a manual export, not automatic backup. |
 
 The recorded OnePlus 11R benchmark missed two targets: 2 missed deadlines in 1,387 frames,
 and median tap-to-first-page 329.8 ms against a 250 ms target. These are measurements, not a
@@ -68,7 +68,7 @@ smoothness guarantee. See DEVELOPMENT: Measured on the reference device.
 
 - Obtainium is the documented external update path; there is no built-in update check.
 - Store listings are owner work and require checking current store policies, licensed assets and privacy requirements.
-- Reading-data JSON backup is merged on main, not yet released. It is manual export/import, not Android automatic backup.
+- Reading-data JSON backup shipped in v0.1.4. It is manual export/import, not Android automatic backup.
 - Remote browsing already fetches covers. Cloud sources, offline copies and progress sync remain unavailable.
 
 ## Pre-release smoke checklist
@@ -85,7 +85,7 @@ Use the **signed APK from the published release**. Record the version and phone 
 - [ ] Check dark/light modes and large text for clipping.
 - [ ] Check corrupt files, ZipCrypto correct/wrong passwords and unsupported encryption messages.
 - [ ] Install the next signed build **over the existing one without uninstalling**; verify data survives.
-- [ ] When a new release contains main-only features, test CB7, backup/restore, Open file and read-failure preservation before moving them out of the Next release section.
+- [ ] When a release contains previously main-only features, test them on the signed APK (for v0.1.4: CB7, backup/restore, Open file, read-failure preservation) and keep anything unreleased labelled.
 
 ## Release notes template
 
@@ -98,7 +98,7 @@ The lead publishes release records; this PR only changes repository text.
 ## Draft post
 
 > Absolutex is an open-source beta comic and book reader for flagship Android phones.
-> The v0.1.3 download reads CBZ, CBR, CBT, PDF, EPUB and image folders from your storage or
+> The v0.1.4 download reads CBZ, CBR, CBT, CB7, PDF, EPUB and image folders from your storage or
 > SMB/FTP shares. It has RTL reading, spreads, tiled comic/PDF rendering and optional colour tools.
 > Android 13+, arm64; tested only on a OnePlus 11R. No automatic updates; Obtainium can track releases.
 > Known limits and installation: absolutex.vercel.app and the README.

@@ -6,10 +6,9 @@ what the app is and does, see the [README](../README.md).
 
 ## Status
 
-This inventory describes current `main`, including unreleased changes. The public download is
-v0.1.3. Version 0.1.4 is being prepared with CB7/LZMA and cached solid-7z paging, Open file,
-reading-data backup, empty states, reader fixes, scan safety, recency/page-count fixes, home
-headers and Enhance. See [the draft notes](releases/0.1.4.md); these are not in the public download yet.
+This inventory describes current `main`. The public download is v0.1.4, which adds CB7/LZMA and
+cached solid-7z paging, Open file, reading-data backup, empty states, reader fixes, scan safety,
+recency/page-count fixes, home headers and Enhance. See [the v0.1.4 notes](releases/0.1.4.md).
 
 **The reader** opens `.cbz`, `.cbr`, `.cb7`, `.cbt` and PDF through SAF or a file path, and
 renders them tiled. It has reading flows (LTR, RTL, vertical), page layouts (single, double,
