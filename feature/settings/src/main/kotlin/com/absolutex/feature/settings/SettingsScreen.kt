@@ -174,7 +174,7 @@ fun SettingsContent(
 @Composable
 private fun RenderingGroup(app: AppPrefs, rendering: RenderingPrefs, actions: SettingsActions) {
     CacheSizeRow(valueMiB = app.cacheSizeMiB, onChange = actions.onCacheSize)
-    // The same panel the reader chrome hosts: one composable, one state, no copies.
+    // Advanced colour controls live here; the reader chrome exposes the Enhance preset only.
     ColourPanel(
         state = rendering.colour,
         onChange = { actions.onRendering { current -> current.withColour(it) } },

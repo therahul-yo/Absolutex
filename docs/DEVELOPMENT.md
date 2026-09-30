@@ -7,8 +7,9 @@ what the app is and does, see the [README](../README.md).
 ## Status
 
 This inventory describes current `main`, including unreleased changes. The public download is
-v0.1.3; CB7/LZMA, Open file, reading-data backup, empty-state improvements, reader fixes and scan
-safety are for the next release. The README separates them from released features.
+v0.1.3. Version 0.1.4 is being prepared with CB7/LZMA and cached solid-7z paging, Open file,
+reading-data backup, empty states, reader fixes, scan safety, recency/page-count fixes, home
+headers and Enhance. See [the draft notes](releases/0.1.4.md); these are not in the public download yet.
 
 **The reader** opens `.cbz`, `.cbr`, `.cb7`, `.cbt` and PDF through SAF or a file path, and
 renders them tiled. It has reading flows (LTR, RTL, vertical), page layouts (single, double,
@@ -24,8 +25,8 @@ smart crop defaults on, has a switch, and never crops PDFs.
 **Around it:** the library is the app's home screen, with the reader and settings as
 destinations. Granted folders rescan when the library screen opens or Rescan is requested;
 the filesystem watcher only watches plain paths. There is a thumbnail pipeline, a settings
-surface, and remote modules for SMB, FTP/FTPS and Komga/Kavita progress sync. SMB and FTP/FTPS are wired into the app; Komga and Kavita are built but not offered
-(see below).
+surface, and remote modules for SMB, FTP/FTPS and Komga/Kavita progress sync. SMB and FTP/FTPS
+are wired into the app; Komga and Kavita are built but not offered (see below).
 
 **First run.** The library's top bar has an "Open file" button that launches the system file picker
 (`ActivityResultContracts.OpenDocument`, types in `OpenFileTypes`, ending in `*/*` so an unknown type
@@ -211,17 +212,16 @@ release whose `.sig` verifies against Lasse Collin's key (fingerprint
 
 ### Solid and encrypted 7z
 
-**Solid 7z is expensive to page through.** 7-Zip's default is one solid LZMA2 block, and a solid
+**Direct extraction fallback is expensive for solid 7z.** 7-Zip's default is one solid LZMA2 block, and a solid
 block can only be decoded from its start, so page *N* costs decoding pages 1…*N* on every read:
 `nativeExtract` is stateless and reopens the archive per call, and libarchive cannot skip an entry
 inside a solid block without decoding it. Measured on the host (Apple M4, release build) on a
 300-page solid archive of 1 MB pages that barely compress: page 0 in 32 ms, page 50 in 1.2 s,
 page 150 in 3.5 s, page 299 in 6.9 s; a 10-page window near the end also costs ~6.9 s, but the
 same ten pages read one call each cost ~68 s. A non-solid archive is flat, ~23 ms per page
-wherever the page is. A phone will be slower than that host. As the code reads, every page turn
-starts at least one walk from the start of the block (the prefetch window is one walk per turn,
-not per book), so reading forward through a big solid book repeats work quadratically, and a jump
-to the end waits for the whole block. Related: 7-Zip sorts a solid block's
+wherever the page is. These are measurements of direct extraction before the cache path below. That fallback still
+walks from the start of the block on each request, so a full sequential read can repeat work
+quadratically; the eligible reader path now uses one background pass instead. Related: 7-Zip sorts a solid block's
 files by extension, so `ComicInfo.xml` lands **after** the pages, and reading the sidecar at open
 decodes the entire block before page 1 appears (the same ~7 s on the 300 MB host case). The per-entry
 128 MB and 20,000-entry caps in `archive_jni.c` still apply per entry, but nothing bounds the total
@@ -395,7 +395,7 @@ re-parse the PDF xref table and rebuild its object map on every tile. If you eve
 
 ### Frame-budget rules in the reader
 
-The page-turn budget is 8.3 ms at 120 Hz. Three things protect it, and all three are easy to
+The target page-turn budget is 8.3 ms; this is a performance target, not a frame-rate guarantee. Three things protect it, and all three are easy to
 undo by accident:
 
 1. **Pan/zoom state is read only inside the `Canvas` draw lambda.** Reading it in a composable
