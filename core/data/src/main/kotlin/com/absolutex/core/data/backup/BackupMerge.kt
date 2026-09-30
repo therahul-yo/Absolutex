@@ -15,8 +15,7 @@ internal suspend fun AbsolutexDatabase.mergeBackup(data: BackupData): ReadingCha
     var written = 0
     data.progress.forEach { row ->
         val existing = progressDao().get(row.bookId)
-        val openingOnly = existing.isOpeningOnly()
-        if (row != existing && (openingOnly || row.updatedAt > (existing?.updatedAt ?: -1))) {
+        if (row.shouldReplace(existing)) {
             progressDao().upsert(row)
             changed += row.bookId
             written++
@@ -52,3 +51,6 @@ private suspend fun AbsolutexDatabase.lastBackupRead(identity: String): Long =
     maxOf(progressDao().get(identity)?.updatedAt ?: -1, backupDao().lastRead(identity) ?: -1)
 
 private fun ReadingProgress?.isOpeningOnly(): Boolean = this != null && pageIndex == 0 && updatedAt == 0L
+
+private fun ReadingProgress.shouldReplace(existing: ReadingProgress?): Boolean =
+    this != existing && (existing.isOpeningOnly() || updatedAt > (existing?.updatedAt ?: -1))
