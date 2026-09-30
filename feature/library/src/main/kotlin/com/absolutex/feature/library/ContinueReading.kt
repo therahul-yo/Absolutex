@@ -36,6 +36,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.Role
 import androidx.compose.material3.LinearProgressIndicator
@@ -54,7 +55,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.coerceIn
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.TransformOrigin
 
 /**
  * Continue reading (§5.1): the comics you are part-way through, newest first, as a strip of small
@@ -105,7 +109,15 @@ internal fun ContinueReadingStrip(
  * and its surface squared the cover off against the card's edge. Here the cover is the card.
  */
 @Composable
-private fun ContinueCard(book: LibraryBookUi, onOpen: () -> Unit, onHide: () -> Unit, modifier: Modifier = Modifier) {
+private fun ContinueCard(
+    book: LibraryBookUi,
+    onOpen: () -> Unit,
+    onHide: () -> Unit,
+    modifier: Modifier = Modifier,
+    art: Modifier = Modifier,
+    captions: Modifier = Modifier,
+    captionInset: Dp = 0.dp,
+) {
     var menu by remember { mutableStateOf(false) }
     val haptics = rememberHaptics()
     val hideLabel = stringResource(R.string.library_continue_remove)
@@ -125,29 +137,20 @@ private fun ContinueCard(book: LibraryBookUi, onOpen: () -> Unit, onHide: () -> 
             .semantics { customActions = listOf(CustomAccessibilityAction(hideLabel) { onHide(); true }) },
         verticalArrangement = Arrangement.spacedBy(Space.Tight),
     ) {
-        BookCover(book, Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
-        book.progressFraction?.let { fraction ->
-            LinearProgressIndicator(
-                progress = { fraction },
-                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                drawStopIndicator = {},
-                modifier = Modifier.fillMaxWidth().padding(top = Space.Tight),
-            )
+        // The cover and its bar are the part the wheel turns ([art]); the words below only slide
+        // sideways with it, so every card's title and percentage share one line.
+        Column(art, verticalArrangement = Arrangement.spacedBy(Space.Tight)) {
+            BookCover(book, Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium)
+            book.progressFraction?.let { fraction ->
+                LinearProgressIndicator(
+                    progress = { fraction },
+                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    drawStopIndicator = {},
+                    modifier = Modifier.fillMaxWidth().padding(top = Space.Tight),
+                )
+            }
         }
-        Text(
-            book.displayName,
-            style = MaterialTheme.typography.titleSmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        book.progressLabel()?.let { progress ->
-            Text(
-                progress,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
-        }
+        ContinueCaptions(book, captions, captionInset)
     }
     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
         DropdownMenuItem(
@@ -162,14 +165,59 @@ private fun ContinueCard(book: LibraryBookUi, onOpen: () -> Unit, onHide: () -> 
     }
 }
 
+/**
+ * A card's title and progress. Inset by what a side cover's shrink takes back, and moved with the
+ * cover ([modifier]), so a side card's words sit under its cover, inside the gutter, rather than
+ * under its slot.
+ */
+@Composable
+private fun ContinueCaptions(book: LibraryBookUi, modifier: Modifier, inset: Dp) {
+    Column(
+        modifier.padding(horizontal = inset),
+        verticalArrangement = Arrangement.spacedBy(Space.Tight),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            book.displayName,
+            style = MaterialTheme.typography.titleSmall,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        book.progressLabel()?.let { progress ->
+            Text(
+                progress,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
 private val ContinueWidth = 132.dp
+
+/**
+ * How wide a cover in the wheel is on a screen [screen] wide: [ContinueWidth], or narrower where
+ * that would push the side covers past the gutter.
+ *
+ * At rest a neighbour's outer edge lands at `screen / 2 - 1.5 * width - spacing`, less what its
+ * shrink takes back (half of `SHRINK * width`) and its pull inward ([PULL]). On a ~350 dp phone
+ * that put the edge at the screen's edge, clipping the cover; this keeps it on [Space.Edge].
+ */
+internal fun continueCardWidth(screen: Dp): Dp {
+    val fit = (screen / 2 - CarouselSpacing + PULL - Space.Edge) / (NEIGHBOUR_SLOTS - SHRINK / 2)
+    return fit.coerceIn(0.dp, ContinueWidth)
+}
+
 internal const val CONTINUE_LIMIT = 12
 
 /**
  * The strip as a wheel: the centred cover full size and facing the reader, its neighbours
- * shrinking, turning away and dropping along an arc as they leave the middle. A fling glides and
- * always settles with one cover centred, and each cover that reaches the middle clicks, so the
- * strip spins like a fidget toy rather than scrolling like the grid below it.
+ * shrinking and turning away as they leave the middle, all standing on one line so the titles
+ * and progress under them stay level. A fling glides and always settles with one cover centred,
+ * and each cover that reaches the middle clicks, so the strip spins like a fidget toy rather than
+ * scrolling like the grid below it.
  *
  * Every transform is read in the layer block from the list's own layout, so scrolling moves
  * layers only: nothing recomposes while it spins.
@@ -195,8 +243,9 @@ private fun ContinueCarousel(books: List<LibraryBookUi>, context: RowContext, on
             layout(constraints.maxWidth, placeable.height) { placeable.place(-edge, 0) }
         },
     ) {
+        val cardWidth = continueCardWidth(maxWidth)
         // Room either side for the first and last cover to sit in the middle.
-        val side = ((maxWidth - ContinueWidth) / 2).coerceAtLeast(0.dp)
+        val side = ((maxWidth - cardWidth) / 2).coerceAtLeast(0.dp)
         LazyRow(
             state = list,
             flingBehavior = rememberSnapFlingBehavior(list, SnapPosition.Center),
@@ -210,17 +259,23 @@ private fun ContinueCarousel(books: List<LibraryBookUi>, context: RowContext, on
                     book,
                     onOpen = { context.onOpen(book) },
                     onHide = { onHide(book.path) },
-                    modifier = Modifier
-                        .width(ContinueWidth)
-                        .animateItem()
+                    modifier = Modifier.width(cardWidth).animateItem(),
+                    captionInset = cardWidth * (SHRINK / 2),
+                    captions = Modifier.graphicsLayer {
+                        val d = list.offsetFromCentre(i, spacing.toPx())
+                        translationX = -PULL.toPx() * d.coerceIn(-MAX_AWAY, MAX_AWAY)
+                    },
+                    art = Modifier
                         .graphicsLayer {
                             val d = list.offsetFromCentre(i, spacing.toPx())
                             val away = abs(d).coerceAtMost(MAX_AWAY)
                             val shrink = 1f - SHRINK * away
+                            // Standing on the bottom edge, so a smaller cover shrinks upward and
+                            // every bar sits on the same line whatever its distance from the middle.
+                            transformOrigin = TransformOrigin(pivotFractionX = CENTRE, pivotFractionY = BASELINE)
                             scaleX = shrink
                             scaleY = shrink
                             rotationY = -TURN_DEGREES * d.coerceIn(-MAX_AWAY, MAX_AWAY)
-                            translationY = ARC.toPx() * away * away
                             translationX = -PULL.toPx() * d.coerceIn(-MAX_AWAY, MAX_AWAY)
                             cameraDistance = CAMERA * density
                         }
@@ -258,9 +313,8 @@ private val CarouselSpacing = 4.dp
 /** Times the covers repeat: enough that no fling reaches an end. */
 private const val LOOP_TURNS = 400
 
-/** Headroom for the arc: side covers drop, and must not be clipped by the row. */
+/** Room above and below the row for a turned cover's perspective, which the row would clip. */
 private val CarouselLift = 6.dp
-private val ARC = 10.dp
 private val PULL = 14.dp
 
 /** Beyond this many card-widths from the middle, a cover stops changing. */
@@ -269,3 +323,10 @@ private const val SHRINK = 0.16f
 private const val FADE = 0.3f
 private const val TURN_DEGREES = 24f
 private const val CAMERA = 14f
+
+/** The wheel's pivot: the middle of a cover's width, on its bottom edge. */
+private const val CENTRE = 0.5f
+private const val BASELINE = 1f
+
+/** Card widths from the screen's middle to a neighbour's outer edge: half the centre's, then its own. */
+private const val NEIGHBOUR_SLOTS = 1.5f
