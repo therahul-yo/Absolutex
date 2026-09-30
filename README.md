@@ -90,13 +90,31 @@ covered only a OnePlus 11R; other phones and providers are unverified.
 
 ## Next release — not in the current download yet
 
-Current `main` adds CB7 decoding (large solid archives can page slowly; encrypted 7z remains
-unsupported), an **Open file** button, clearer empty states and scan safety that preserves rows
-when a folder cannot be read. It also separates background matching from cropping, wraps reader
-option chips, excludes the password box from password-manager prompts and makes Cancel leave the reader.
-Settings → Backup exports/imports reading data and preferences as merge-only JSON: the file contains
-book names, never server records, credentials or folder grants. Text-EPUB position inside a chapter
-and the tap-guide flag are excluded; after restore a text EPUB reopens at its chapter start.
+v0.1.4 is being prepared from merged `main`; the download above remains v0.1.3 until publication.
+
+- CB7/7z with LZMA/LZMA2 opens. Large solid 7z uses a single background decode and cached pages
+  when eligible, avoiding repeated decoding on each turn; encrypted 7z remains unsupported.
+- An **Open file** button, clearer empty states and more file-manager VIEW types.
+- Settings → Backup exports/imports reading data and preferences as merge-only JSON through the
+  system picker. The file contains book names, never server records, credentials or folder grants.
+  Text-EPUB position inside a chapter and the tap-guide flag are excluded; after restore a text
+  EPUB reopens at its chapter start.
+- Background matching works with cropping off; reader option chips wrap; password entry avoids
+  password-manager autofill; Cancel leaves the reader.
+- A scan that cannot read a folder preserves its books. Opening a book puts it in Recent without
+  counting a page read; export results show counts and learned page counts stay current.
+  An upgrade cleanup removes old page-zero progress rows that represented Mark unread.
+- Aligned home header actions, a clearer Open file icon, and a SETTINGS title with a back arrow.
+- One-tap Enhance in bitmap/PDF reader chrome, off by default: Mitchell upscaling, contrast 1.05
+  and vibrance 0.05. Custom settings are retained when the preset is turned off.
+
+CB7 checks covered small and 83 MB solid/non-solid archives on one OnePlus 11R. Solid-archive
+performance was measured on a laptop; one 300-page solid CB7 device pass opened its first page in
+about 0.5 seconds and passed jump checks. Enhance strengths were judged by eye on one page only.
+One measurement on 30 September 2026 on a OnePlus 11R after paging and jumping through a
+564 MB CBR: about 171 MB process PSS (183 MB right after seek jumps); the project budget is
+150 MB. This differs from the older 12-page-turn measurement in DEVELOPMENT.md. See the
+[draft v0.1.4 notes](docs/releases/0.1.4.md) for test scope and limitations.
 
 ## Updates
 

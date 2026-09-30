@@ -13,7 +13,7 @@ body:
     attributes:
       label: App version
       description: In the app under Settings → About, or in the name of the APK you installed.
-      placeholder: "0.1.2 (Absolutex-0.1.2.apk)"
+      placeholder: "0.1.4 (Absolutex-0.1.4.apk)"
     validations:
       required: true
 
