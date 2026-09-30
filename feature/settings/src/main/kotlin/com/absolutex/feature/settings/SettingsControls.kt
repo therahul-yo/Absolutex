@@ -10,7 +10,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.Icons
@@ -246,32 +245,6 @@ fun AboutRow(modifier: Modifier = Modifier) {
         leadingContent = { RowIcon(Icons.Outlined.Info) },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = modifier,
-    )
-}
-
-/**
- * Adds a storage location — the folders the library scans (§5.1).
- *
- * This row exists because the only other way in was the library's empty state, which renders
- * exclusively when there are **zero** locations. After the first folder was added that affordance
- * was gone for good: no second folder could ever be added, and a location pointing somewhere
- * that no longer holds books left the library permanently empty with nothing to do about it.
- *
- * The folders already added are listed above this row ([LocationRow]), each removable; a folder
- * whose grant the system revoked is also dropped on its own by `ShellViewModel.rescanLocations`.
- */
-@Composable
-fun AddStorageLocationRow(onAdd: () -> Unit, modifier: Modifier = Modifier) {
-    ListItem(
-        headlineContent = { Text(stringResource(R.string.settings_add_location_title)) },
-        supportingContent = { Text(stringResource(R.string.settings_add_location_desc)) },
-        leadingContent = { RowIcon(Icons.Outlined.CreateNewFolder) },
-        trailingContent = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null) },
-        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-        modifier = modifier
-            .fillMaxWidth()
-            .defaultMinSize(minHeight = A11y.MinTouchTarget)
-            .clickable(role = Role.Button, onClick = onAdd),
     )
 }
 
