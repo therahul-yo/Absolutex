@@ -39,6 +39,7 @@ class EnhanceViewModelTest {
         advanceUntilIdle()
         assertEquals(true, vm.enabled.first())
         settings.updateRendering { it.copy(enhanceEnabled = false, upscaler = Upscaler.LANCZOS) }
+        advanceUntilIdle()
         assertEquals(false, vm.enabled.first())
     }
 

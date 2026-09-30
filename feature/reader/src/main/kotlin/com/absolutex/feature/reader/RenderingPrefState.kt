@@ -10,13 +10,13 @@ import com.absolutex.core.gpu.Upscaler
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
-internal data class ReaderRenderingState(
+internal data class RenderingPrefState(
     val colour: ColourParams,
     val upscaler: Upscaler,
     val enhanceEnabled: Boolean,
 )
 
-internal fun readerRenderingState(prefs: RenderingPrefs): ReaderRenderingState = ReaderRenderingState(
+internal fun readerRenderingState(prefs: RenderingPrefs): RenderingPrefState = RenderingPrefState(
     colour = prefs.effectiveColour,
     upscaler = prefs.effectiveUpscaler,
     enhanceEnabled = prefs.enhanceEnabled,

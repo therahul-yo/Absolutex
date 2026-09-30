@@ -130,7 +130,6 @@ fun ReaderScreen(
     val ui by vm.ui.collectAsStateWithLifecycle()
     val global by vm.readerPrefs.collectAsStateWithLifecycle()
     val rendering by vm.renderingPrefs.collectAsStateWithLifecycle()
-    val readerRendering = readerRenderingState(rendering)
     // A book's own choices win over the global ones (§5.2), and only for this book.
     val options: ReaderOptionsViewModel = hiltViewModel()
     val book by remember(ui.bookId) { options.bookPrefs(ui.bookId) }.collectAsStateWithLifecycle(null)
@@ -181,12 +180,12 @@ fun ReaderScreen(
             prefs.pageLayout == PageLayout.CONTINUOUS_VERTICAL ->
                 Strip(
                     ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, onFinished,
-                    chromeState, pageBackgrounds, backgroundPage, readerRendering.enhanceEnabled,
+                    chromeState, pageBackgrounds, backgroundPage, rendering.enhanceEnabled,
                 )
             else ->
                 Pages(
                     ui.pageCount, vm.readingPage, ui.bookId, ui.title, prefs, vm, onSettings, onFinished,
-                    chromeState, pageBackgrounds, backgroundPage, readerRendering.enhanceEnabled,
+                    chromeState, pageBackgrounds, backgroundPage, rendering.enhanceEnabled,
                 )
         }
         // Visible on open, also in the empty recovery case. Chrome has its own top bar; do not
