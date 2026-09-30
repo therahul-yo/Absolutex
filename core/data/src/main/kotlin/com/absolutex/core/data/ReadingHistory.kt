@@ -8,13 +8,15 @@ import androidx.room.Insert
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import com.absolutex.core.stats.PageSettled
+import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
  * One page having come to rest in the reader (§4, milestone 7).
  *
- * The whole of reading history is this table. Sessions, time read, streaks and per-series
+ * Settled-page history lives here, alongside one private opening marker per book. Markers
+ * never enter history reads, stats or backups. Sessions, time read, streaks and per-series
  * totals are all *derived* from these rows by `:core:stats` — a session is a run of views with
  * no gap longer than the idle threshold, which is a reading of the data rather than a second
  * fact about it. Storing sessions as well would be two sources of truth for one thing, free to
@@ -47,8 +49,13 @@ data class PageView(
     val atEpochMs: Long,
 )
 
+/** Private opening recency; excluded from settled-page history, stats and backups. */
+const val OPENING_PAGE_MARKER = -1
+
+data class BookLastRead(val bookKey: String, val atEpochMs: Long)
+
 /**
- * Reading history is append-only, which is why nothing here upserts.
+ * Settled-page history is append-only, which is why nothing here upserts.
  *
  * That matters because of the trap `upsertPreservingAddedAt` exists for: `@Insert(REPLACE)`
  * deletes and reinserts, so it clears any column the caller did not resupply. Nothing here can
@@ -58,19 +65,22 @@ data class PageView(
  */
 @Dao
 interface PageViewDao {
+    /** Library recency includes actual reading and the latest opening marker. */
+    @Query("SELECT bookKey, MAX(atEpochMs) AS atEpochMs FROM page_view GROUP BY bookKey")
+    fun observeLastRead(): Flow<List<BookLastRead>>
 
     /** Inserts a batch. Suspend, so Room runs it on its own executor rather than the caller's. */
     @Insert
     suspend fun record(views: List<PageView>)
 
-    @Query("SELECT * FROM page_view ORDER BY atEpochMs")
+    @Query("SELECT * FROM page_view WHERE page >= 0 ORDER BY atEpochMs")
     suspend fun all(): List<PageView>
 
     /** History from a point in time, for a stats screen that shows a window rather than all of it. */
-    @Query("SELECT * FROM page_view WHERE atEpochMs >= :sinceEpochMs ORDER BY atEpochMs")
+    @Query("SELECT * FROM page_view WHERE page >= 0 AND atEpochMs >= :sinceEpochMs ORDER BY atEpochMs")
     suspend fun since(sinceEpochMs: Long): List<PageView>
 
-    @Query("SELECT COUNT(*) FROM page_view")
+    @Query("SELECT COUNT(*) FROM page_view WHERE page >= 0")
     suspend fun count(): Int
 
     /** §4: the user can delete all of it, and that has to mean all of it. */

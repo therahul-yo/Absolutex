@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Query
 import com.absolutex.core.data.BookPrefs
 import com.absolutex.core.data.Bookmark
+import com.absolutex.core.data.OPENING_PAGE_MARKER
 import com.absolutex.core.data.ReadingProgress
 
 /** Backup reads and identity-based favourite writes; no schema changes. */
@@ -26,7 +27,7 @@ interface BackupDao {
     @Query("SELECT EXISTS(SELECT 1 FROM library_book WHERE contentKey = :identity)")
     suspend fun hasBook(identity: String): Boolean
 
-    @Query("SELECT MAX(atEpochMs) FROM page_view WHERE bookKey = :identity")
+    @Query("SELECT MAX(atEpochMs) FROM page_view WHERE page != $OPENING_PAGE_MARKER AND bookKey = :identity")
     suspend fun lastRead(identity: String): Long?
 
     @Query("SELECT EXISTS(SELECT 1 FROM page_view WHERE bookKey = :identity AND page = :page AND atEpochMs = :time)")

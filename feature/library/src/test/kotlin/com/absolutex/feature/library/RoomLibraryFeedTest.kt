@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.absolutex.core.data.AbsolutexDatabase
 import com.absolutex.core.data.LibraryBook
 import com.absolutex.core.data.LibraryDao
+import com.absolutex.core.data.LibraryReading
 import com.absolutex.core.data.LibraryRepository
 import com.absolutex.core.data.ReadingProgress
 import com.absolutex.core.data.settings.AppPrefs
@@ -67,6 +68,8 @@ class RoomLibraryFeedTest {
         RoomLibraryFeed(
             repository = LibraryRepository(dao),
             progressDao = db.progressDao(),
+            reading = LibraryReading(db),
+            pageViews = db.pageViewDao(),
             appPrefsSource = FixedAppPrefs(prefs),
         )
 

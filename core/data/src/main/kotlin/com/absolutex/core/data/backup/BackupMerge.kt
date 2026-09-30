@@ -1,6 +1,7 @@
 package com.absolutex.core.data.backup
 
 import com.absolutex.core.data.AbsolutexDatabase
+import com.absolutex.core.data.ReadingProgress
 
 /** Invoked only inside the caller's Room transaction. Existing data is never deleted. */
 internal suspend fun AbsolutexDatabase.mergeBackup(data: BackupData): ReadingChanges {
@@ -13,7 +14,8 @@ internal suspend fun AbsolutexDatabase.mergeBackup(data: BackupData): ReadingCha
     val importedProgress = data.progress.associateBy { it.bookId }
     var written = 0
     data.progress.forEach { row ->
-        if (row.updatedAt > (progressDao().get(row.bookId)?.updatedAt ?: -1)) {
+        val existing = progressDao().get(row.bookId)
+        if (row.shouldReplace(existing)) {
             progressDao().upsert(row)
             changed += row.bookId
             written++
@@ -47,3 +49,12 @@ internal suspend fun AbsolutexDatabase.mergeBackup(data: BackupData): ReadingCha
 
 private suspend fun AbsolutexDatabase.lastBackupRead(identity: String): Long =
     maxOf(progressDao().get(identity)?.updatedAt ?: -1, backupDao().lastRead(identity) ?: -1)
+
+private fun ReadingProgress?.isOpeningOnly(): Boolean = this != null && pageIndex == 0 && updatedAt == 0L
+
+private fun ReadingProgress.shouldReplace(existing: ReadingProgress?): Boolean {
+    // Pre-upgrade page 0 meant Mark unread. With no local row, do not resurrect that state.
+    // This also skips genuine text-EPUB chapter-0 backups: the old format cannot distinguish them.
+    if (existing == null && pageIndex == 0) return false
+    return this != existing && (existing.isOpeningOnly() || updatedAt > (existing?.updatedAt ?: -1))
+}

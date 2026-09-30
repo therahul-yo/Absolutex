@@ -9,6 +9,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "reading_progress")
@@ -30,6 +31,30 @@ interface ProgressDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(progress: ReadingProgress)
+
+    /** Opening page 0 is a real position; reopening must preserve an existing later position. */
+    @Transaction
+    suspend fun recordOpened(bookId: String, pageCount: Int, now: Long): ReadingProgress {
+        require(pageCount > 0)
+        val previous = get(bookId)
+        val opened = previous?.copy(
+            pageCount = if (previous.pageIndex < pageCount) pageCount else previous.pageCount,
+        ) ?: ReadingProgress(bookId, 0, pageCount, 0)
+        upsert(opened)
+        // One private recency marker, never a settled page or a last-write-wins position.
+        clearOpening(bookId)
+        recordOpening(PageView(bookKey = bookId, page = OPENING_PAGE_MARKER, atEpochMs = now))
+        return opened
+    }
+
+    @Query("DELETE FROM page_view WHERE bookKey = :bookId AND page = $OPENING_PAGE_MARKER")
+    suspend fun clearOpening(bookId: String)
+
+    @Insert
+    suspend fun recordOpening(view: PageView)
+
+    @Query("DELETE FROM reading_progress WHERE bookId = :bookId")
+    suspend fun clear(bookId: String)
 
     @Query("SELECT * FROM reading_progress ORDER BY updatedAt DESC LIMIT 1")
     suspend fun mostRecent(): ReadingProgress?
@@ -59,7 +84,7 @@ interface ProgressDao {
         ReadingProgress::class, LibraryBook::class, Bookmark::class, BookPrefs::class,
         PageView::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),

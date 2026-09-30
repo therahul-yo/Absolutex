@@ -3,9 +3,11 @@ package com.absolutex.feature.library
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.FOLDER_FORMAT
 import com.absolutex.core.data.BookPath
+import com.absolutex.core.data.LibraryReading
 import com.absolutex.core.data.LibraryBook
 import com.absolutex.core.data.LibraryRepository
 import com.absolutex.core.data.ProgressDao
+import com.absolutex.core.data.PageViewDao
 import com.absolutex.core.data.ReadingProgress
 import com.absolutex.core.data.settings.AppPrefsSource
 import com.absolutex.core.scan.LibraryChange
@@ -36,6 +38,8 @@ import javax.inject.Singleton
 internal class RoomLibraryFeed @Inject constructor(
     private val repository: LibraryRepository,
     private val progressDao: ProgressDao,
+    private val reading: LibraryReading,
+    private val pageViews: PageViewDao,
     private val appPrefsSource: AppPrefsSource,
 ) : LibraryFeed {
 
@@ -48,14 +52,17 @@ internal class RoomLibraryFeed @Inject constructor(
     )
 
     override fun observeBooks(): Flow<List<LibraryBookUi>> =
-        combine(repository.observeLibrary(), progressDao.observeAll(), appPrefsSource.appPrefs) {
-                books, progress, prefs ->
+        combine(
+            repository.observeLibrary(), progressDao.observeAll(), pageViews.observeLastRead(), appPrefsSource.appPrefs,
+        ) {
+                books, progress, views, prefs ->
             // Index the positions once, then look up per book: scanning the progress table per
             // row instead would be quadratic on a large library.
             val byIdentity = progress.associateBy { it.bookId }
+            val lastViews = views.associate { it.bookKey to it.atEpochMs }
             // Deduplicated before mapping, so the expensive part runs once per book that is shown.
             books.filter { it.isShown(prefs) }.deduplicatedByIdentity()
-                .map { it.toUi(byIdentity, prefs) }
+                .map { it.toUi(byIdentity, lastViews, prefs) }
             // Mapping thousands of rows is real work and Room emits on its own executor; Default
             // keeps it off both the main thread and Room's.
         }.flowOn(Dispatchers.Default)
@@ -63,6 +70,7 @@ internal class RoomLibraryFeed @Inject constructor(
     override suspend fun search(query: String): List<LibraryBookUi> {
         val progress = progressDao.observeAll().first().associateBy { it.bookId }
         val prefs = appPrefsSource.currentAppPrefs()
+        val lastViews = pageViews.observeLastRead().first().associate { it.bookKey to it.atEpochMs }
         // The DAO is the source of truth for what matches (series, title, path, and — since a SAF
         // book's path is a percent-encoded document Uri — the encoded query too). Filtering again
         // here could only ever remove rows the DAO already chose correctly, never add the ones it
@@ -70,7 +78,7 @@ internal class RoomLibraryFeed @Inject constructor(
         return repository.search(query)
             .filter { it.isShown(prefs) }
             .deduplicatedByIdentity()
-            .map { it.toUi(progress, prefs) }
+            .map { it.toUi(progress, lastViews, prefs) }
     }
 
     /**
@@ -114,7 +122,11 @@ internal class RoomLibraryFeed @Inject constructor(
         )
         val stamp = System.currentTimeMillis()
         for (write in plan.writes) {
-            progressDao.upsert(ReadingProgress(write.bookId, write.pageIndex, write.pageCount, stamp))
+            if (read) {
+                progressDao.upsert(ReadingProgress(write.bookId, write.pageIndex, write.pageCount, stamp))
+            } else {
+                reading.markUnread(write.bookId, write.pageCount)
+            }
         }
         // A path the library no longer holds is reported, not silently dropped from the count.
         return LibraryNotice.BatchApplied(
@@ -128,6 +140,7 @@ internal class RoomLibraryFeed @Inject constructor(
 
     private fun LibraryBook.toUi(
         progress: Map<String, ReadingProgress>,
+        lastViews: Map<String, Long>,
         prefs: AppPrefs,
     ): LibraryBookUi {
         val position = progress[contentKey]
@@ -146,7 +159,7 @@ internal class RoomLibraryFeed @Inject constructor(
             format = format,
             // The privacy switch is for PDFs (identity cards, certificates); a book's cover is a cover.
             showCover = format != PDF_FORMAT || prefs.documentCovers,
-            lastReadAt = position?.updatedAt,
+            lastReadAt = position?.let { maxOf(it.updatedAt, lastViews[contentKey] ?: 0) },
         )
     }
 

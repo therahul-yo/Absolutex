@@ -29,6 +29,9 @@ interface BookFactsDao {
     @Query("UPDATE library_book SET isFavorite = :favourite WHERE contentKey = :contentKey")
     suspend fun setFavourite(contentKey: String, favourite: Boolean): Int
 
+    @Query("UPDATE library_book SET pageCount = :count WHERE contentKey = :identity AND pageCount IS NULL")
+    suspend fun retainCountByIdentity(identity: String, count: Int): Int
+
     /**
      * Persists the page count for the book at [path], but only if the stored value is still null —
      * the count from the first opener wins, and a later re-scan (which re-rows the book) must not

@@ -78,7 +78,7 @@ class BackupRoundTripTest : BackupFixture() {
     }
 
     @Test fun `identical import counts only actual changes and onboarding stays local`() = runTest {
-        val data = BackupData("test", listOf(ReadingProgress("a:1", 0, 1, 1)),
+        val data = BackupData("test", listOf(ReadingProgress("a:1", 1, 2, 1)),
             favourites = setOf("a:1"), preferences = mapOf("onboarded" to true))
         val bytes = BackupWriter.write(data)
         assertEquals(RestoreResult.Complete(1, progress = 1, favourites = 1), repository.restore(bytes.inputStream()))

@@ -58,9 +58,9 @@ class ReadStateTest {
         assertEquals(ReadState.UNREAD, book(currentPage = null).readState)
     }
 
-    @Test fun `opened but still on page zero is unread`() {
-        // Opening a book and immediately backing out must not move it out of Unread.
-        assertEquals(ReadState.UNREAD, book(currentPage = 0).readState)
+    @Test fun `opened but still on page zero is in progress`() {
+        // Opening page 1 is a read even without a later page turn.
+        assertEquals(ReadState.IN_PROGRESS, book(currentPage = 0).readState)
     }
 
     @Test fun `mid-book is in progress`() {

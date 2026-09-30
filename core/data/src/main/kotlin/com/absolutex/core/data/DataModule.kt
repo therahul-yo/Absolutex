@@ -18,11 +18,12 @@ object DataModule {
     @Singleton
     fun database(@ApplicationContext context: Context): AbsolutexDatabase =
         // No destructive fallback: reading progress, favourites and bookmarks are user data.
-        // Every schema step has an AutoMigration (exported schemas, checked in CI), so the
+        // Earlier schema steps have AutoMigrations (exported schemas, checked in CI), so the
         // fallback only ever fired on a DOWNGRADE — an older build installed over a newer one —
         // and it silently erased a reader's every position. Now that case fails loudly on launch
         // instead, and installing the newer build again opens the data intact.
-        Room.databaseBuilder(context, AbsolutexDatabase::class.java, "absolutex.db").build()
+        Room.databaseBuilder(context, AbsolutexDatabase::class.java, "absolutex.db")
+            .addMigrations(LegacyUnreadMigration).build()
 
     @Provides
     fun progressDao(db: AbsolutexDatabase): ProgressDao = db.progressDao()

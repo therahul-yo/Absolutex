@@ -71,7 +71,7 @@ class BackupHostileInputTest : BackupFixture() {
     @Test fun `path-like identity is opaque and cannot write files or grant access`() = runTest {
         val path = tmp.root.resolve("escaped.cbz")
         val id = "../../${path.name}:1"
-        val data = BackupData("test", listOf(ReadingProgress(id, 0, 1, 1)), favourites = setOf(id))
+        val data = BackupData("test", listOf(ReadingProgress(id, 1, 2, 1)), favourites = setOf(id))
         repository.restore(BackupWriter.write(data).inputStream())
         assertFalse(path.exists())
         assertTrue(settings.currentAppPrefs().locations.isEmpty())
