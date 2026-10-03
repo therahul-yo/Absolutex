@@ -56,11 +56,11 @@ class ReaderDisplayViewModelTest {
 
     @Test fun `rapid queued colour samples persist the latest exact value`() = runTest(main.dispatcher) {
         val settings = InMemorySettings()
-        var writes = 0
+        val writes = mutableListOf<ColourParams>()
         val writer = object : SettingsWriter by settings {
             override suspend fun updateRendering(transform: (RenderingPrefs) -> RenderingPrefs) {
-                writes++
                 settings.updateRendering(transform)
+                writes.add(settings.currentRenderingPrefs().colour)
             }
         }
         val vm = ReaderDisplayViewModel(settings, writer)
@@ -68,7 +68,8 @@ class ReaderDisplayViewModelTest {
         repeat(100) { vm.setColour(ColourParams(contrast = 1f + it / 100f)) }
         vm.setColour(ColourParams(contrast = 1.234f))
         advanceUntilIdle()
-        assertEquals(1, writes)
+        // First sample is handed to the waiting consumer; the remaining queue retains only the final sample.
+        assertEquals(listOf(ColourParams(contrast = 1f), ColourParams(contrast = 1.234f)), writes)
         assertEquals(1.234f, settings.currentRenderingPrefs().colour.contrast)
         assertEquals(settings.currentRenderingPrefs(), vm.prefs.value)
     }
