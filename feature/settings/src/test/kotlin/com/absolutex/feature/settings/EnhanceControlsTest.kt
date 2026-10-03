@@ -1,5 +1,7 @@
 package com.absolutex.feature.settings
 
+import com.absolutex.core.data.settings.withUpscaler
+import com.absolutex.core.data.settings.withColour
 import com.absolutex.core.data.settings.InMemorySettings
 import com.absolutex.core.data.settings.RenderingPrefs
 import com.absolutex.core.gpu.ColourParams

@@ -1,0 +1,81 @@
+package com.absolutex.feature.reader
+
+import com.absolutex.core.data.settings.RenderingPrefs
+import com.absolutex.core.data.settings.SettingsWriter
+import com.absolutex.core.data.settings.InMemorySettings
+import com.absolutex.core.data.settings.withColour
+import com.absolutex.core.data.settings.withUpscaler
+import com.absolutex.core.gpu.ColourParams
+import com.absolutex.core.gpu.Upscaler
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Rule
+import org.junit.Test
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class ReaderDisplayViewModelTest {
+    @get:Rule val main = MainDispatcherRule()
+
+    @Test fun `colour edits reach Settings source and reader draw state`() = runTest(main.dispatcher) {
+        val settings = InMemorySettings()
+        settings.updateRendering { it.copy(enhanceEnabled = true, upscaler = Upscaler.LANCZOS) }
+        val vm = ReaderDisplayViewModel(settings, settings)
+        advanceUntilIdle()
+        for (contrast in listOf(1.1f, 1.2f, 1.3f)) {
+            vm.setColour(ColourParams(contrast = contrast))
+            advanceUntilIdle()
+            val persisted = settings.currentRenderingPrefs()
+            assertFalse(persisted.enhanceEnabled)
+            assertEquals(Upscaler.LANCZOS, persisted.upscaler)
+            assertEquals(persisted, vm.prefs.value)
+            assertEquals(contrast, readerRenderingState(vm.prefs.value).colour.contrast)
+        }
+    }
+
+    @Test fun `Settings edits and Enhance toggles update the sheet from the same store`() = runTest(main.dispatcher) {
+        val settings = InMemorySettings()
+        val vm = ReaderDisplayViewModel(settings, settings)
+        advanceUntilIdle()
+        settings.updateRendering { it.withColour(ColourParams(gammaR = 1.3f)).withUpscaler(Upscaler.LANCZOS) }
+        advanceUntilIdle()
+        assertEquals(settings.currentRenderingPrefs(), vm.prefs.value)
+        vm.toggle()
+        advanceUntilIdle()
+        assertEquals(true, vm.prefs.value.enhanceEnabled)
+        vm.setUpscaler(Upscaler.PLATFORM)
+        advanceUntilIdle()
+        assertFalse(settings.currentRenderingPrefs().enhanceEnabled)
+        assertEquals(1.3f, settings.currentRenderingPrefs().colour.gammaR)
+        vm.setColour(ColourParams.NEUTRAL)
+        advanceUntilIdle()
+        assertEquals(ColourParams.NEUTRAL, settings.currentRenderingPrefs().colour)
+    }
+
+    @Test fun `rapid queued colour samples persist the latest exact value`() = runTest(main.dispatcher) {
+        val settings = InMemorySettings()
+        val writes = mutableListOf<ColourParams>()
+        val writer = object : SettingsWriter by settings {
+            override suspend fun updateRendering(transform: (RenderingPrefs) -> RenderingPrefs) {
+                settings.updateRendering(transform)
+                writes.add(settings.currentRenderingPrefs().colour)
+            }
+        }
+        val vm = ReaderDisplayViewModel(settings, writer)
+        advanceUntilIdle()
+        repeat(100) { vm.setColour(ColourParams(contrast = 1f + it / 100f)) }
+        vm.setColour(ColourParams(contrast = 1.234f))
+        advanceUntilIdle()
+        // First sample is handed to the waiting consumer; the remaining queue retains only the final sample.
+        assertEquals(listOf(ColourParams(contrast = 1f), ColourParams(contrast = 1.234f)), writes)
+        assertEquals(1.234f, settings.currentRenderingPrefs().colour.contrast)
+        assertEquals(settings.currentRenderingPrefs(), vm.prefs.value)
+    }
+
+    @Test fun `Display panel reserves more of the page than normal chrome`() {
+        assertEquals(0.55f, readerChromeHeightFraction(display = true))
+        assertEquals(CHROME_MAX_HEIGHT, readerChromeHeightFraction(display = false))
+    }
+}

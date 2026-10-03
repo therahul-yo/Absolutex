@@ -134,17 +134,20 @@ private fun BottomChrome(
     // Landscape has ~1200 px of height and the chrome had grown past it, so the options moved
     // behind a toggle: what is always shown is what a reader looks at every page.
     var options by rememberSaveable { mutableStateOf(false) }
+    var display by rememberSaveable { mutableStateOf(false) }
     val shown = (dragging?.roundToInt() ?: page) + 1
     val indicator = stringResource(R.string.reader_page_indicator_desc, shown, pageCount)
     val seekLabel = stringResource(R.string.reader_seek_desc)
     // Capped and scrollable: with the options open, landscape has ~1200 px of height and the
     // chrome would otherwise grow over its own top bar and the page entirely.
-    val maxChrome = (LocalConfiguration.current.screenHeightDp * CHROME_MAX_HEIGHT).dp
+    val maxChrome = (LocalConfiguration.current.screenHeightDp * readerChromeHeightFraction(display)).dp
     val chromeScroll = rememberScrollState()
     // Opening the options scrolls to them: they sit below the seek bar, which in landscape is past
     // the cap, and a control that appears to do nothing is worse than no control.
-    LaunchedEffect(options) {
-        if (options) withFrameNanos { }.also { chromeScroll.animateScrollTo(chromeScroll.maxValue) }
+    LaunchedEffect(options, display) {
+        if (display) chromeScroll.scrollTo(0) else if (options) {
+            withFrameNanos { }.also { chromeScroll.animateScrollTo(chromeScroll.maxValue) }
+        }
     }
     val pull = remember { Animatable(0f) } // the sheet's drag offset; see [DragHandle]
     Surface(
@@ -170,18 +173,21 @@ private fun BottomChrome(
                 indicatorDescription = indicator,
                 hasContents = toc.isNotEmpty(),
                 onContents = { contents = !contents },
-                onOptions = { options = !options },
+                onOptions = { if (display) display = false else options = !options },
                 page = page,
                 onExport = onExport,
             )
-            strip?.let { ThumbnailStrip(pageCount, page, bookId, onSeek, it) }
-            BookmarkBar(bookId, page, pageCount, onJump = onSeek)
-            PageSlider(page, pageCount, dragging, { dragging = it }, onSeek, seekLabel, indicator)
-            // Last, not first: the seek bar and the strip are what a reader reaches for on every
-            // page, so they keep the top of the capped box and the options open below them.
-            if (options) {
-                fitFor?.let { FitRow(prefs, it) }
-                BookOptionsRow(bookId, prefs)
+            if (display) ReaderDisplayPanel(onBack = { display = false }) else {
+                strip?.let { ThumbnailStrip(pageCount, page, bookId, onSeek, it) }
+                BookmarkBar(bookId, page, pageCount, onJump = onSeek)
+                PageSlider(page, pageCount, dragging, { dragging = it }, onSeek, seekLabel, indicator)
+                // Last, not first: the seek bar and the strip are what a reader reaches for on every
+                // page, so they keep the top of the capped box and the options open below them.
+                if (options) {
+                    fitFor?.let { FitRow(prefs, it) }
+                    BookOptionsRow(bookId, prefs)
+                    ReaderDisplayEntry(onClick = { display = true })
+                }
             }
         }
     }
