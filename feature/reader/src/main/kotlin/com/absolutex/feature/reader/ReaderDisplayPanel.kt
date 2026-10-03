@@ -5,6 +5,9 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -40,9 +43,15 @@ internal fun ReaderDisplayPanel(onBack: () -> Unit, vm: ReaderDisplayViewModel =
         Text(stringResource(R.string.reader_display_back))
     }
     Text(stringResource(R.string.reader_display), style = MaterialTheme.typography.titleMedium)
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        Modifier.fillMaxWidth()
+            .defaultMinSize(minHeight = A11y.MinTouchTarget)
+            .toggleable(value = prefs.enhanceEnabled, role = Role.Switch) { vm.toggle() }
+            .semantics(mergeDescendants = true) {},
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(stringResource(R.string.reader_enhance), modifier = Modifier.weight(1f))
-        Switch(checked = prefs.enhanceEnabled, onCheckedChange = { vm.toggle() })
+        Switch(checked = prefs.enhanceEnabled, onCheckedChange = null)
     }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Upscaler.entries.forEach { upscaler ->

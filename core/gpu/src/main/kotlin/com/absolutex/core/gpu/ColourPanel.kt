@@ -13,10 +13,8 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -217,8 +215,7 @@ internal sealed interface SliderEvent {
 /**
  * One labelled slider. Reader hosts propagate changes during dragging; Settings commits on release.
  *
- * Keyed on [value] so an external change (e.g. restoring a saved value) still overrides an
- * unmoved thumb.
+ * Store emissions update an idle thumb, but never move it underneath a held pointer.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -230,9 +227,10 @@ private fun GradeRow(
     modifier: Modifier = Modifier,
     liveUpdates: Boolean = false,
 ) {
-    var pending by remember(value) { mutableFloatStateOf(value) }
+    val drag = remember { SliderDragState(value) }
+    LaunchedEffect(value) { drag.sync(value) }
     val name = stringResource(label)
-    val valueText = "%.2f".format(pending)
+    val valueText = "%.2f".format(drag.value)
     // Read here, not inside the semantics lambda: that lambda is not composable.
     val description = stringResource(R.string.gpu_grade_row_desc, name, valueText)
     Row(
@@ -253,9 +251,9 @@ private fun GradeRow(
         Slider(
             // No stop-indicator dot at the track's end: it marks nothing here.
             track = { SliderDefaults.Track(it, drawStopIndicator = null) },
-            value = pending,
-            onValueChange = { pending = it; if (liveUpdates) onChange(it) },
-            onValueChangeFinished = { if (!liveUpdates) onChange(pending) },
+            value = drag.value,
+            onValueChange = { drag.change(it, liveUpdates, onChange) },
+            onValueChangeFinished = { drag.finish(onChange) },
             valueRange = range,
             modifier = Modifier.weight(SLIDER_WEIGHT),
         )

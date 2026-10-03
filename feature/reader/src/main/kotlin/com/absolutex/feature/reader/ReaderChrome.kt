@@ -173,7 +173,7 @@ private fun BottomChrome(
                 indicatorDescription = indicator,
                 hasContents = toc.isNotEmpty(),
                 onContents = { contents = !contents },
-                onOptions = { display = false; options = !options },
+                onOptions = { if (display) display = false else options = !options },
                 page = page,
                 onExport = onExport,
             )

@@ -12,6 +12,7 @@ import com.absolutex.core.gpu.ColourParams
 import com.absolutex.core.gpu.Upscaler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -24,8 +25,17 @@ class ReaderDisplayViewModel @Inject constructor(
 ) : ViewModel() {
     val prefs = source.renderingPrefs.stateIn(viewModelScope, SharingStarted.Eagerly, RenderingPrefs())
 
+    private val colours = Channel<ColourParams>(Channel.CONFLATED)
+
+    init {
+        viewModelScope.launch {
+            for (colour in colours) writer.updateRendering { it.withColour(colour) }
+        }
+    }
+
+    // One sequential writer, with only the latest queued sample (including the exact release value).
     fun setColour(colour: ColourParams) {
-        viewModelScope.launch { writer.updateRendering { it.withColour(colour) } }
+        colours.trySend(colour)
     }
 
     fun setUpscaler(upscaler: Upscaler) {

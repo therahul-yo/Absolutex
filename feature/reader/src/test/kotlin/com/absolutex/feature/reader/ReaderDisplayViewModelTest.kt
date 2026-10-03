@@ -1,5 +1,7 @@
 package com.absolutex.feature.reader
 
+import com.absolutex.core.data.settings.RenderingPrefs
+import com.absolutex.core.data.settings.SettingsWriter
 import com.absolutex.core.data.settings.InMemorySettings
 import com.absolutex.core.data.settings.withColour
 import com.absolutex.core.data.settings.withUpscaler
@@ -17,7 +19,7 @@ import org.junit.Test
 class ReaderDisplayViewModelTest {
     @get:Rule val main = MainDispatcherRule()
 
-    @Test fun `sheet edits reach Settings source and draw state before gesture release`() = runTest(main.dispatcher) {
+    @Test fun `colour edits reach Settings source and reader draw state`() = runTest(main.dispatcher) {
         val settings = InMemorySettings()
         settings.updateRendering { it.copy(enhanceEnabled = true, upscaler = Upscaler.LANCZOS) }
         val vm = ReaderDisplayViewModel(settings, settings)
@@ -50,6 +52,25 @@ class ReaderDisplayViewModelTest {
         vm.setColour(ColourParams.NEUTRAL)
         advanceUntilIdle()
         assertEquals(ColourParams.NEUTRAL, settings.currentRenderingPrefs().colour)
+    }
+
+    @Test fun `rapid queued colour samples persist the latest exact value`() = runTest(main.dispatcher) {
+        val settings = InMemorySettings()
+        var writes = 0
+        val writer = object : SettingsWriter by settings {
+            override suspend fun updateRendering(transform: (RenderingPrefs) -> RenderingPrefs) {
+                writes++
+                settings.updateRendering(transform)
+            }
+        }
+        val vm = ReaderDisplayViewModel(settings, writer)
+        advanceUntilIdle()
+        repeat(100) { vm.setColour(ColourParams(contrast = 1f + it / 100f)) }
+        vm.setColour(ColourParams(contrast = 1.234f))
+        advanceUntilIdle()
+        assertEquals(1, writes)
+        assertEquals(1.234f, settings.currentRenderingPrefs().colour.contrast)
+        assertEquals(settings.currentRenderingPrefs(), vm.prefs.value)
     }
 
     @Test fun `Display panel reserves more of the page than normal chrome`() {
