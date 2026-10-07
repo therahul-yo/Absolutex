@@ -1,5 +1,6 @@
 package com.absolutex.feature.settings
 
+import com.absolutex.core.data.settings.withColour
 import com.absolutex.core.data.settings.AppPrefs
 import com.absolutex.core.data.settings.InMemorySettings
 import com.absolutex.core.data.settings.NightMode

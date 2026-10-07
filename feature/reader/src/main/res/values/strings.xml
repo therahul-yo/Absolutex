@@ -78,4 +78,10 @@
     <string name="reader_guide_back">Previous page</string>
     <string name="reader_guide_next">Next page</string>
     <string name="reader_guide_menu">Controls</string>
+    <string name="reader_display">Display</string>
+    <string name="reader_display_back">Reading options</string>
+    <string name="reader_upscaler_platform">Platform</string>
+    <string name="reader_upscaler_mitchell">Mitchell</string>
+    <string name="reader_upscaler_lanczos">Lanczos</string>
+    <string name="reader_display_enhance_hint">Enhance is on. Controls show your saved settings. Changing colour or upscaler turns Enhance off.</string>
 </resources>
