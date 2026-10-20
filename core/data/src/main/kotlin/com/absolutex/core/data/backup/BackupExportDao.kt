@@ -34,10 +34,10 @@ interface BackupExportDao {
     suspend fun bookPrefs(limit: Int): List<BookPrefs>
 
     @Query("""SELECT contentKey AS identity, MAX(
-        COALESCE((SELECT MAX(updatedAt) FROM reading_progress WHERE bookId = contentKey), 0),
+        COALESCE((SELECT MAX(updatedAt) FROM reading_progress WHERE bookId = book_favourite.contentKey), 0),
         COALESCE((SELECT MAX(atEpochMs) FROM page_view
-            WHERE page != $OPENING_PAGE_MARKER AND bookKey = contentKey), 0), MAX(addedAt)
-         ) AS time FROM library_book WHERE isFavorite = 1 GROUP BY contentKey
+            WHERE page != $OPENING_PAGE_MARKER AND bookKey = book_favourite.contentKey), 0), addedAt
+         ) AS time FROM book_favourite
         ORDER BY time DESC, identity LIMIT :limit""")
     suspend fun favourites(limit: Int): List<ExportFavourite>
 
@@ -45,6 +45,6 @@ interface BackupExportDao {
         (SELECT COUNT(*) FROM page_view WHERE page != $OPENING_PAGE_MARKER) AS history,
         (SELECT COUNT(*) FROM bookmark) AS bookmarks,
         (SELECT COUNT(*) FROM book_prefs) AS prefs,
-        (SELECT COUNT(DISTINCT contentKey) FROM library_book WHERE isFavorite = 1) AS favourites""")
+        (SELECT COUNT(*) FROM book_favourite) AS favourites""")
     suspend fun counts(): ExportCounts
 }

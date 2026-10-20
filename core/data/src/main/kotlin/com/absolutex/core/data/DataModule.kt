@@ -23,7 +23,7 @@ object DataModule {
         // and it silently erased a reader's every position. Now that case fails loudly on launch
         // instead, and installing the newer build again opens the data intact.
         Room.databaseBuilder(context, AbsolutexDatabase::class.java, "absolutex.db")
-            .addMigrations(LegacyUnreadMigration).build()
+            .addMigrations(LegacyUnreadMigration, FavouritesMigration).build()
 
     @Provides
     fun progressDao(db: AbsolutexDatabase): ProgressDao = db.progressDao()
