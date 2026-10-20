@@ -54,7 +54,7 @@ class LegacyUnreadMigrationTest {
 
     private fun open(file: File) = Room.databaseBuilder(
         ApplicationProvider.getApplicationContext<Context>(), AbsolutexDatabase::class.java, file.path,
-    ).addMigrations(LegacyUnreadMigration).allowMainThreadQueries().build()
+    ).addMigrations(LegacyUnreadMigration, FavouritesMigration).allowMainThreadQueries().build()
 
     @Test fun `upgrade clears only legacy unread rows and keeps counts and other reading data`() = runTest {
         val db = open(seedV8())

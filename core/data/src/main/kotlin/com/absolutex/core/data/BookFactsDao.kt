@@ -10,7 +10,7 @@ import androidx.room.Query
  * [LibraryDao] so that interface stays about scanning and listing.
  */
 @Dao
-interface BookFactsDao {
+interface BookFactsDao : FavouriteQueries {
     /**
      * Records that the book at [path] is a [format] after all — a scan names a book by extension,
      * and an `.epub` is a comic or a text book only once its package has been read.
@@ -25,9 +25,6 @@ interface BookFactsDao {
      */
     @Query("SELECT MAX(isFavorite) FROM library_book WHERE contentKey = :contentKey")
     fun observeFavourite(contentKey: String): Flow<Boolean?>
-
-    @Query("UPDATE library_book SET isFavorite = :favourite WHERE contentKey = :contentKey")
-    suspend fun setFavourite(contentKey: String, favourite: Boolean): Int
 
     @Query("UPDATE library_book SET pageCount = :count WHERE contentKey = :identity AND pageCount IS NULL")
     suspend fun retainCountByIdentity(identity: String, count: Int): Int

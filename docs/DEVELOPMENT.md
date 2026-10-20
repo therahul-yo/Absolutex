@@ -6,6 +6,12 @@ what the app is and does, see the [README](../README.md).
 
 ## Status
 
+**Unreleased on main:** favourites are stored by book identity independently of scanned library
+rows. Removing a folder, or a completed scan removing a missing book, keeps its favourite; finding
+the same identity again restores it. Library and reader toggles update all copies together, and
+backup includes favourites whose folders are no longer present. Database v10 migrates existing
+favourites without removing reading data. The v0.1.4 APK still has the older folder-removal limit.
+
 This inventory describes current `main`. The public download is v0.1.4, which adds CB7/LZMA and
 cached solid-7z paging, Open file, reading-data backup, empty states, reader fixes, scan safety,
 recency/page-count fixes, home headers and Enhance. See [the v0.1.4 notes](releases/0.1.4.md).

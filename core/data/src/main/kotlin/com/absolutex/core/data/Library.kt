@@ -4,11 +4,8 @@ import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Entity
 import androidx.room.Index
-import androidx.room.Insert
-import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
-import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -70,45 +67,7 @@ data class BookOrigin(
 )
 
 @Dao
-interface LibraryDao {
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertAll(books: List<LibraryBook>)
-
-    @Query(
-        "SELECT path, addedAt, isFavorite, format, contentKey, pageCount " +
-            "FROM library_book WHERE path IN (:paths)",
-    )
-    suspend fun originsOf(paths: List<String>): List<BookOrigin>
-
-    /**
-     * Upsert that keeps [LibraryBook.addedAt] from the row already on disk.
-     *
-     * REPLACE deletes and reinserts, so a plain upsert resets addedAt on every scan and
-     * "recently added" would show the whole library after any rescan. [LibraryBook.isFavorite]
-     * is the same shape of problem: the user set it, so no scan may clear it. Learned page counts also survive
-     * for an unchanged book identity; fresh scan counts take precedence.
-     */
-    @Transaction
-    suspend fun upsertPreservingAddedAt(books: List<LibraryBook>) {
-        if (books.isEmpty()) return
-        val original = originsOf(books.map { it.path }).associateBy { it.path }
-        upsertAll(
-            books.map { book ->
-                val kept = original[book.path] ?: return@map book
-                book.copy(
-                    addedAt = kept.addedAt,
-                    isFavorite = kept.isFavorite,
-                    pageCount = book.pageCount ?: kept.pageCount.takeIf {
-                        kept.contentKey == book.contentKey
-                    },
-                    // A scan names an .epub "epub"; that it is a text book was learned by opening
-                    // it, and rescanning must not forget that.
-                    format = if (kept.format == TEXT_EPUB_FORMAT && book.format == "epub") kept.format else book.format,
-                )
-            },
-        )
-    }
+interface LibraryDao : LibraryWrites {
 
     @Query("SELECT * FROM library_book ORDER BY series IS NULL, series, issue")
     suspend fun allOnce(): List<LibraryBook>
@@ -164,9 +123,6 @@ interface LibraryDao {
         """,
     )
     suspend fun deleteStaleUnder(root: String, childPrefix: String, scanId: Long): Int
-
-    @Query("UPDATE library_book SET isFavorite = :favorite WHERE path = :path")
-    suspend fun updateFavorite(path: String, favorite: Boolean): Int
 
     @Query("DELETE FROM library_book")
     suspend fun clear()

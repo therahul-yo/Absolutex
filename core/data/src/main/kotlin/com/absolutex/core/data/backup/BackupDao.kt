@@ -2,14 +2,16 @@ package com.absolutex.core.data.backup
 
 import androidx.room.Dao
 import androidx.room.Query
+import androidx.room.Transaction
+import com.absolutex.core.data.FavouriteQueries
 import com.absolutex.core.data.BookPrefs
 import com.absolutex.core.data.Bookmark
 import com.absolutex.core.data.OPENING_PAGE_MARKER
 import com.absolutex.core.data.ReadingProgress
 
-/** Backup reads and identity-based favourite writes; no schema changes. */
+/** Backup reads and identity-based favourite writes. */
 @Dao
-interface BackupDao {
+interface BackupDao : FavouriteQueries {
     @Query("SELECT * FROM reading_progress")
     suspend fun progress(): List<ReadingProgress>
 
@@ -19,11 +21,11 @@ interface BackupDao {
     @Query("SELECT * FROM book_prefs")
     suspend fun bookPrefs(): List<BookPrefs>
 
-    @Query("SELECT DISTINCT contentKey FROM library_book WHERE isFavorite = 1")
+    @Query("SELECT contentKey FROM book_favourite")
     suspend fun favourites(): List<String>
 
-    @Query("UPDATE library_book SET isFavorite = 1 WHERE contentKey = :identity AND isFavorite = 0")
-    suspend fun addFavourite(identity: String): Int
+    @Transaction
+    suspend fun addFavourite(identity: String): Int = setFavourite(identity, true)
     @Query("SELECT EXISTS(SELECT 1 FROM library_book WHERE contentKey = :identity)")
     suspend fun hasBook(identity: String): Boolean
 

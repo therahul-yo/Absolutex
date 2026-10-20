@@ -41,7 +41,7 @@ internal suspend fun AbsolutexDatabase.mergeBackup(data: BackupData): ReadingCha
         .filter { !dao.hasView(it.bookKey, it.page, it.atEpochMs) }
     pageViewDao().record(newViews)
     changed += newViews.map { it.bookKey }
-    val unmatched = data.favourites.filterNot { dao.hasBook(it) }.toSet()
+    val unmatched = data.favourites.filterNot { dao.hasBook(it) || dao.hasFavourite(it) }.toSet()
     val applied = (data.favourites - unmatched).filter { dao.addFavourite(it) > 0 }
     changed += applied
     return ReadingChanges(changed, written, applied.size, unmatched)

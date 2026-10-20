@@ -82,9 +82,9 @@ interface ProgressDao {
 @Database(
     entities = [
         ReadingProgress::class, LibraryBook::class, Bookmark::class, BookPrefs::class,
-        PageView::class,
+        PageView::class, BookFavourite::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
